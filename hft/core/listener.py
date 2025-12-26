@@ -1,7 +1,14 @@
 """
-Trade Core Listener Base Class
+监听器基类模块
 
 监听器基类，用于实现交易策略、风控、监控等功能。
+
+核心概念：
+- 状态机：STARTING -> RUNNING -> STOPPING -> STOPPED
+- 生命周期回调：on_start(), on_tick(), on_stop(), on_health_check()
+- 父子关系：支持树形结构，递归操作
+- 后台任务：自动管理定时执行的后台任务
+- 序列化：支持 pickle 持久化
 """
 import time
 import asyncio
@@ -18,18 +25,28 @@ from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, Retry
 
 
 class ListenerState(StrEnum):
-    """Listener 状态枚举"""
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    STOPPED = "stopped"
-    FINISHED = "finished"  # for tasks that complete successfully, 说明这个可以正常退出
-    ERROR = "error"
+    """
+    监听器状态枚举
+
+    状态转换：
+    STARTING -> RUNNING -> STOPPING -> STOPPED
+                    |                      ^
+                    v                      |
+                 FINISHED (任务完成)        |
+                    |                      |
+                    +----------------------+
+    """
+    STARTING = "starting"   # 启动中
+    RUNNING = "running"     # 运行中
+    STOPPING = "stopping"   # 停止中
+    STOPPED = "stopped"     # 已停止
+    FINISHED = "finished"   # 任务完成（正常退出）
+    ERROR = "error"         # 错误状态
 
 
-# constants
-RETRY_ATTEMPTS = 3
-RETRY_WAIT_SECONDS = 5
+# 常量
+RETRY_ATTEMPTS = 3          # 重试次数
+RETRY_WAIT_SECONDS = 5      # 重试等待时间（秒）
 
 
 class Listener(ABC):
@@ -49,9 +66,12 @@ class Listener(ABC):
 
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
-        Initialize listener.
+        初始化监听器
+
+        Args:
+            name: 监听器名称，默认使用类名
+            interval: tick 间隔（秒）
         """
-        # Initialize EventEmitter first
         if name is None:
             name = f"{self.__class__.__name__}"
         self.name = name
@@ -72,19 +92,18 @@ class Listener(ABC):
 
     def __getstate__(self) -> dict:
         """
-        Get serializable state for pickling.
+        获取可序列化的状态（用于 pickle）
 
-        Excludes non-serializable objects (locks, tasks, weakrefs, logger).
-        Recursively includes all children's state.
+        排除不可序列化的对象（锁、任务、弱引用）。
         """
         return {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
 
     def __setstate__(self, state: dict):
         """
-        Restore state from pickled data.
+        从序列化数据恢复状态
 
-        Reinitializes non-serializable objects (locks, tasks, weakrefs).
-        Recursively restores all children's state.
+        重新初始化不可序列化的对象（锁、任务、弱引用）。
+        恢复子监听器的父引用。
         """
         # Restore basic attributes
         self.__dict__.update(state)
@@ -100,22 +119,35 @@ class Listener(ABC):
 
     @property
     def current_time(self):
+        """获取当前时间戳"""
         return time.time()
 
     @property
     def uptime(self) -> float:
+        """获取运行时间（秒），非运行状态返回 0"""
         if self._state != ListenerState.RUNNING:
             return 0.0
         return max(0.0, self.current_time - self.start_time)
 
     def to_date_string(self, timestamp: float) -> str:
+        """将时间戳转换为日期字符串"""
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
     def to_duration_string(self, seconds: float) -> str:
+        """将秒数转换为可读的时长字符串"""
         return format_timespan(seconds)
 
     async def loop_coro_in_background(self, coro: Coroutine, interval: float = 0.001,
                                       finalizer: Optional[Coroutine] = None, params: Optional[dict] = None):
+        """
+        在后台循环执行协程
+
+        Args:
+            coro: 要执行的协程
+            interval: 执行间隔（秒）
+            finalizer: 结束时执行的清理协程
+            params: 传递给协程的参数
+        """
         if params is None:
             params = {}
         while True:
@@ -137,29 +169,29 @@ class Listener(ABC):
                 break
 
     def update_background(self):
+        """创建或更新后台任务"""
         bt = self._background_task
-        if bt is None or bt.done():  # no existing task or already completed
+        if bt is None or bt.done():  # 没有任务或已完成
             self._background_task = asyncio.create_task(
                 self.loop_coro_in_background(self.tick, self.interval, self.stop),
                 name=f"{self.name}-background-task"
             )
 
     def delete_background(self):
+        """取消后台任务"""
         bt = self._background_task
         if bt is not None:
             bt.cancel()
-            # wait for task to be cancelled and to execute stop finalizer
             self._background_task = None
 
     @property
     def state(self) -> ListenerState:
+        """获取当前状态"""
         return self._state
 
     @property
     def root(self) -> 'Listener':
-        """
-        Get the Root instance this listener is attached to.
-        """
+        """获取根监听器（向上遍历到顶层）"""
         parent = self.parent
         if parent is None:
             return self
@@ -167,16 +199,14 @@ class Listener(ABC):
 
     @property
     def parent(self) -> Optional['Listener']:
-        """
-        Get the Parent instance this listener is attached to.
-        """
+        """获取父监听器"""
         if self._parent is None:
             return None
         return self._parent()
 
     @parent.setter
     def parent(self, parent: Optional['Listener']):
-        """Set the Parent instance this listener is attached to."""
+        """设置父监听器"""
         if parent is None:
             self._parent = None
         else:
@@ -184,55 +214,60 @@ class Listener(ABC):
 
     @property
     def children(self) -> dict[str, 'Listener']:
-        """Get the Child listeners attached to this listener."""
+        """获取子监听器字典"""
         return self._children
 
     def add_child(self, child: 'Listener'):
-        """Add a Child listener to this listener."""
+        """添加子监听器"""
         self._children[child.name] = child
         child.parent = self
 
     def remove_child(self, child_name: str):
-        """Remove a Child listener from this listener by name."""
+        """移除子监听器"""
         if child_name in self._children:
             self._children[child_name].parent = None
             self._children.pop(child_name, None)
 
     @property
     def enabled(self) -> bool:
-        """Check if this listener is enabled."""
+        """检查监听器是否启用"""
         return self._enabled
 
     @enabled.setter
     def enabled(self, value: bool):
+        """设置监听器启用状态"""
         self._enabled = value
         self.logger.debug("enabled status set to %s", value)
 
     @property
     def healthy(self) -> bool:
-        """Get the health status of this listener."""
+        """获取健康状态"""
         return self._healthy
 
     @property
     def ready(self) -> bool:
         """
-        Check if the listener is ready.
+        检查监听器是否就绪
 
-        Override this method to implement custom readiness checks.
-
-        Returns:
-            True if ready, False otherwise
+        就绪条件：已启用 + 健康 + 运行中
         """
         return self.enabled and self.healthy and self._state == ListenerState.RUNNING
 
     async def on_health_check(self):
+        """健康检查回调，子类可覆盖实现自定义检查逻辑"""
         return True
 
     async def on_health_check_error(self, retry_state: RetryCallState):
-        """this is called after each failed health check attempt"""
+        """健康检查失败时的回调"""
         self.logger.warning("Health check attempt %d failed", retry_state.attempt_number - 1)
 
     async def health_check(self, recursive: bool = True):
+        """
+        执行健康检查
+
+        Args:
+            recursive: 是否递归检查子监听器
+        """
         if recursive:
             for child in list(self.children.values()):
                 await child.health_check(True)
@@ -254,13 +289,21 @@ class Listener(ABC):
             self.logger.error("Health check failed: %s", e, exc_info=True)
 
     @abstractmethod
-    async def on_tick(self) -> bool:  # return True to stop the loop
+    async def on_tick(self) -> bool:
         """
-        Called on each tick.
+        定时回调（抽象方法，子类必须实现）
+
+        Returns:
+            True 表示任务完成，将停止监听器；False 继续运行
         """
 
     @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True)
     async def __tick_internal(self) -> bool:
+        """
+        内部 tick 实现（带重试机制）
+
+        状态机核心逻辑，根据当前状态执行相应操作。
+        """
         try:
             match self._state:
                 case ListenerState.STARTING:
@@ -299,10 +342,17 @@ class Listener(ABC):
             self.logger.error("Error during tick execution: %s", e, exc_info=True)
 
     async def tick(self):
+        """执行一次 tick（加锁保证线程安全）"""
         async with self._alock:
             return await self.__tick_internal()
 
     async def start(self, recursive: bool = True):
+        """
+        启动监听器
+
+        Args:
+            recursive: 是否递归启动子监听器
+        """
         async with self._alock:
             self.enabled = True
             if self._state == ListenerState.STOPPED:
@@ -314,13 +364,17 @@ class Listener(ABC):
         if recursive:
             for child in list(self.children.values()):
                 await child.start(True)
-            # await self.__start_internal(recursive)
 
     async def on_start(self):
-        """...
-        """
+        """启动回调，子类可覆盖实现初始化逻辑"""
 
     async def stop(self, recursive: bool = True):
+        """
+        停止监听器
+
+        Args:
+            recursive: 是否递归停止子监听器
+        """
         if recursive:
             for child in list(self.children.values()):
                 await child.stop(True)
@@ -336,32 +390,38 @@ class Listener(ABC):
         await self.tick()
 
     async def on_stop(self):
-        """...
-        """
+        """停止回调，子类可覆盖实现清理逻辑"""
 
     async def restart(self, recursive: bool = True):
+        """
+        重启监听器
+
+        Args:
+            recursive: 是否递归重启子监听器
+        """
         await self.stop(recursive)
         assert self._state == ListenerState.STOPPED, "Listener must be stopped before restarting"
         await self.start(recursive)
 
     @property
     def logger_name(self) -> str:
-        """Return a short title for logging purposes."""
+        """获取日志器名称"""
         return self.name
 
     @cached_property
     def logger(self) -> logging.Logger:
-        """Return a logger instance for this listener."""
+        """获取日志器实例"""
         return logging.getLogger(self.logger_name)
 
     def log_state(self, console: Console, recursive: bool = True):
-        """Log the current state of the listener to the provided console."""
+        """将状态输出到控制台（子类可覆盖实现自定义输出）"""
         if recursive:
             for child in list(self.children.values()):
                 child.log_state(console, True)
 
     @property
     def log_state_dict(self) -> dict:
+        """获取状态字典（用于日志输出）"""
         return {
             'enabled': self.enabled,
             'ready': self.ready,
@@ -372,11 +432,11 @@ class Listener(ABC):
 
     @property
     def id(self) -> str:
-        """Return a unique identifier for this listener instance."""
+        """获取唯一标识符"""
         return f"{self.__class__.__name__}-{id(self)}"
 
     def __iter__(self) -> Iterator['Listener']:
-        """Iterate over self and all descendant listeners (depth-first)."""
+        """迭代器：深度优先遍历所有子监听器和自身"""
         for child in self.children.values():
             yield from child
         yield self

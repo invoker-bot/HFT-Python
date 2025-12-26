@@ -1,3 +1,11 @@
+"""
+应用核心模块
+
+AppCore 是整个 HFT 系统的入口，负责：
+- 管理所有子监听器的生命周期
+- 运行主循环并处理异常
+- 协调健康检查、状态日志、缓存等功能
+"""
 import asyncio
 from typing import Optional, TYPE_CHECKING
 from .listener import Listener
@@ -9,8 +17,23 @@ if TYPE_CHECKING:
 
 
 class AppCore(Listener):
+    """
+    应用核心类
+
+    作为所有监听器的根节点，管理整个应用的生命周期。
+    默认包含三个子监听器：
+    - UnhealthyRestartListener: 自动重启不健康的监听器
+    - StateLogListener: 定期输出状态日志
+    - CacheListener: 定期保存应用状态到磁盘
+    """
 
     def __init__(self, config: "AppConfig"):
+        """
+        初始化应用核心
+
+        Args:
+            config: 应用配置对象
+        """
         super().__init__(interval=config.interval)
         self.config = config
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
@@ -18,22 +41,24 @@ class AppCore(Listener):
         self.add_child(CacheListener(interval=config.cache_interval))
 
     def loop(self):
+        """同步启动主循环（阻塞）"""
         self.logger.info("Starting AppCore loop")
         asyncio.run(self.run_ticks(-1))
 
     async def on_tick(self):
+        """主循环回调，子类可覆盖实现具体逻辑"""
         pass
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,
                         finalize: Optional[bool] = None):
         """
-        Run the main loop for a specific duration.
+        运行主循环
 
         Args:
-            duration: Duration in seconds to run. Use -1 for infinite loop.
-            initialize: Whether to call start() at the beginning. Defaults to True if duration < 0.
-            finalize: Whether to call stop() at the end. Defaults to True if duration < 0.
+            duration: 运行时长（秒），-1 表示无限循环
+            initialize: 是否在开始时调用 start()，默认无限循环时为 True
+            finalize: 是否在结束时调用 stop()，默认无限循环时为 True
         """
         self.logger.debug("Running %f total", self.to_duration_string(duration))
 
