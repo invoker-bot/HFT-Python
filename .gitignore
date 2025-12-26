@@ -101,6 +101,5 @@ secrets.yaml
 Thumbs.db
 
 # Project specific
-conf/exchanges/
 
 .claude/

@@ -1,8 +1,10 @@
 import textwrap
+import inspect
+from abc import abstractmethod
 from glob import glob
 from os import path, makedirs
-from functools import cache
-from typing import ClassVar, Self, Optional, Union
+from functools import cached_property
+from typing import ClassVar, Self, Optional, Union, Generic, TypeVar, Type
 import yaml
 from prompt_toolkit import prompt
 from prompt_toolkit.validation import Validator
@@ -27,26 +29,41 @@ def prompt_with_completion(message: str, choices: list[str], multiple: bool = Fa
         return result
 
 
-class BaseConfig(BaseModel):
+T = TypeVar('T')
+
+
+class BaseConfig(BaseModel, Generic[T]):
 
     class_dir: ClassVar[str] = "conf/"
-
     class_name: ClassVar[Optional[str]] = None
 
     @classmethod
-    @cache
+    @abstractmethod
+    def get_class_type(cls) -> Type[T]:
+        """子类必须实现，返回对应的类型"""
+        ...
+
+    @cached_property
+    def instance(self) -> T:
+        return self.get_class_type()(self)
+
+    @classmethod
     def all_classes(cls) -> dict[str, type[Self]]:
+        """获取所有子类（不缓存，避免导入顺序问题）"""
         result = {}
-        if cls.class_name is not None:
+        if cls.class_name is not None and not inspect.isabstract(cls):
             result[cls.class_name] = cls
-        for cls in cls.__subclasses__():
-            result.update(cls.all_classes())
+        for subcls in cls.__subclasses__():
+            result.update(subcls.all_classes())
         return result
 
     path: str = Field(description="The class path name")
 
     def __init_subclass__(cls, **kwargs):
-        cls.model_fields["path"].default = f"{cls.class_name}/{cls.class_name}"
+        if len(cls.all_classes()) <= 1:
+            cls.model_fields["path"].default = cls.class_name
+        else:
+            cls.model_fields["path"].default = f"{cls.class_name}/{cls.class_name}"
         return super().__init_subclass__(**kwargs)
 
     @classmethod

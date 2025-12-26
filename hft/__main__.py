@@ -26,7 +26,7 @@ def app_callback(password: str = password_option, debug: bool = False):
     """
     CrossBot Command Line Interface
     """
-    for dir_path in ["logs", "data", "conf/exchanges"]:
+    for dir_path in ["logs", "data", "conf/exchange"]:
         makedirs(dir_path, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO if not debug else logging.DEBUG,

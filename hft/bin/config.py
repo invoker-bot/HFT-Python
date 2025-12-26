@@ -1,8 +1,15 @@
 import typer
 from rich.console import Console
-# from ..exchanges.extend import BaseExchangeConfig
-# from ..strategy.extend import BaseStrategyConfig
-from ..config.app import AppConfig
+from ..exchange import (
+    BaseExchangeConfig,
+    BinanceExchangeConfig,  # noqa: F401 - 注册子类
+    OKXExchangeConfig,      # noqa: F401 - 注册子类
+)
+from ..strategy import (
+    BaseStrategyConfig,
+    SimpleStrategyConfig,   # noqa: F401 - 注册子类
+)
+from ..config import AppConfig
 
 app = typer.Typer()
 gen_group = typer.Typer()
@@ -14,25 +21,26 @@ password_option = typer.Option(..., "--password", "-p", help="Password to encryp
 console = Console(width=300)
 
 
-# @app.command()
-# def exchange():  # password: str = password_option):
-#     """
-#     Generate exchange configuration file.
-#     """
-#     config_obj = BaseExchangeConfig.prompt_for_config()
-#     config_obj.save()
-#     typer.echo(f"Exchange configuration saved to {config_obj.config_path()}")
-# 
-# 
-# @app.command()
-# def strategy():
-#     """
-#     Generate strategy configuration file.
-#     """
-#     config_obj = BaseStrategyConfig.prompt_for_config()
-#     print(config_obj.class_name)
-#     config_obj.save()
-#     typer.echo(f"Strategy configuration saved to {config_obj.config_path()}")
+@gen_group.command()
+def exchange():
+    """
+    Generate exchange configuration file.
+    """
+    typer.echo("Generating exchange configuration...")
+    config_obj = BaseExchangeConfig.prompt_for_config()
+    config_obj.save()
+    typer.echo(f"Exchange configuration saved to {config_obj.abs_path}")
+
+
+@gen_group.command()
+def strategy():
+    """
+    Generate strategy configuration file.
+    """
+    typer.echo("Generating strategy configuration...")
+    config_obj = BaseStrategyConfig.prompt_for_config()
+    config_obj.save()
+    typer.echo(f"Strategy configuration saved to {config_obj.abs_path}")
 
 
 @gen_group.command(name="app")
@@ -50,9 +58,40 @@ def gen_application():
 def show_application(pathname: str):
     """
     Show application configuration file.
+
+    Args:
+        pathname: Name of the app config file (e.g., 'myapp')
     """
     typer.echo("Showing application configuration...")
     config_obj = AppConfig.load(pathname)
+    typer.echo(f"config class: {config_obj.class_name}")
+    console.print(config_obj.model_dump_json(indent=4))
+
+
+@show_group.command(name="exchange")
+def show_exchange(pathname: str):
+    """
+    Show exchange configuration file.
+
+    Args:
+        pathname: Exchange config path (e.g., 'binance/main')
+    """
+    typer.echo("Showing exchange configuration...")
+    config_obj = BaseExchangeConfig.load(pathname)
+    typer.echo(f"config class: {config_obj.class_name}")
+    console.print(config_obj.model_dump_json(indent=4))
+
+
+@show_group.command(name="strategy")
+def show_strategy(pathname: str):
+    """
+    Show strategy configuration file.
+
+    Args:
+        pathname: Strategy config path (e.g., 'simple/btc')
+    """
+    typer.echo("Showing strategy configuration...")
+    config_obj = BaseStrategyConfig.load(pathname)
     typer.echo(f"config class: {config_obj.class_name}")
     console.print(config_obj.model_dump_json(indent=4))
 

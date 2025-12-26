@@ -3,17 +3,25 @@ import traceback
 import typer
 from rich.table import Table
 from .config import console
-from ..config.app import AppConfig
+from ..config import AppConfig
+from ..exchange import (
+    BaseExchangeConfig,
+    BinanceExchangeConfig,  # noqa: F401 - 注册子类
+    OKXExchangeConfig,      # noqa: F401 - 注册子类
+)
 from ..core.app import AppCore
+from ..test.exchange import test_exchange_async
 
 
 app = typer.Typer()
+test_group = typer.Typer(help="Test commands")
+app.add_typer(test_group, name="test")
 
 
 @app.command()
 def main(app_name: str):
     app_config: AppConfig = AppConfig.load(app_name)
-    app_core = AppCore(app_config)
+    app_core = app_config.instance  # AppCore(app_config)
     app_core.loop()
     # trade_core: TradeCore = TradeCore(app_config)
     # trade_core.loop()
@@ -97,3 +105,16 @@ async def balance_async(app_name: str):
         console.print(f"[red]Error: {str(e)}[/red]")
         if app_config and app_config.debug:
             console.print(traceback.format_exc())
+
+
+# ========== Test Commands ==========
+
+@test_group.command(name="exchange")
+def test_exchange(path: str):
+    """
+    Test exchange API connectivity and latency.
+
+    Args:
+        path: Exchange config path (e.g., 'binance/main')
+    """
+    asyncio.run(test_exchange_async(path))
