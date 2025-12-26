@@ -1,7 +1,7 @@
 from .listener import Listener
 
 
-class UnHealthyRestartListener(Listener):
+class UnhealthyRestartListener(Listener):
     """
     A Listener that automatically restarts itself upon becoming unhealthy.
     """

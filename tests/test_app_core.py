@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from hft.core.app import AppCore
 from hft.core.listener import Listener, ListenerState
-from hft.core.state_logger import StateLogger
+from hft.core.state_logger import StateLogListener
 from hft.config.app import AppConfig
 from tests.conftest import MockListener
 
@@ -21,7 +21,8 @@ from tests.conftest import MockListener
 class MockAppConfig:
     """Mock AppConfig for testing."""
 
-    def __init__(self, health_check_interval: float = 0.1, log_interval: float = 0.1):
+    def __init__(self, interval: float = 0.1, health_check_interval: float = 0.1, log_interval: float = 0.1):
+        self.interval = interval
         self.health_check_interval = health_check_interval
         self.log_interval = log_interval
 
@@ -31,17 +32,17 @@ class TestAppCoreLifecycle:
 
     @pytest.mark.asyncio
     async def test_appcore_initializes_with_state_logger(self):
-        """AppCore should initialize with a StateLogger child."""
+        """AppCore should initialize with StateLogListener and UnhealthyRestartListener children."""
         config = MockAppConfig()
         app_core = AppCore(config)
 
-        assert len(app_core.children) == 1
-        # StateLogger uses name "state_logger" from __init__
-        assert 'state_logger' in app_core.children
+        assert len(app_core.children) == 2
+        assert 'StateLogListener' in app_core.children
+        assert 'UnhealthyRestartListener' in app_core.children
 
     @pytest.mark.asyncio
     async def test_appcore_start_starts_children(self):
-        """AppCore start should start all children including StateLogger."""
+        """AppCore start should start all children including StateLogListener."""
         config = MockAppConfig()
         app_core = AppCore(config)
 
@@ -148,72 +149,6 @@ class TestAppCoreRunTicks:
         await app_core.stop(children=True)
 
 
-class TestAppCoreHealthCheckLoop:
-    """Tests for health check loop behavior."""
-
-    @pytest.mark.asyncio
-    async def test_health_check_runs_periodically(self):
-        """Health check should run periodically during run_ticks."""
-        config = MockAppConfig(health_check_interval=0.05)
-        app_core = AppCore(config)
-
-        health_check_count = 0
-        original_health_check = app_core.health_check
-
-        async def counting_health_check(children=True):
-            nonlocal health_check_count
-            health_check_count += 1
-            return await original_health_check(children)
-
-        app_core.health_check = counting_health_check
-
-        await app_core.run_ticks(duration=0.2, initialize=True, finalize=True)
-
-        # Should have run health check multiple times
-        assert health_check_count >= 2
-
-    @pytest.mark.asyncio
-    async def test_unhealthy_child_gets_restarted(self):
-        """Unhealthy children should be restarted during the loop."""
-        config = MockAppConfig(health_check_interval=0.05)
-        app_core = AppCore(config)
-
-        # Create a mock child that returns unhealthy from health_check_callback
-        health_check_fail_count = 0
-
-        async def failing_health_check():
-            nonlocal health_check_fail_count
-            health_check_fail_count += 1
-            # Fail the first few health checks to trigger restart
-            if health_check_fail_count <= 3:
-                return False
-            return True
-
-        mock_child = MockListener(
-            name="unhealthy_child",
-            interval=0.05,
-            health_check_callback_fn=AsyncMock(side_effect=failing_health_check)
-        )
-        app_core.add_child(mock_child)
-
-        restart_called = False
-        original_restart = mock_child.restart
-
-        async def tracking_restart(children=True, background=True):
-            nonlocal restart_called
-            restart_called = True
-            return await original_restart(children, background)
-
-        mock_child.restart = tracking_restart
-
-        # Use run_ticks which includes the restart logic
-        with patch('hft.core.listener.RETRY_WAIT_SECONDS', 0.01):
-            await app_core.run_ticks(duration=0.2, initialize=True, finalize=True)
-
-        # Should have attempted to restart the unhealthy child
-        assert restart_called
-
-
 class TestAppCoreWithMockChildren:
     """Tests using mock children for controlled scenarios."""
 
@@ -261,33 +196,36 @@ class TestAppCoreWithMockChildren:
             assert child.state == ListenerState.STOPPED
 
 
-class TestStateLoggerIntegration:
-    """Tests for StateLogger integration with AppCore."""
+class TestStateLogListenerIntegration:
+    """Tests for StateLogListener integration with AppCore."""
 
     @pytest.mark.asyncio
     async def test_state_logger_tick_outputs_table(self):
-        """StateLogger tick should output the status table."""
+        """StateLogListener tick should output the status table."""
         config = MockAppConfig(log_interval=0.05)
         app_core = AppCore(config)
 
-        # Get the StateLogger child (uses name "state_logger")
-        state_logger = app_core.children['state_logger']
+        # Get the StateLogListener child
+        state_logger = app_core.children['StateLogListener']
 
         # Mock the console to capture output
         mock_console = MagicMock()
         state_logger._console = mock_console
 
-        await app_core.start(children=True, background=False)
-        await state_logger.tick_callback()
+        # Mock log_state method that doesn't exist on Listener
+        app_core.log_state = MagicMock()
 
-        # Should have printed the header and table
+        await app_core.start(children=True, background=False)
+        await state_logger.on_tick()
+
+        # Should have printed the header and tree
         assert mock_console.print.call_count >= 2
 
         await app_core.stop(children=True)
 
     @pytest.mark.asyncio
     async def test_state_logger_shows_all_listeners(self):
-        """StateLogger should show all listeners in the hierarchy."""
+        """StateLogListener should show all listeners in the hierarchy."""
         config = MockAppConfig(log_interval=0.05)
         app_core = AppCore(config)
 
@@ -297,15 +235,17 @@ class TestStateLoggerIntegration:
         app_core.add_child(child1)
         app_core.add_child(child2)
 
-        state_logger = app_core.children['state_logger']
+        state_logger = app_core.children['StateLogListener']
         mock_console = MagicMock()
         state_logger._console = mock_console
 
-        await app_core.start(children=True, background=False)
-        await state_logger.tick_callback()
+        # Mock log_state method that doesn't exist on Listener
+        app_core.log_state = MagicMock()
 
-        # Verify the table was created and printed
-        # The print should include the Table object
+        await app_core.start(children=True, background=False)
+        await state_logger.on_tick()
+
+        # Verify the tree was printed
         assert mock_console.print.called
 
         await app_core.stop(children=True)

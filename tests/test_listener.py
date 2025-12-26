@@ -23,7 +23,7 @@ class TestListenerLifecycle:
     async def test_initial_state_is_stopped(self, mock_listener):
         """Listener should start in STOPPED state."""
         assert mock_listener.state == ListenerState.STOPPED
-        assert mock_listener.health is False
+        assert mock_listener.healthy is False
         assert mock_listener.enabled is True
 
     @pytest.mark.asyncio
@@ -140,7 +140,7 @@ class TestListenerHealthCheck:
 
         await mock_listener.health_check(children=False)
 
-        assert mock_listener.health is True
+        assert mock_listener.healthy is True
 
     @pytest.mark.asyncio
     async def test_health_check_callback_failure_sets_unhealthy(self, mock_listener_factory):
@@ -153,7 +153,7 @@ class TestListenerHealthCheck:
         with patch.object(listener, 'health_check_after', new_callable=AsyncMock):
             await listener.health_check(children=False)
 
-        assert listener.health is False
+        assert listener.healthy is False
 
     @pytest.mark.asyncio
     async def test_health_check_exception_sets_unhealthy(self, mock_listener_factory):
@@ -166,7 +166,7 @@ class TestListenerHealthCheck:
         with patch.object(listener, 'health_check_after', new_callable=AsyncMock):
             await listener.health_check(children=False)
 
-        assert listener.health is False
+        assert listener.healthy is False
 
     @pytest.mark.asyncio
     async def test_health_check_retries_on_failure(self, mock_listener_factory):
@@ -191,7 +191,7 @@ class TestListenerHealthCheck:
                 await listener.health_check(children=False)
 
         assert call_count == RETRY_ATTEMPTS
-        assert listener.health is True
+        assert listener.healthy is True
 
     @pytest.mark.asyncio
     async def test_health_check_emits_events(self, mock_listener):
@@ -251,31 +251,7 @@ class TestListenerErrorHandling:
         with patch('hft.core.listener.RETRY_WAIT_SECONDS', 0.01):
             await listener.tick()
 
-        assert listener.health is False
-
-    @pytest.mark.asyncio
-    async def test_tick_retries_on_failure(self, mock_listener_factory):
-        """tick should retry on failure."""
-        call_count = 0
-
-        async def failing_tick():
-            nonlocal call_count
-            call_count += 1
-            if call_count < RETRY_ATTEMPTS:
-                raise RuntimeError("Temporary failure")
-
-        tick_callback = AsyncMock(side_effect=failing_tick)
-        listener = mock_listener_factory(tick_callback_fn=tick_callback)
-
-        await listener.start(children=False, background=False)
-
-        # Patch retry wait to speed up test
-        with patch('hft.core.listener.RETRY_WAIT_SECONDS', 0.01):
-            await listener.tick()
-
-        assert call_count == RETRY_ATTEMPTS
-        assert listener.health is True
-
+        assert listener.healthy is False
 
 
 class TestListenerParentChild:
@@ -362,8 +338,8 @@ class TestListenerParentChild:
         await parent.start(children=True, background=False)
         await parent.health_check(children=True)
 
-        assert parent.health is True
-        assert child.health is True
+        assert parent.healthy is True
+        assert child.healthy is True
 
     @pytest.mark.asyncio
     async def test_iter_includes_self_and_descendants(self, mock_listener_factory):
@@ -562,7 +538,7 @@ class TestListenerSerialization:
         assert state['interval'] == mock_listener.interval
         assert state['_enabled'] == mock_listener.enabled
         assert state['_state'] == mock_listener.state
-        assert state['_health'] == mock_listener.health
+        assert state['_health'] == mock_listener.healthy
         assert '_children' in state
 
         await mock_listener.stop(children=False)

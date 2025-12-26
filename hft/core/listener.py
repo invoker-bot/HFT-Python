@@ -158,7 +158,7 @@ class Listener:
         self.logger.debug("enabled status set to %s", value)
 
     @property
-    def health(self) -> bool:
+    def healthy(self) -> bool:
         """Get the health status of this listener."""
         return self._health
 
@@ -178,7 +178,7 @@ class Listener:
         return {
             'enabled': self.enabled,
             'ready': self.ready,
-            'healthy': self.health,
+            'healthy': self.healthy,
             'state': self.state,
             'parent': self.parent.name if self.parent else None,
             'children': len(self._children),
