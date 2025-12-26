@@ -21,6 +21,7 @@ class StateLogListener(Listener):
         ├── Controller [running] ♥
         └── Executor [running] ♥
     """
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_console")
 
     def __init__(self, interval: float = 300, max_depth: int = 5, console: Optional[Console] = None):
         """
@@ -30,8 +31,12 @@ class StateLogListener(Listener):
             console: Rich Console 实例
         """
         super().__init__(interval=interval)
-        self._console = console or Console(width=120)
+        self._console = console or Console(width=300)
         self._max_depth = max_depth
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        self._console = Console(width=300)
 
     def _get_state_icon(self, listener: Listener) -> str:
         """获取状态图标"""

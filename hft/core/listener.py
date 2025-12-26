@@ -9,29 +9,30 @@ import logging
 import weakref
 from datetime import datetime
 from functools import cached_property
+from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Optional, Callable, Coroutine, Iterator, Any
+from typing import Optional, Coroutine, Iterator
 from rich.console import Console
 from humanfriendly import format_timespan
-from tenacity import AsyncRetrying, stop_after_attempt, wait_fixed, RetryCallState
+from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState
 
 
 class ListenerState(StrEnum):
     """Listener 状态枚举"""
-    STOPPED = "stopped"
     STARTING = "starting"
     RUNNING = "running"
     STOPPING = "stopping"
-    FINISHED = "finished"  # for tasks that complete successfully
+    STOPPED = "stopped"
+    FINISHED = "finished"  # for tasks that complete successfully, 说明这个可以正常退出
     ERROR = "error"
 
 
 # constants
 RETRY_ATTEMPTS = 3
-RETRY_WAIT_SECONDS = 0.5
+RETRY_WAIT_SECONDS = 5
 
 
-class Listener:
+class Listener(ABC):
     """
     交易核心监听器基类
 
@@ -44,12 +45,13 @@ class Listener:
     - 通知系统：发送告警、通知
     - 可用于 Listener 之间的通信
     """
-    __pickle_exclude__ = ("_parent", "_background_tasks", "_alock", "_event_handlers")
+    __pickle_exclude__ = ("_parent", "_background_task", "_alock")
 
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
         Initialize listener.
         """
+        # Initialize EventEmitter first
         if name is None:
             name = f"{self.__class__.__name__}"
         self.name = name
@@ -58,16 +60,13 @@ class Listener:
         # Initialize Listener-specific attributes
         self._parent: Optional[weakref.ReferenceType['Listener']] = None
         self._children: dict[str, 'Listener'] = {}
-        self._background_tasks: dict[str, asyncio.Task] = {}
+        self._background_task: Optional[asyncio.Task] = None
 
         # Internal state
         self._enabled = True
-        self._state: ListenerState = ListenerState.STOPPED
-        self._health = False
+        self._state: ListenerState = ListenerState.STARTING  # build-in state
+        self._healthy = False
         self._alock = asyncio.Lock()
-
-        # Event handlers
-        self._event_handlers: dict[str, list[Callable]] = {}
 
         self.start_time = self.current_time
 
@@ -78,35 +77,29 @@ class Listener:
         Excludes non-serializable objects (locks, tasks, weakrefs, logger).
         Recursively includes all children's state.
         """
-        state = {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
-        # Recursively serialize children
-        state['_children'] = {name: child.__getstate__() for name, child in self._children.items()}
-        return state
+        return {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
 
     def __setstate__(self, state: dict):
         """
         Restore state from pickled data.
 
         Reinitializes non-serializable objects (locks, tasks, weakrefs).
+        Recursively restores all children's state.
         """
+        # Restore basic attributes
         self.__dict__.update(state)
 
         # Reinitialize non-serializable objects
         self._parent = None
         self._alock = asyncio.Lock()
-        self._background_tasks = {}
-        self._event_handlers = {}
+        self._background_task = None
 
-        # Restore children's parent reference
+        # Restore children (note: subclasses must handle actual child reconstruction)
         for child in self._children.values():
-            if isinstance(child, dict):
-                # Child was serialized as dict, needs reconstruction
-                pass
-            else:
-                child._parent = weakref.ref(self)
+            child.parent = self
 
     @property
-    def current_time(self) -> float:
+    def current_time(self):
         return time.time()
 
     @property
@@ -121,76 +114,52 @@ class Listener:
     def to_duration_string(self, seconds: float) -> str:
         return format_timespan(seconds)
 
-    # ==================== Event System ====================
+    async def loop_coro_in_background(self, coro: Coroutine, interval: float = 0.001,
+                                      finalizer: Optional[Coroutine] = None, params: Optional[dict] = None):
+        if params is None:
+            params = {}
+        while True:
+            start = time.time()
+            should_finalize = False
+            try:
+                if await coro(**params):
+                    should_finalize = True  # Exit if the coroutine signals completion: return True
+            except asyncio.CancelledError:
+                should_finalize = True  # Allow task to be cancelled gracefully
+            except Exception as e:
+                self.logger.exception("Exception in background task: %s", str(e))
+            finally:
+                if not should_finalize:
+                    await asyncio.sleep(max(0, interval - (time.time() - start)))
+            if should_finalize:
+                if finalizer is not None:
+                    await finalizer()
+                break
 
-    def on(self, event: str) -> Callable:
-        """Decorator to register an event handler."""
-        def decorator(func: Callable) -> Callable:
-            if event not in self._event_handlers:
-                self._event_handlers[event] = []
-            self._event_handlers[event].append(func)
-            return func
-        return decorator
+    def update_background(self):
+        bt = self._background_task
+        if bt is None or bt.done():  # no existing task or already completed
+            self._background_task = asyncio.create_task(
+                self.loop_coro_in_background(self.tick, self.interval, self.stop),
+                name=f"{self.name}-background-task"
+            )
 
-    def emit(self, event: str, *args, **kwargs) -> None:
-        """Emit an event to all registered handlers."""
-        if event in self._event_handlers:
-            for handler in self._event_handlers[event]:
-                try:
-                    handler(*args, **kwargs)
-                except Exception as e:
-                    self.logger.warning(f"Event handler error for '{event}': {e}")
-
-    # ==================== State Properties ====================
+    def delete_background(self):
+        bt = self._background_task
+        if bt is not None:
+            bt.cancel()
+            # wait for task to be cancelled and to execute stop finalizer
+            self._background_task = None
 
     @property
     def state(self) -> ListenerState:
         return self._state
 
     @property
-    def enabled(self) -> bool:
-        """Check if this listener is enabled."""
-        return self._enabled
-
-    @enabled.setter
-    def enabled(self, value: bool) -> None:
-        self._enabled = value
-        self.logger.debug("enabled status set to %s", value)
-
-    @property
-    def healthy(self) -> bool:
-        """Get the health status of this listener."""
-        return self._health
-
-    @property
-    def ready(self) -> bool:
-        """
-        Check if the listener is ready.
-
-        Returns:
-            True if enabled and running, False otherwise
-        """
-        return self.enabled and self._state == ListenerState.RUNNING
-
-    @property
-    def state_dict(self) -> dict:
-        """Return current state as a dictionary."""
-        return {
-            'enabled': self.enabled,
-            'ready': self.ready,
-            'healthy': self.healthy,
-            'state': self.state,
-            'parent': self.parent.name if self.parent else None,
-            'children': len(self._children),
-            'task_count': len(self._background_tasks),
-            'uptime': self.uptime,
-        }
-
-    # ==================== Parent-Child Relationships ====================
-
-    @property
     def root(self) -> 'Listener':
-        """Get the root Listener instance."""
+        """
+        Get the Root instance this listener is attached to.
+        """
         parent = self.parent
         if parent is None:
             return self
@@ -198,14 +167,16 @@ class Listener:
 
     @property
     def parent(self) -> Optional['Listener']:
-        """Get the parent Listener instance."""
+        """
+        Get the Parent instance this listener is attached to.
+        """
         if self._parent is None:
             return None
         return self._parent()
 
     @parent.setter
-    def parent(self, parent: Optional['Listener']) -> None:
-        """Set the parent Listener instance."""
+    def parent(self, parent: Optional['Listener']):
+        """Set the Parent instance this listener is attached to."""
         if parent is None:
             self._parent = None
         else:
@@ -213,241 +184,165 @@ class Listener:
 
     @property
     def children(self) -> dict[str, 'Listener']:
-        """Get the child listeners."""
+        """Get the Child listeners attached to this listener."""
         return self._children
 
-    def add_child(self, child: 'Listener') -> None:
-        """Add a child listener."""
+    def add_child(self, child: 'Listener'):
+        """Add a Child listener to this listener."""
         self._children[child.name] = child
         child.parent = self
 
-    def remove_child(self, child_name: str) -> None:
-        """Remove a child listener by name."""
+    def remove_child(self, child_name: str):
+        """Remove a Child listener from this listener by name."""
         if child_name in self._children:
             self._children[child_name].parent = None
             self._children.pop(child_name, None)
 
-    def __iter__(self) -> Iterator['Listener']:
-        """Iterate over self and all descendant listeners (depth-first)."""
-        for child in self.children.values():
-            yield from child
-        yield self
+    @property
+    def enabled(self) -> bool:
+        """Check if this listener is enabled."""
+        return self._enabled
 
-    # ==================== Background Tasks ====================
+    @enabled.setter
+    def enabled(self, value: bool):
+        self._enabled = value
+        self.logger.debug("enabled status set to %s", value)
 
-    def add_background_task(
-        self,
-        name: str,
-        coro_func: Callable[[], Coroutine],
-        interval: float = 1.0,
-        finalizer: Optional[Callable[[], Coroutine]] = None,
-    ) -> None:
-        """Add a background task that runs periodically."""
-        if name in self._background_tasks:
-            self.remove_background_task(name)
+    @property
+    def healthy(self) -> bool:
+        """Get the health status of this listener."""
+        return self._healthy
 
-        async def task_loop():
-            while True:
-                start = time.time()
-                should_stop = False
-                try:
-                    result = await coro_func()
-                    if result is True:  # Signal to stop
-                        should_stop = True
-                except asyncio.CancelledError:
-                    should_stop = True
-                except Exception as e:
-                    self.logger.exception("Exception in background task '%s': %s", name, e)
-
-                if should_stop:
-                    if finalizer is not None:
-                        try:
-                            await finalizer()
-                        except Exception as e:
-                            self.logger.exception("Exception in finalizer for '%s': %s", name, e)
-                    break
-
-                elapsed = time.time() - start
-                await asyncio.sleep(max(0, interval - elapsed))
-
-        task = asyncio.create_task(task_loop(), name=f"{self.name}-{name}")
-        self._background_tasks[name] = task
-
-    def remove_background_task(self, name: str) -> None:
-        """Remove and cancel a background task."""
-        if name in self._background_tasks:
-            task = self._background_tasks.pop(name)
-            task.cancel()
-
-    def remove_all_background_tasks(self) -> None:
-        """Remove all background tasks."""
-        for name in list(self._background_tasks.keys()):
-            self.remove_background_task(name)
-
-    # ==================== Lifecycle Callbacks ====================
-
-    async def start_callback(self) -> None:
-        """Called when the listener starts. Override in subclasses."""
-        pass
-
-    async def stop_callback(self) -> None:
-        """Called when the listener stops. Override in subclasses."""
-        pass
-
-    async def tick_callback(self) -> Optional[bool]:
+    @property
+    def ready(self) -> bool:
         """
-        Called on each tick. Override in subclasses.
+        Check if the listener is ready.
+
+        Override this method to implement custom readiness checks.
 
         Returns:
-            True to signal completion (stop the listener), None/False to continue
+            True if ready, False otherwise
         """
-        pass
+        return self.enabled and self.healthy and self._state == ListenerState.RUNNING
 
-    async def health_check_callback(self) -> bool:
-        """
-        Called during health check. Override in subclasses.
-
-        Returns:
-            True if healthy, False otherwise
-        """
+    async def on_health_check(self):
         return True
 
-    async def health_check_after(self, retry_state: RetryCallState) -> None:
-        """Called after each health check attempt (including failures)."""
-        if retry_state.attempt_number > 1:
-            self.logger.warning("Health check attempt %d failed", retry_state.attempt_number - 1)
+    async def on_health_check_error(self, retry_state: RetryCallState):
+        """this is called after each failed health check attempt"""
+        self.logger.warning("Health check attempt %d failed", retry_state.attempt_number - 1)
 
-    # ==================== Lifecycle Methods ====================
-
-    async def start(self, children: bool = True, background: bool = False) -> None:
-        """
-        Start the listener.
-
-        Args:
-            children: Whether to start child listeners
-            background: Whether to start background tick task
-        """
-        async with self._alock:
-            if self._state == ListenerState.RUNNING:
-                return  # Already running
-
-            if self._state != ListenerState.STOPPED:
-                self.logger.warning("Start called but listener in state %s", self._state)
-                return
-
-            self._state = ListenerState.STARTING
-            try:
-                await self.start_callback()
-                self.start_time = self.current_time
-                self._state = ListenerState.RUNNING
-                self._health = True
-                self.emit('started')
-            except Exception as e:
-                self._state = ListenerState.ERROR
-                self.logger.error("Error during start: %s", e, exc_info=True)
-                return
-
-        if background:
-            self.add_background_task("tick", self.tick, self.interval)
-
-        if children:
-            for child in list(self._children.values()):
-                await child.start(children=True, background=background)
-
-    async def stop(self, children: bool = True) -> None:
-        """
-        Stop the listener.
-
-        Args:
-            children: Whether to stop child listeners
-        """
-        if children:
-            for child in list(self._children.values()):
-                await child.stop(children=True)
-
-        async with self._alock:
-            if self._state == ListenerState.STOPPED:
-                return  # Already stopped
-
-            if self._state not in (ListenerState.RUNNING, ListenerState.STARTING):
-                self.logger.warning("Stop called but listener in state %s", self._state)
-                return
-
-            self._state = ListenerState.STOPPING
-            try:
-                await self.stop_callback()
-                self._state = ListenerState.STOPPED
-                self.emit('stopped')
-            except Exception as e:
-                self._state = ListenerState.ERROR
-                self.logger.error("Error during stop: %s", e, exc_info=True)
-
-        self.remove_all_background_tasks()
-
-    async def restart(self, children: bool = True, background: bool = False) -> None:
-        """Restart the listener."""
-        await self.stop(children=children)
-        await self.start(children=children, background=background)
-
-    async def tick(self) -> Optional[bool]:
-        """Execute a single tick."""
-        if self._state != ListenerState.RUNNING:
-            return None
-
-        try:
-            result = await self.tick_callback()
-            self._health = True
-            if result is True:
-                # Task signaled completion
-                async with self._alock:
-                    self._state = ListenerState.STOPPING
-                    await self.stop_callback()
-                    self._state = ListenerState.FINISHED
-                return True
-        except Exception as e:
-            self._health = False
-            self.logger.error("Error during tick: %s", e, exc_info=True)
-
-        return None
-
-    async def health_check(self, children: bool = True) -> None:
-        """
-        Perform health check.
-
-        Args:
-            children: Whether to check child listeners
-        """
-        if children:
-            for child in list(self._children.values()):
-                await child.health_check(children=True)
+    async def health_check(self, recursive: bool = True):
+        if recursive:
+            for child in list(self.children.values()):
+                await child.health_check(True)
                 if child.state == ListenerState.FINISHED:
-                    child.remove_all_background_tasks()
+                    child.delete_background()
                     self.remove_child(child.name)
-
-        self.emit('health_check')
-
-        if self._state != ListenerState.RUNNING:
-            return
-
         try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(RETRY_ATTEMPTS),
-                wait=wait_fixed(RETRY_WAIT_SECONDS),
-                reraise=True,
-                after=self.health_check_after,
-            ):
+            async for attempt in AsyncRetrying(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS),
+                                               reraise=True, after=self.on_health_check_error):
                 with attempt:
-                    result = await self.health_check_callback()
+                    result = await self.on_health_check()
                     if not result:
-                        raise ValueError("Health check returned unhealthy status")
-
-            self._health = True
+                        raise ValueError("returned unhealthy status")
+            if self.enabled:
+                self.update_background()
+            self._healthy = True
         except Exception as e:
-            self._health = False
-            self.emit('unhealthy')
+            self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
 
-    # ==================== Logging ====================
+    @abstractmethod
+    async def on_tick(self) -> bool:  # return True to stop the loop
+        """
+        Called on each tick.
+        """
+
+    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True)
+    async def __tick_internal(self) -> bool:
+        try:
+            match self._state:
+                case ListenerState.STARTING:
+                    if self.enabled:
+                        await self.on_start()
+                        self.start_time = self.current_time
+                        self._state = ListenerState.RUNNING
+                    else:
+                        self._state = ListenerState.STOPPED
+                case ListenerState.RUNNING:
+                    if self.enabled:
+                        try:
+                            result = await self.on_tick()
+                            self._healthy = True
+                            if result:  # task signaled completion
+                                self._state = ListenerState.STOPPING
+                                await self.on_stop()
+                                self._state = ListenerState.FINISHED
+                        except asyncio.CancelledError:
+                            self._state = ListenerState.STOPPING
+                    else:
+                        self._state = ListenerState.STOPPING
+                    if self._state == ListenerState.STOPPING:  # disabled or stopping
+                        await self.on_stop()
+                        self._state = ListenerState.STOPPED
+                case ListenerState.STOPPING:
+                    await self.on_stop()
+                    self._state = ListenerState.STOPPED
+                case ListenerState.STOPPED:
+                    if self.enabled:
+                        self._state = ListenerState.STARTING
+                # ListenerState.FINISHED | ListenerState.ERROR:
+                #     if self.enabled
+        except Exception as e:
+            self._healthy = False
+            self.logger.error("Error during tick execution: %s", e, exc_info=True)
+
+    async def tick(self):
+        async with self._alock:
+            return await self.__tick_internal()
+
+    async def start(self, recursive: bool = True):
+        async with self._alock:
+            self.enabled = True
+            if self._state == ListenerState.STOPPED:
+                self._state = ListenerState.STARTING
+            else:
+                self.logger.warning("Start called but listener not stopped")
+        await self.tick()
+        self.update_background()
+        if recursive:
+            for child in list(self.children.values()):
+                await child.start(True)
+            # await self.__start_internal(recursive)
+
+    async def on_start(self):
+        """...
+        """
+
+    async def stop(self, recursive: bool = True):
+        if recursive:
+            for child in list(self.children.values()):
+                await child.stop(True)
+        async with self._alock:
+            self.enabled = False
+            if self._state == ListenerState.STARTING:
+                self._state = ListenerState.STOPPED
+            elif self._state == ListenerState.RUNNING:
+                self._state = ListenerState.STOPPING
+            else:
+                self.logger.warning("Stop called but listener not running")
+        self.delete_background()
+        await self.tick()
+
+    async def on_stop(self):
+        """...
+        """
+
+    async def restart(self, recursive: bool = True):
+        await self.stop(recursive)
+        assert self._state == ListenerState.STOPPED, "Listener must be stopped before restarting"
+        await self.start(recursive)
 
     @property
     def logger_name(self) -> str:
@@ -459,60 +354,29 @@ class Listener:
         """Return a logger instance for this listener."""
         return logging.getLogger(self.logger_name)
 
+    def log_state(self, console: Console, recursive: bool = True):
+        """Log the current state of the listener to the provided console."""
+        if recursive:
+            for child in list(self.children.values()):
+                child.log_state(console, True)
+
+    @property
+    def log_state_dict(self) -> dict:
+        return {
+            'enabled': self.enabled,
+            'ready': self.ready,
+            'healthy': self.healthy,
+            'state': self.state,
+            'uptime': self.uptime,
+        }
+
     @property
     def id(self) -> str:
         """Return a unique identifier for this listener instance."""
         return f"{self.__class__.__name__}-{id(self)}"
 
-    # ==================== Display ====================
-
-    def print_tree(self, console: Optional[Console] = None, prefix: str = "", is_last: bool = True, depth: int = 0, max_depth: int = 10) -> None:
-        """
-        Print the listener tree in a directory-like format.
-
-        Args:
-            console: Rich console to print to
-            prefix: Current line prefix
-            is_last: Whether this is the last child
-            depth: Current depth
-            max_depth: Maximum depth to display
-        """
-        if console is None:
-            console = Console()
-
-        if depth > max_depth:
-            return
-
-        # Determine the connector
-        if depth == 0:
-            connector = "📦 "
-        else:
-            connector = "└── " if is_last else "├── "
-
-        # State indicator
-        if self._state == ListenerState.RUNNING:
-            state_icon = "[green]●[/green]"
-        elif self._state == ListenerState.STOPPED:
-            state_icon = "[dim]○[/dim]"
-        elif self._state == ListenerState.ERROR:
-            state_icon = "[red]✗[/red]"
-        else:
-            state_icon = "[yellow]◐[/yellow]"
-
-        # Health indicator
-        health_icon = "[green]♥[/green]" if self._health else "[red]♡[/red]"
-
-        # Print this node
-        console.print(f"{prefix}{connector}{state_icon} {self.name} {health_icon}")
-
-        # Prepare prefix for children
-        if depth == 0:
-            child_prefix = ""
-        else:
-            child_prefix = prefix + ("    " if is_last else "│   ")
-
-        # Print children
-        children_list = list(self._children.values())
-        for i, child in enumerate(children_list):
-            is_last_child = (i == len(children_list) - 1)
-            child.print_tree(console, child_prefix, is_last_child, depth + 1, max_depth)
+    def __iter__(self) -> Iterator['Listener']:
+        """Iterate over self and all descendant listeners (depth-first)."""
+        for child in self.children.values():
+            yield from child
+        yield self

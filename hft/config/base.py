@@ -34,6 +34,7 @@ T = TypeVar('T')
 
 class BaseConfig(BaseModel, Generic[T]):
 
+    data_dir: ClassVar[str] = "data/"
     class_dir: ClassVar[str] = "conf/"
     class_name: ClassVar[Optional[str]] = None
 

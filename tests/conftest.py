@@ -13,30 +13,30 @@ class MockListener(Listener):
         self,
         name: Optional[str] = None,
         interval: float = 0.1,
-        tick_callback_fn: Optional[AsyncMock] = None,
-        start_callback_fn: Optional[AsyncMock] = None,
-        stop_callback_fn: Optional[AsyncMock] = None,
-        health_check_callback_fn: Optional[AsyncMock] = None,
+        on_tick_fn: Optional[AsyncMock] = None,
+        on_start_fn: Optional[AsyncMock] = None,
+        on_stop_fn: Optional[AsyncMock] = None,
+        on_health_check_fn: Optional[AsyncMock] = None,
     ):
         super().__init__(name or "MockListener", interval)
-        self._tick_callback_fn = tick_callback_fn or AsyncMock()
-        self._start_callback_fn = start_callback_fn or AsyncMock()
-        self._stop_callback_fn = stop_callback_fn or AsyncMock()
-        self._health_check_callback_fn = health_check_callback_fn
+        self._on_tick_fn = on_tick_fn or AsyncMock(return_value=False)
+        self._on_start_fn = on_start_fn or AsyncMock()
+        self._on_stop_fn = on_stop_fn or AsyncMock()
+        self._on_health_check_fn = on_health_check_fn
 
-    async def tick_callback(self):
-        return await self._tick_callback_fn()
+    async def on_tick(self) -> bool:
+        return await self._on_tick_fn()
 
-    async def start_callback(self):
-        return await self._start_callback_fn()
+    async def on_start(self):
+        return await self._on_start_fn()
 
-    async def stop_callback(self):
-        return await self._stop_callback_fn()
+    async def on_stop(self):
+        return await self._on_stop_fn()
 
-    async def health_check_callback(self):
-        if self._health_check_callback_fn:
-            return await self._health_check_callback_fn()
-        return await super().health_check_callback()
+    async def on_health_check(self):
+        if self._on_health_check_fn:
+            return await self._on_health_check_fn()
+        return await super().on_health_check()
 
 
 @pytest.fixture

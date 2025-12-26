@@ -3,6 +3,7 @@ from typing import Optional, TYPE_CHECKING
 from .listener import Listener
 from .unhealthy_restart import UnhealthyRestartListener
 from .state_logger import StateLogListener
+from .cache import CacheListener
 if TYPE_CHECKING:
     from ..config.app import AppConfig
 
@@ -14,6 +15,7 @@ class AppCore(Listener):
         self.config = config
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
         self.add_child(StateLogListener(interval=config.log_interval))
+        self.add_child(CacheListener(interval=config.cache_interval))
 
     def loop(self):
         self.logger.info("Starting AppCore loop")
