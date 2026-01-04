@@ -7,11 +7,13 @@ AppCore 是整个 HFT 系统的入口，负责：
 - 协调健康检查、状态日志、缓存等功能
 """
 import asyncio
+from functools import cached_property
 from typing import Optional, TYPE_CHECKING
 from .listener import Listener
 from .unhealthy_restart import UnhealthyRestartListener
 from .state_logger import StateLogListener
 from .cache import CacheListener
+from ..data.database import ClickHouseDatabase
 if TYPE_CHECKING:
     from ..config.app import AppConfig
 
@@ -39,6 +41,11 @@ class AppCore(Listener):
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
         self.add_child(StateLogListener(interval=config.log_interval))
         self.add_child(CacheListener(interval=config.cache_interval))
+    
+    @cached_property
+    def database(self):
+        """获取 ClickHouse 数据库连接"""
+        return ClickHouseDatabase(str(self.config.database_url))
 
     def loop(self):
         """同步启动主循环（阻塞）"""

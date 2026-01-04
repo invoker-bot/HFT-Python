@@ -87,7 +87,7 @@ logs/
 *.log
 
 # Local data
-data/
+/data/
 conf/
 
 # Credentials and secrets
