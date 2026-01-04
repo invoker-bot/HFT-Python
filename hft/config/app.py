@@ -8,7 +8,7 @@
 """
 from os import path
 from typing import ClassVar, Type
-from pydantic import Field
+from pydantic import Field, ClickHouseDsn
 from .base import BaseConfig
 from ..core.app import AppCore
 from ..core.cache import CacheListener
@@ -48,6 +48,7 @@ class AppConfig(BaseConfig[AppCore]):
         """
         if path.exists(self.data_path):
             app = CacheListener.load_cache(self.data_path)
+            # if app.config.model_dump(mode="json") == self.model_dump(mode="json"):
             app.config = self
         else:
             app = AppCore(self)
@@ -58,3 +59,4 @@ class AppConfig(BaseConfig[AppCore]):
     log_interval: float = Field(120.0, description="状态日志间隔（秒）")
     cache_interval: float = Field(300.0, description="缓存保存间隔（秒）")
     strategies: list[str] = Field(description="策略配置路径列表")
+    database_url: ClickHouseDsn = Field(..., description="ClickHouse 数据库连接 URL")

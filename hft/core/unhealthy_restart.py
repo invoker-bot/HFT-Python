@@ -3,6 +3,7 @@
 
 自动检测并重启不健康的监听器，确保系统稳定运行。
 """
+from collections import Counter
 from .listener import Listener
 
 
@@ -14,7 +15,7 @@ class UnhealthyRestartListener(Listener):
     健康检查会触发每个监听器的 on_health_check() 回调。
     """
 
-    def __init__(self, interval: float = 120.0):
+    def __init__(self, interval: float = 120.0, reconfirm=3):
         """
         初始化不健康重启监听器
 
@@ -22,6 +23,8 @@ class UnhealthyRestartListener(Listener):
             interval: 健康检查间隔（秒），默认 2 分钟
         """
         super().__init__(interval=interval)
+        self.reconfirm_cache = Counter()
+        self.reconfirm = reconfirm
 
     async def on_tick(self):
         """
@@ -34,5 +37,10 @@ class UnhealthyRestartListener(Listener):
         await root.health_check(True)
         for listener in list(root):
             if listener.enabled and not listener.healthy:
-                self.logger.warning("Listener %s is unhealthy, restarting...", listener.name)
-                await listener.restart(False)
+                self.reconfirm_cache[listener.id] += 1
+                if self.reconfirm_cache[listener.id] >= self.reconfirm:
+                    self.logger.warning("Listener %s is unhealthy, restarting...", listener.name)
+                    await listener.restart(False)
+                    self.reconfirm_cache[listener.id] = 0
+            else:
+                self.reconfirm_cache[listener.id] = 0

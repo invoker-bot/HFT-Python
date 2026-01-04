@@ -26,18 +26,11 @@ class OKXExchangeConfig(BaseExchangeConfig):
     def get_class_type(cls) -> Type[OKXExchange]:
         return OKXExchange
 
-    def ccxt_config_dict(self) -> dict:
+    def ccxt_config_dict_overrides(self, exchange_type) -> dict:
         """生成 OKX ccxt 配置"""
-        config = super().ccxt_config_dict()
-
-        def get_value(field):
-            if hasattr(field, 'get_secret_value'):
-                return field.get_secret_value()
-            return field
-
-        config.update({
-            'apiKey': get_value(self.api_key),
-            'secret': get_value(self.api_secret),
-            'password': get_value(self.passphrase),
-        })
+        config = {
+            'apiKey': self.get_str_value(self.api_key),
+            'secret': self.get_str_value(self.api_secret),
+            'password': self.get_str_value(self.passphrase),
+        }
         return config

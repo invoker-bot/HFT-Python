@@ -5,7 +5,6 @@ from .base import (
     BaseExchange,
     FundingRate,
     FundingRateBill,
-    TickHistory,
 )
 from .config import BaseExchangeConfig
 from .binance import BinanceExchange, BinanceExchangeConfig
@@ -17,7 +16,6 @@ __all__ = [
     "BaseExchangeConfig",
     "FundingRate",
     "FundingRateBill",
-    "TickHistory",
     # Binance
     "BinanceExchange",
     "BinanceExchangeConfig",

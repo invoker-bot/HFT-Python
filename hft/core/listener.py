@@ -253,7 +253,7 @@ class Listener(ABC):
         """
         return self.enabled and self.healthy and self._state == ListenerState.RUNNING
 
-    async def on_health_check(self):
+    async def on_health_check(self) -> bool:
         """健康检查回调，子类可覆盖实现自定义检查逻辑"""
         return True
 

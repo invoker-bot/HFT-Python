@@ -16,32 +16,106 @@ import time
 import asyncio
 import pickle
 import logging
-from abc import abstractmethod
+from abc import abstractmethod, ABCMeta
+from enum import StrEnum
+from operator import attrgetter
 from datetime import datetime, timedelta
 from functools import cached_property
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, ClassVar, TYPE_CHECKING
-from ccxt.pro import Exchange
+from pyee.asyncio import AsyncIOEventEmitter
+from ccxt.pro import Exchange as CCXTExchange
+from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Position
 from ccxt.base.errors import InvalidOrder
 from cachetools import TTLCache
-from cachetools_async import cached
+from cachetools_async import cached, cachedmethod
+from .utils import round_to_precision
 from ..core.listener import Listener
 
 if TYPE_CHECKING:
     from .config import BaseExchangeConfig
 
 
-logger = logging.getLogger(__name__)
+class TradeType(StrEnum):
+    """交易类型"""
+    SPOT = "spot"  # 现货
+    SWAP = "swap"  # 永续合约
+    FUTURE = "future"  # 期货合约
+    OPTION = "option"  # 期权合约
 
 
-def sign(x: float) -> int:
-    """返回数值的符号"""
-    if x > 0:
-        return 1
-    elif x < 0:
-        return -1
-    return 0
+class TradeSubType(StrEnum):
+    """交易子类型"""
+    LINEAR = "linear"  # USDT 永续合约
+    INVERSE = "inverse"  # 币本位合约
+
+
+@dataclass
+class MarketTradingPair:
+    """市场交易对的信息，据此可确定交易对的类型"""
+    exchange: str
+    base: str
+    quote: str
+    trade_type: TradeType
+    id: str  # 交易对 ID
+    trade_sub_type: Optional[TradeSubType] = None
+    expiry: Optional[float] = None
+
+    def __hash__(self):
+        return hash(self.exchange) ^ hash(self.id)
+
+    def __eq__(self, value):
+        if isinstance(value, str):
+            return self.id == value
+        elif isinstance(value, MarketTradingPair):
+            return self.exchange == value.exchange and self.id == value.id
+        return False
+
+    @property
+    def is_spot(self):
+        return self.trade_type == TradeType.SPOT
+
+    @property
+    def is_swap(self):
+        return self.trade_type == TradeType.SWAP
+
+    @property
+    def trade_quote_asset(self) -> str:
+        """交易该资源需要的资产"""
+        if self.trade_type in (TradeType.SWAP, TradeType.FUTURE):
+            if self.trade_sub_type == TradeSubType.INVERSE:  # 币本位合约
+                return self.base
+        return self.quote
+
+
+class OrderType(StrEnum):
+    """订单类型"""
+    MARKET = "market"
+    LIMIT = "limit"
+    LIMIT_POST_ONLY = "limit_post_only"
+
+
+@dataclass
+class OrderParams:
+    """下单的参数"""
+    pass
+
+
+class MarketTradingPairRow:
+    """市场交易对列表"""
+    def __init__(self, symbol: str):
+        pass
+
+
+"""
+-----
+ALL
+---
+ a | a0 | a1 | a2 |  -> this is row
+ b | 
+
+"""
 
 
 @dataclass
@@ -49,14 +123,18 @@ class FundingRate:
     """资金费率数据"""
     exchange: str
     symbol: str                         # 交易对 (如 BTC/USDT:USDT)
-    funding_rate: float                 # 当前资金费率
-    next_funding_rate: Optional[float]  # 预测下次资金费率
-    funding_timestamp: float            # 下次结算时间戳
+    timestamp: float                    # 数据时间戳
+    expiry: Optional[float]             # 到期时间
+    base_funding_rate: float            # 基础资金费率
+    next_funding_rate: float            # 预测下次资金费率
+    next_funding_timestamp: float       # 下次结算时间戳
     funding_interval_hours: int         # 结算间隔（小时）
     mark_price: float                   # 标记价格
+    mark_price_timestamp: float         # 标记价格时间戳
     index_price: float                  # 指数价格
-    min_funding_rate: float = -0.03     # 最小资金费率
-    max_funding_rate: float = 0.03      # 最大资金费率
+    index_price_timestamp: float        # 指数价格时间戳
+    minimum_funding_rate: float = -0.03     # 最小资金费率
+    maximum_funding_rate: float = 0.03      # 最大资金费率
 
     @property
     def seconds_until_funding(self) -> float:
@@ -90,62 +168,7 @@ class FundingRateBill:
     funding_amount: float
 
 
-class TickHistory:
-    """时间序列数据历史记录"""
-
-    def __init__(self, max_size: int = 10000):
-        self._data: list[tuple[float, float]] = []  # [(timestamp, value), ...]
-        self._max_size = max_size
-
-    def append(self, timestamp: float, value: float) -> None:
-        """添加数据点"""
-        self._data.append((timestamp, value))
-        if len(self._data) > self._max_size:
-            self._data = self._data[-self._max_size:]
-
-    def shrink(self, before_timestamp: float) -> None:
-        """删除指定时间戳之前的数据"""
-        self._data = [(t, v) for t, v in self._data if t >= before_timestamp]
-
-    @property
-    def current_time(self) -> float:
-        """最新数据时间戳"""
-        if not self._data:
-            return 0.0
-        return self._data[-1][0]
-
-    @property
-    def best_time(self) -> float:
-        """最早数据时间戳"""
-        if not self._data:
-            return 0.0
-        return self._data[0][0]
-
-    @property
-    def current_value(self) -> Optional[float]:
-        """最新值"""
-        if not self._data:
-            return None
-        return self._data[-1][1]
-
-    def get_range(self, start: float, end: float, min_count: int = 1) -> Optional[float]:
-        """获取时间范围内的数据覆盖率"""
-        count = sum(1 for t, _ in self._data if start <= t <= end)
-        if count < min_count:
-            return None
-        return count / max(1, (end - start))
-
-    def get_interpolate(self, timestamps: list[float]) -> list[float]:
-        """在指定时间戳插值"""
-        import numpy as np
-        if not self._data:
-            return [0.0] * len(timestamps)
-        times = [t for t, _ in self._data]
-        values = [v for _, v in self._data]
-        return list(np.interp(timestamps, times, values))
-
-
-class BaseExchange(Listener):
+class BaseExchange(Listener, metaclass=ABCMeta):
     """
     交易所基类
 
@@ -154,54 +177,77 @@ class BaseExchange(Listener):
     class_name: ClassVar[str] = "base_exchange"
 
     def __init__(self, config: "BaseExchangeConfig"):
-        super().__init__(name=config.class_name if hasattr(config, 'class_name') else "exchange")
+        super().__init__(name=f"{config.class_name}/{config.class_name}")
         self.config = config
+        self.event = AsyncIOEventEmitter()
+        self._markets: dict = {}  # id -> market dict
+        self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
+        self._currencies: dict = {}  # 货币信息
+        self._positions_cache = TTLCache(maxsize=1, ttl=5)  # 持仓缓存
+        self._positions: dict[str, float] = {}
+        # self._positions:
 
-        # 内部状态
-        self._swaps: Optional[dict] = None
-        self._markets: Optional[dict] = None
+    def to_raw_symbol(self, pair: str | MarketTradingPair) -> str:
+        if isinstance(pair, MarketTradingPair):
+            return pair.id
+        return pair
 
-        # 价格缓存
-        self._index_prices_cache: dict[str, TickHistory] = defaultdict(TickHistory)
-        self._mark_prices_cache: dict[str, TickHistory] = defaultdict(TickHistory)
-        self._funding_rates_cache: dict[str, TickHistory] = defaultdict(TickHistory)
+    def to_trading_pair(self, pair: str | MarketTradingPair) -> MarketTradingPair:
+        if isinstance(pair, MarketTradingPair):
+            return pair
+        return self._market_trading_pairs[pair]
+
+    def get_symbol_ccxt_instance_key(self, pair: str | MarketTradingPair) -> str:
+        pair = self.to_raw_symbol(pair)
+        type_str = self._markets[pair]['type']  # 需要提前load markets
+        return self.config.to_ccxt_instance_key(type_str)
+
+    def get_exchange(self, pair: str | MarketTradingPair) -> CCXTExchange:  # 查询指定id的交易所实例
+        return self.exchanges[self.get_symbol_ccxt_instance_key(pair)]
+
+    def get_contract_size(self, pair: str | MarketTradingPair) -> float:
+        symbol = self.to_raw_symbol(pair)
+        market = self._markets[symbol]
+        refactor = 1.0
+        if market['contract']:
+            contract_size = float(market['contractSize'])
+            if contract_size <= 1e-8:
+                raise ValueError(f"Invalid contract size {contract_size} for symbol {symbol}")
+            refactor *= contract_size
+        return refactor
 
     @property
-    def exchange(self) -> Exchange:
-        """获取底层 ccxt 交易所实例"""
-        return self.config.ccxt_instance
+    def exchanges(self) -> dict[str, CCXTExchange]:
+        """获取所有 ccxt 交易所实例"""
+        return self.config.ccxt_instances
 
     @property
     def exchange_id(self) -> str:
         """交易所 ID"""
-        return self.exchange.id
+        return self.config.ccxt_instance.id
 
     # ========== 生命周期 ==========
-
     async def on_start(self) -> None:
         """启动时加载市场数据"""
-        self.load_state()
-        await self.load_time_diff()
-        await self.load_markets()
+        await self.open()
+        await self.on_tick()
 
     async def on_stop(self) -> None:
         """停止时保存状态"""
-        self.save_state()
         await self.close()
 
-    async def tick_callback(self) -> bool:
+    async def on_tick(self):
         """每 tick 刷新数据"""
         await self.load_time_diff()
-        await self.load_swaps()
-        return True
+        await self.load_markets()
+        await self.fetch_currencies()
 
-    async def on_health_check(self) -> None:
-        """健康检查"""
-        self._health = self.ready
+    async def on_health_check(self):
+        await self.on_tick()
 
-    # ========== 市场数据方法 ==========
+    # ========== 市场数据方法 ticker/order_book/trades/ohlcv ==========
 
-    async def fetch_ticker(self, symbol: str) -> dict:
+    async def fetch_ticker(self, symbol: str) -> Ticker:
         """
         获取 ticker 数据
 
@@ -219,13 +265,20 @@ class BaseExchange(Listener):
                 ...
             }
         """
-        return await self.exchange.fetch_ticker(symbol)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_ticker(symbol)
 
-    async def fetch_tickers(self, symbols: Optional[list[str]] = None) -> dict:
-        """获取多个 ticker"""
-        return await self.exchange.fetch_tickers(symbols)
+    async def watch_ticker(self, symbol: str) -> Ticker:
+        """订阅 ticker"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.watch_ticker(symbol)
 
-    async def fetch_order_book(self, symbol: str, limit: Optional[int] = None) -> dict:
+    async def un_watch_ticker(self, symbol: str):
+        """取消订阅 ticker"""
+        exchange = self.get_exchange(symbol)
+        await exchange.un_watch_ticker(symbol)
+
+    async def fetch_order_book(self, symbol: str, limit: Optional[int] = None) -> OrderBook:
         """
         获取订单簿
 
@@ -238,16 +291,38 @@ class BaseExchange(Listener):
                 ...
             }
         """
-        return await self.exchange.fetch_order_book(symbol, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_order_book(symbol, limit)
+    
+    async def watch_order_book(self, symbol: str, limit: Optional[int] = None) -> OrderBook:
+        """订阅订单簿"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.watch_order_book(symbol, limit)
+
+    async def un_watch_order_book(self, symbol: str):
+        """取消订阅订单簿"""
+        exchange = self.get_exchange(symbol)
+        await exchange.un_watch_order_book(symbol)
 
     async def fetch_trades(
         self,
         symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None
-    ) -> list:
+    ) -> list[Trade]:
         """获取成交记录"""
-        return await self.exchange.fetch_trades(symbol, since, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_trades(symbol, since, limit)
+
+    async def watch_trades(self, symbol: str) -> list[Trade]:
+        """订阅成交"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.watch_trades(symbol)
+
+    async def un_watch_trades(self, symbol: str):
+        """取消订阅成交"""
+        exchange = self.get_exchange(symbol)
+        await exchange.un_watch_trades(symbol)
 
     async def fetch_ohlcv(
         self,
@@ -255,26 +330,79 @@ class BaseExchange(Listener):
         timeframe: str = '1m',
         since: Optional[int] = None,
         limit: Optional[int] = None
-    ) -> list:
+    ) -> list[list[float]]:
         """
         获取 K 线数据
 
         Returns:
             [[timestamp, open, high, low, close, volume], ...]
         """
-        return await self.exchange.fetch_ohlcv(symbol, timeframe, since, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_ohlcv(symbol, timeframe, since, limit)
 
-    # ========== 交易方法 ==========
+    async def watch_ohlcv(self, symbol: str, timeframe: str = '1m') -> list[list[float]]:
+        """订阅 K 线"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.watch_ohlcv(symbol, timeframe)
 
-    async def place_order(
+    async def un_watch_ohlcv(self, symbol: str, timeframe: str = '1m'):
+        """取消订阅 K 线"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.un_watch_ohlcv(symbol, timeframe)
+
+    # ========== 交易方法 create/cancel/fetch/watch order ==========
+    def __resolve_order(self, order_request: OrderRequest) -> Optional[OrderRequest]:
+        """将 OrderRequest 转换为内置的 OrderRequest"""
+        symbol = self.to_raw_symbol(order_request["symbol"])
+        market = self._markets.get(symbol, None)
+        if market is None:
+            self.logger.error("Symbol %s not found in markets", symbol)
+            return None
+        if order_request.get("params", None) is None:
+            order_request["params"] = {}
+        # 精度处理
+        precision = float(market["precision"]['amount'])  # another price
+        aligned_amount = round_to_precision(order_request['amount'], precision)
+
+        # 最小数量检查
+        limit_amount_min = market['limits']['amount']['min'] or precision
+        limit_price_min = market['limits']['price']['min'] or 0.0
+        limit_cost_min = market["limits"]["cost"]["min"] or 0.0
+        position_amount = self._positions.get(symbol, 0.0)
+        direction = 1 if order_request["side"] == "buy" else -1
+        if position_amount * direction < -1e-9:  # reverse direction, 减仓
+            if abs(aligned_amount) < precision:
+                return None
+            order_request["params"]["reduceOnly"] = True  # 减仓订单
+        else:
+            price = order_request.get("price", None)
+            if abs(aligned_amount) < limit_amount_min:
+                return None
+            elif price and (price < limit_price_min or price * abs(aligned_amount) < limit_cost_min):
+                return None
+        order_request['amount'] = aligned_amount
+        return order_request
+
+    def __get_place_str(self, order_request: OrderRequest):
+        price = order_request.get("price", None)
+        aligned_amount = order_request['amount']
+        side = order_request['side']
+        symbol = order_request['symbol']
+        if price is not None:
+            price_str = f"{aligned_amount:.4f} x ${price:.2f} = ${aligned_amount * price:.2f}"
+        else:
+            price_str = f"{aligned_amount:.4f}"
+        return f"create the {side} {symbol} {type} order {price_str}"
+
+    async def create_order(
         self,
         symbol: str,
-        order_type: str,
+        type: str,
         side: str,
         amount: float,
         price: Optional[float] = None,
         params: Optional[dict] = None,
-    ) -> Optional[dict]:
+    ) -> Optional[Order]:
         """
         下单
 
@@ -282,156 +410,155 @@ class BaseExchange(Listener):
             symbol: 交易对
             order_type: 'market' 或 'limit'
             side: 'buy' 或 'sell'
-            amount: 数量
+            amount: 数量, 已处理过合约大小缩放
             price: 价格（限价单必填）
             params: 额外参数
 
         Returns:
             订单信息
         """
-        if self._swaps is None:
-            await self.load_swaps()
-
-        swap = self._swaps.get(symbol)
-        if swap is None:
-            logger.warning(f"[{self.class_name}] Symbol {symbol} not found in swaps")
+        order_params: OrderRequest = {
+            "symbol": symbol,
+            "type": type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "params": params,
+        }
+        resolved_order = self.__resolve_order(order_params)
+        if resolved_order is None:
             return None
-
-        # 精度处理
-        precision = swap["precision"]['amount']
-        contract_size = float(swap.get('contractSize', 1))
-        if contract_size > 1e-8:
-            amount = amount / contract_size
-
-        precision_decimals = round(-math.log10(precision)) if precision > 0 else 0
-        aligned_amount = round(amount, precision_decimals)
-
-        # 最小数量检查
-        limit_amount_min = swap['limits']['amount']['min'] or precision
-        limit_cost_min = swap['limits']['cost']['min'] or 5
-
-        if abs(aligned_amount) < limit_amount_min:
-            return None
-
-        if price and abs(aligned_amount * price) < limit_cost_min:
-            return None
-
+        place_str = self.__get_place_str(resolved_order)
         # 下单
         if not self.config.debug:
             try:
-                order = await self.exchange.create_order(
-                    symbol, order_type, side, abs(aligned_amount),
-                    price=price, params=params or {}
+                exchange = self.get_exchange(symbol)
+                order = await exchange.create_order(
+                    **resolved_order
                 )
-                logger.info(
-                    f"[{self.class_name}] Placed {side} {order_type} order: "
-                    f"{symbol} {aligned_amount} @ {price or 'market'}"
-                )
+                if order is None or order['id'] is None:
+                    raise InvalidOrder("Order response is invalid or missing order ID")
+                if type != "market":  # TODO: 记录限价订单
+                    pass
+                else:
+                    self._positions_cache.clear()  # 市价的仓位需要立即刷新
+                self.event.emit("order_created", resolved_order, order)  # TODO: 可以记录order
+                self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
                 return order
-            except InvalidOrder as e:
-                logger.error(f"[{self.class_name}] Invalid order: {e}")
+            except (InvalidOrder, KeyError) as e:
+                self.logger.exception("Failed to create order: %s", e)
                 return None
         else:
-            logger.info(
-                f"[{self.class_name}] [DEBUG] Would place {side} {order_type} order: "
-                f"{symbol} {aligned_amount} @ {price or 'market'}"
-            )
+            self.logger.info("Debug: %s", place_str)
             return None
+        
+    async def create_orders(self, order_params: list[OrderRequest]) -> list[Order]:
+        """批量下单"""
+        order_params = list(filter(None,  map(self.__resolve_order, order_params)))
+        if len(order_params) == 0:
+            return []
+        # only support swap for now
+        if self.config.debug:
+            try:
+                results = await self.exchanges['swap'].create_orders(order_params)
+                for order_param, order in zip(order_params, results):
+                    place_str = self.__get_place_str(order)
+                    if order_param['type'] != "market":  # TODO: 记录限价订单
+                        pass
+                    else:
+                        self._positions_cache.clear()  # 市价的仓位需要立即刷新
+                    self.event.emit("order_created", order_param, order)  # TODO: 可以记录order
+                    self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
+                return results
+            except (InvalidOrder, KeyError) as e:
+                self.logger.exception("Failed to create orders: %s", e)
+        else:
+            for order_param in order_params:
+                place_str = self.__get_place_str(order_param)
+                self.logger.info("Debug: %s", place_str)
+            return []
+        return results
 
-    async def place_order_smart(
-        self,
-        symbol: str,
-        order_type: str,
-        amount: float,
-        position_amount: float,
-        price: Optional[float] = None,
-    ) -> Optional[dict]:
-        """
-        智能下单（自动判断买卖方向和减仓）
-
-        Args:
-            symbol: 交易对
-            order_type: 'market' 或 'limit'
-            amount: 数量（正数买入，负数卖出）
-            position_amount: 当前持仓数量
-            price: 价格
-        """
-        if self._swaps is None:
-            await self.load_swaps()
-
-        swap = self._swaps.get(symbol)
-        if swap is None:
-            return None
-
-        precision = swap["precision"]['amount']
-        contract_size = float(swap.get('contractSize', 1))
-        if contract_size > 1e-8:
-            amount = amount / contract_size
-
-        precision_decimals = round(-math.log10(precision)) if precision > 0 else 0
-        aligned_amount = round(amount, precision_decimals)
-
-        # 判断是否减仓
-        params = {}
-        if position_amount * aligned_amount < -1e-6:
-            # 反向操作 = 减仓
-            aligned_amount = sign(aligned_amount) * min(
-                abs(position_amount) + abs(precision),
-                abs(aligned_amount)
-            )
-            if abs(aligned_amount) < precision:
-                return None
-            params = {"reduceOnly": True}
-
-        side = "buy" if aligned_amount > 0 else "sell"
-        return await self.place_order(symbol, order_type, side, abs(aligned_amount), price, params)
-
-    async def cancel_order(self, order_id: str, symbol: Optional[str] = None) -> dict:
+    async def cancel_order(self, order_id: str, symbol: str) -> Order:
         """撤销订单"""
-        return await self.exchange.cancel_order(order_id, symbol)
+        exchange = self.get_exchange(symbol)
+        order = await exchange.cancel_order(order_id, symbol)
+        self.event.emit("order_canceled", order_id, symbol, order)
+        self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
+        return order
 
-    async def cancel_all_orders(self, symbol: Optional[str] = None) -> list:
-        """撤销所有订单"""
-        return await self.exchange.cancel_all_orders(symbol)
+    async def cancel_orders(self, orders: list[str], symbol: str) -> list[Order]:
+        """批量撤销订单"""
+        exchange = self.get_exchange(symbol)
+        results = await exchange.cancel_orders(orders, symbol)
+        for order_id, order in zip(orders, results):
+            self.event.emit("order_canceled", order_id, symbol, order)
+            self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
+        return results
 
-    async def fetch_order(self, order_id: str, symbol: Optional[str] = None) -> dict:
+    async def fetch_order(self, order_id: str, symbol: str = None) -> Order:
         """查询订单"""
-        return await self.exchange.fetch_order(order_id, symbol)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_order(order_id, symbol)
 
     async def fetch_open_orders(
         self,
-        symbol: Optional[str] = None,
+        symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None,
     ) -> list:
         """查询未完成订单"""
-        return await self.exchange.fetch_open_orders(symbol, since, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_open_orders(symbol, since, limit)
 
     async def fetch_closed_orders(
         self,
-        symbol: Optional[str] = None,
+        symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None,
     ) -> list:
         """查询已完成订单"""
-        return await self.exchange.fetch_closed_orders(symbol, since, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_closed_orders(symbol, since, limit)
 
-    # ========== 账户方法 ==========
+    async def watch_orders(self, ccxt_exchange_key: str) -> list[Order]:
+        """订单更新"""
+        exchange = self.exchanges[ccxt_exchange_key]
+        orders = await exchange.watch_orders()
+        return orders
 
-    async def fetch_balance(self) -> dict:
-        """
-        获取账户余额
+    async def un_watch_orders(self, ccxt_exchange_key: str):
+        """取消订阅订单更新"""
+        exchange = self.exchanges[ccxt_exchange_key]
+        return await exchange.un_watch_orders()
 
-        Returns:
-            {
-                'BTC': {'free': 1.5, 'used': 0.5, 'total': 2.0},
-                'USDT': {'free': 10000.00, 'used': 5000.00, 'total': 15000.00},
-                ...
-            }
-        """
-        return await self.exchange.fetch_balance()
+    # ========== 账户方法 position/balance ==========
+    stable_coins = {'USDT', 'USDG', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USD',
+                    'FDUSD', 'LDUSDT', 'BFUSD', 'RWUSD', 'USD1'}
 
-    async def fetch_positions(self, symbols: Optional[list[str]] = None) -> list:
+    def medal_balance_usd(self, data: dict) -> float:
+        usd = 0.0
+        for coin, amount in data.get('total', {}).items():
+            if coin in self.stable_coins:
+                usd += float(amount)
+        return usd
+
+    async def medal_fetch_balance_usd(self, ccxt_instance_key: str) -> float:
+        exchange = self.exchanges[ccxt_instance_key]
+        balance = await exchange.fetch_balance()
+        return self.medal_balance_usd(balance)
+
+    async def medal_fetch_total_balance_usd(self) -> float:
+        # 这个放法只是粗略地估算账户的 USD 价值，并且只利用了稳定币的信息，应该使用平台特定的比较准确
+        balances = await self.fetch_parrallel('fetch_balance')
+        return sum([self.medal_balance_usd(balance) for balance in balances])
+
+    async def fetch_position(self, symbol: str) -> list[Position]:
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_position(symbol)
+
+    @cachedmethod(attrgetter("_positions_cache"))
+    async def fetch_positions(self) -> list[Position]:
         """
         获取持仓
 
@@ -449,137 +576,47 @@ class BaseExchange(Listener):
                 ...
             ]
         """
-        return await self.exchange.fetch_positions(symbols)
+        return await self.exchanges["swap"].fetch_positions()
 
-    async def fetch_position(self, symbol: str) -> Optional[dict]:
-        """获取单个持仓"""
-        positions = await self.fetch_positions([symbol])
-        return positions[0] if positions else None
+    async def watch_position(self, symbol: str) -> list[Position]:
+        """订阅持仓更新"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.watch_position(symbol)
 
-    async def fetch_positions_usd_value(
-        self,
-        symbols: Optional[list[str]] = None
-    ) -> dict[str, dict]:
-        """
-        获取持仓的 USD 估值
+    async def un_watch_position(self, symbol: str):
+        """取消订阅持仓更新"""
+        exchange = self.get_exchange(symbol)
+        return await exchange.un_watch_positions([symbol])
 
-        Returns:
-            {
-                'BTC/USDT:USDT': {
-                    'symbol': 'BTC/USDT:USDT',
-                    'side': 'long',
-                    'contracts': 0.5,
-                    'notional': 13500.00,        # 仓位价值 (USD)
-                    'unrealizedPnl': 100.00,     # 未实现盈亏 (USD)
-                    'markPrice': 27000.00,
-                    'entryPrice': 26800.00,
-                    'leverage': 10,
-                },
-                ...
-                '_total': {
-                    'notional': 15000.00,        # 总仓位价值
-                    'unrealizedPnl': 150.00,     # 总未实现盈亏
-                    'long_notional': 13500.00,   # 多头仓位价值
-                    'short_notional': 1500.00,   # 空头仓位价值
-                }
-            }
-        """
-        positions = await self.fetch_positions(symbols)
-        result = {}
-        total_notional = 0.0
-        total_pnl = 0.0
-        long_notional = 0.0
-        short_notional = 0.0
+    async def watch_positions(self) -> list[Trade]:
+        """订阅持仓更新"""
+        exchange = self.exchanges["swap"]
+        return await exchange.watch_positions()
 
-        for pos in positions:
-            contracts = pos.get('contracts', 0)
-            if contracts == 0:
-                continue
-
-            symbol = pos['symbol']
-            side = pos.get('side', 'long' if contracts > 0 else 'short')
-
-            # 优先使用 ccxt 返回的 notional
-            notional = pos.get('notional')
-            if notional is None:
-                # 手动计算: contracts * contractSize * markPrice
-                contract_size = float(pos.get('contractSize', 1) or 1)
-                mark_price = float(pos.get('markPrice', 0) or 0)
-                notional = abs(contracts) * contract_size * mark_price
-
-            notional = abs(float(notional or 0))
-            unrealized_pnl = float(pos.get('unrealizedPnl', 0) or 0)
-
-            result[symbol] = {
-                'symbol': symbol,
-                'side': side,
-                'contracts': contracts,
-                'notional': notional,
-                'unrealizedPnl': unrealized_pnl,
-                'markPrice': pos.get('markPrice'),
-                'entryPrice': pos.get('entryPrice'),
-                'leverage': pos.get('leverage'),
-                'liquidationPrice': pos.get('liquidationPrice'),
-                'percentage': pos.get('percentage'),  # PnL 百分比
-            }
-
-            total_notional += notional
-            total_pnl += unrealized_pnl
-            if side == 'long':
-                long_notional += notional
-            else:
-                short_notional += notional
-
-        result['_total'] = {
-            'notional': total_notional,
-            'unrealizedPnl': total_pnl,
-            'long_notional': long_notional,
-            'short_notional': short_notional,
-            'position_count': len(result),
-        }
-
-        return result
-
-    async def fetch_account_usd_value(self) -> float:
-        """
-        获取账户 USD 价值（稳定币余额 + 未实现盈亏）
-        """
-        total = 0.0
-        stablecoins = {'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USD'}
-
-        # 1. 稳定币余额
-        balance = await self.fetch_balance()
-        for currency in stablecoins:
-            if currency in balance and isinstance(balance[currency], dict):
-                total += float(balance[currency].get('total', 0) or 0)
-
-        # 2. 仓位未实现盈亏
-        try:
-            positions = await self.fetch_positions()
-            for pos in positions:
-                if pos.get('contracts', 0) != 0:
-                    total += float(pos.get('unrealizedPnl', 0) or 0)
-        except Exception:
-            pass
-
-        return total
+    async def un_watch_positions(self):
+        """取消订阅持仓更新"""
+        exchange = self.exchanges["swap"]
+        return await exchange.un_watch_positions()
 
     async def fetch_my_trades(
         self,
-        symbol: Optional[str] = None,
+        symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None,
-    ) -> list:
+    ) -> list[Trade]:
         """获取我的成交记录"""
-        return await self.exchange.fetch_my_trades(symbol, since, limit)
+        exchange = self.get_exchange(symbol)
+        return await exchange.fetch_my_trades(symbol, since, limit)
 
-    # ========== 期货方法 ==========
+    # ========== 期货初始化方法 ==========
 
-    async def set_leverage(self, symbol: str, leverage: int) -> dict:
+    async def set_leverage(self, symbol: str, leverage: int):
         """设置杠杆"""
-        return await self.exchange.set_leverage(leverage, symbol)
+        exchange = self.get_exchange(symbol)
+        if self._markets[symbol]['type'] in ('swap', 'future'):  # 仅合约市场支持杠杆设置
+            await exchange.set_leverage(leverage, symbol)
 
-    async def set_margin_mode(self, symbol: str, margin_mode: str) -> dict:
+    async def set_margin_mode(self, symbol: str, margin_mode: str):
         """
         设置保证金模式
 
@@ -587,32 +624,38 @@ class BaseExchange(Listener):
             symbol: 交易对
             margin_mode: 'cross' 或 'isolated'
         """
-        return await self.exchange.set_margin_mode(margin_mode, symbol)
+        exchange = self.get_exchange(symbol)
+        if self._markets[symbol]['type'] in ('swap', 'future'):  # 仅合约市场支持保证金模式设置
+            await exchange.set_margin_mode(margin_mode, symbol)
 
-    async def initialize_symbol(self, symbol: str, leverage: Optional[int] = None) -> None:
+    async def set_leverage_and_cross_margin_mode(self, symbol: str, leverage: int):
+        await self.set_margin_mode(symbol, 'CROSSED')
+        await self.set_leverage(symbol, leverage)
+
+    @cachedmethod(TTLCache(maxsize=1024, ttl=24*3600))
+    async def medal_initialize_symbol(self, symbol: str) -> None:
         """初始化交易对（设置杠杆和保证金模式）"""
-        if self._swaps is None:
-            await self.load_swaps()
-
-        swap = self._swaps.get(symbol)
-        if swap is None:
-            return
-
-        max_leverage = swap['limits']['leverage']['max'] or 125
-        target_leverage = min(leverage or self.config.leverage or 10, max_leverage)
-
-        try:
-            await self.set_margin_mode(symbol, self.config.margin_mode or 'cross')
-            await self.set_leverage(symbol, target_leverage)
-            logger.info(f"[{self.class_name}] Initialized {symbol} with {target_leverage}x leverage")
-        except Exception as e:
-            logger.warning(f"[{self.class_name}] Failed to initialize {symbol}: {e}")
+        await self.get_exchange(symbol)
+        symbol_info = self._markets[symbol]
+        if symbol_info["type"] in ("future", "swap"):
+            max_leverage = symbol_info['limits']['leverage']['max'] or 125
+            target_leverage = min(self.config.leverage or 10, max_leverage)
+            for _ in range(3):
+                try:
+                    if target_leverage <= 1:
+                        return  # 不设置杠杆
+                    await self.set_leverage_and_cross_margin_mode(symbol, target_leverage)
+                    self.logger.info("Initialized %s with X%d leverage", symbol, target_leverage)
+                    break
+                except Exception as e:
+                    self.logger.warning("Failed to initialize %s with X%d leverage: %s", symbol, target_leverage, e)
+                    target_leverage = int(target_leverage // 2)
 
     # ========== 资金费率方法 ==========
-
     async def fetch_funding_rate(self, symbol: str) -> dict:
         """获取资金费率"""
-        return await self.exchange.fetch_funding_rate(symbol)
+        exchange = await self.get_exchange(symbol)
+        return await exchange.fetch_funding_rate(symbol)
 
     async def fetch_funding_rate_history(
         self,
@@ -621,25 +664,28 @@ class BaseExchange(Listener):
         limit: Optional[int] = None,
     ) -> list:
         """获取历史资金费率"""
-        return await self.exchange.fetch_funding_rate_history(symbol, since, limit)
+        exchange = await self.get_exchange(symbol)
+        return await exchange.fetch_funding_rate_history(symbol, since, limit)
 
-    async def fetch_funding_rates(self) -> dict[str, FundingRate]:
+    @abstractmethod
+    async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
         """
         获取所有交易对的资金费率
-
         子类应该覆盖此方法
         """
-        return {}
 
-    async def fetch_funding_rates_history(self) -> list[FundingRateBill]:
+    @abstractmethod
+    async def medal_fetch_funding_rates_history(self) -> list[FundingRateBill]:
         """
         获取资金费率账单
-
         子类应该覆盖此方法
         """
-        return []
 
     # ========== 转账方法 ==========
+    @cachedmethod(TTLCache(maxsize=32, ttl=60))
+    async def medal_fetch_deposit_address(self, currency: str, network: str):
+        result = await self.exchanges['spot'].fetch_deposit_address(currency, {'network': network})
+        return result['address']
 
     async def transfer(
         self,
@@ -657,106 +703,148 @@ class BaseExchange(Listener):
             from_account: 来源账户 ('spot', 'swap', 'future')
             to_account: 目标账户
         """
-        return await self.exchange.transfer(currency, amount, from_account, to_account)
+        exchange = self.exchanges[from_account]
+        await exchange.transfer(currency, amount, from_account, to_account)
+
+    """
+    获取地址
+    currs = ex.fetch_currencies() if ex.has.get("fetchCurrencies") else ex.load_currencies()
+    usdt = currs["USDT"]
+    nets = usdt.get("networks", {})
+    
+    network = "TRC20"   # ⚠️ 用你 nets 里实际存在的 key（可能是 TRX/TRC20 等）
+    fee = nets[network]["fee"]
+    
+    def list_networks(ex, code: str):
+    # 有些交易所只有 fetch_currencies 才会带 networks
+    currs = ex.fetch_currencies() if ex.has.get("fetchCurrencies") else ex.load_currencies()
+    c = currs.get(code, {}) or {}
+    nets = c.get("networks") or {}
+    # nets 结构见 CCXT manual（id/network/name/fee/active 等）:contentReference[oaicite:1]{index=1}
+    return {
+        k: {
+            "id": v.get("id"),
+            "network": v.get("network"),
+            "name": v.get("name"),
+            "fee": v.get("fee"),
+            "active": v.get("active"),
+            "deposit": v.get("deposit"),
+            "withdraw": v.get("withdraw"),
+        }
+        for k, v in nets.items()
+    }
+
+    def withdraw_onchain(ex, code: str, amount: float, address: str, network: str, tag: str | None = None, **extra_params):
+    # network 用统一参数名 `network`（各交易所内部字段不同，但 CCXT 推荐用这个）:contentReference[oaicite:2]{index=2}
+    params = {"network": network, **extra_params}
+    return ex.withdraw(code, amount, address, tag, params)
+
+
+    地址检查：
+    def looks_like_address(network: str, address: str) -> bool:
+    n = network.upper()
+
+    # EVM: ETH/BSC/ARB/OP/POLYGON... 大多都是 0x + 40 hex（是否 checksum 另说）
+    if n in {"ETH", "ERC20", "BSC", "BEP20", "ARBITRUM", "OP", "OPTIMISM", "POLYGON", "MATIC", "AVAXC"}:
+        return bool(re.fullmatch(r"0x[a-fA-F0-9]{40}", address))
+
+    # TRON: TRC20/TRX 地址通常以 T 开头（严格校验需要 base58check）
+    if n in {"TRX", "TRON", "TRC20"}:
+        return address.startswith("T") and 30 <= len(address) <= 40
+
+    # BTC: 粗略校验（严格要用 bech32/base58check）
+    if n in {"BTC", "BITCOIN"}:
+        return address.startswith(("bc1", "1", "3")) and 26 <= len(address) <= 90
+
+    # 其他链建议用对应 SDK 做严格校验
+    return len(address) > 10
+    """
 
     # ========== WebSocket 方法 ==========
-
-    async def watch_ticker(self, symbol: str) -> dict:
-        """订阅 ticker"""
-        return await self.exchange.watch_ticker(symbol)
-
-    async def watch_order_book(self, symbol: str, limit: Optional[int] = None) -> dict:
-        """订阅订单簿"""
-        return await self.exchange.watch_order_book(symbol, limit)
-
-    async def watch_trades(self, symbol: str) -> list:
-        """订阅成交"""
-        return await self.exchange.watch_trades(symbol)
-
-    async def watch_ohlcv(self, symbol: str, timeframe: str = '1m') -> list:
-        """订阅 K 线"""
-        return await self.exchange.watch_ohlcv(symbol, timeframe)
-
-    async def watch_orders(self, symbol: Optional[str] = None) -> list:
-        """订阅订单更新"""
-        return await self.exchange.watch_orders(symbol)
-
-    async def watch_positions(self, symbols: Optional[list[str]] = None) -> list:
-        """订阅持仓更新"""
-        if hasattr(self.exchange, 'watch_positions'):
-            return await self.exchange.watch_positions(symbols)
-        return []
+    async def watch_balance(self, ccxt_exchange_key: str) -> dict:
+        """订阅余额更新"""
+        exchange = self.exchanges[ccxt_exchange_key]
+        return await exchange.watch_balance()
 
     # ========== 工具方法 ==========
+    async def fetch_parrallel(self, method: str, *args, **kwargs) -> list:
+        tasks = [getattr(exchange, method)(*args, **kwargs) for exchange in list(self.exchanges.values())]
+        results = await asyncio.gather(*tasks)
+        return results
 
-    @cached(TTLCache(maxsize=32, ttl=300))
+    @cachedmethod(TTLCache(maxsize=128, ttl=300))
     async def load_time_diff(self) -> None:
         """加载时间差"""
-        await self.exchange.load_time_difference()
+        await self.fetch_parrallel('load_time_difference')
 
-    @cached(TTLCache(maxsize=32, ttl=300))
+    @cachedmethod(TTLCache(maxsize=128, ttl=300))
     async def load_markets(self, reload: bool = False) -> dict:
         """加载市场信息"""
-        self._markets = await self.exchange.load_markets(reload)
+        markets = {}
+        market_trading_pairs = {}
+        markets_list = await self.fetch_parrallel('load_markets', reload)
+        for market_dict in markets_list:
+            for symbol, market in market_dict.items():
+                try:
+                    base = market['base']
+                    quote = market['quote']
+                    trade_type = TradeType(market['type'])
+                    match trade_type:
+                        case TradeType.SPOT:
+                            if "spot" not in self.config.support_types:
+                                continue
+                        case TradeType.SWAP | TradeType.FUTURE:
+                            if "swap" not in self.config.support_types:
+                                continue
+                        case TradeType.OPTION:
+                            continue  # TODO: 期权暂不支持
+                        case _:
+                            self.logger.warning("Unsupported trade %s with trade type: %s", symbol, trade_type)
+                            continue
+                    trade_sub_type = market['subType']
+                    if trade_sub_type is not None:
+                        trade_sub_type = TradeSubType(trade_sub_type)
+                    expiry = market['expiry']
+                    if expiry is not None:
+                        expiry = float(expiry) / 1000.0  # 转换为秒级时间戳
+                    markets[symbol] = market
+                    market_trading_pairs[symbol] = MarketTradingPair(
+                        self.class_name, base, quote, trade_type,
+                        symbol, trade_sub_type, expiry
+                    )
+                except Exception as e:
+                    self.logger.warning("Failed to parse market: %s", e, exc_info=True)
+        self._markets = markets
+        self._market_trading_pairs = market_trading_pairs
+        return markets
+
+    @cached(TTLCache(maxsize=32, ttl=30))
+    async def fetch_currencies(self) -> dict:  # 主要用于判断某个币种是否支持转账
+        self._currencies = await self.config.ccxt_instance.fetch_currencies()
+        return self._currencies
+
+    @property
+    def markets(self) -> dict[str, dict]:
+        """获取市场信息"""
         return self._markets
 
-    @cached(TTLCache(maxsize=32, ttl=300))
-    async def load_swaps(self) -> dict:
-        """加载永续合约市场"""
-        markets = await self.load_markets()
-        self._swaps = {
-            f"{item['base']}/{item['quote']}:{item['settle'] or item['quote']}": item
-            for item in markets.values()
-            if item.get('swap')
-        }
-        return self._swaps
+    @property
+    def market_trading_pairs(self) -> dict[str, MarketTradingPair]:
+        """获取市场交易对信息"""
+        return self._market_trading_pairs
 
-    def market(self, symbol: str) -> Optional[dict]:
-        """获取市场信息"""
-        if self._markets:
-            return self._markets.get(symbol)
-        return None
+    @property
+    def currencies(self) -> dict:
+        """获取货币信息"""
+        return self._currencies
+
+    async def open(self) -> None:
+        """打开连接"""
+        for exchange in list(self.exchanges.values()):
+            exchange.open()
+            await asyncio.sleep(0.0)  # 仅让出控制权
 
     async def close(self) -> None:
         """关闭连接"""
-        await self.exchange.close()
-
-    # ========== 状态持久化 ==========
-
-    def _get_cache_path(self) -> str:
-        """缓存文件路径"""
-        return f"data/{self.class_name}_cache.pkl"
-
-    def save_state(self) -> None:
-        """保存缓存到磁盘"""
-        cache_path = self._get_cache_path()
-        state = {
-            'index_prices_cache': dict(self._index_prices_cache),
-            'mark_prices_cache': dict(self._mark_prices_cache),
-            'funding_rates_cache': dict(self._funding_rates_cache),
-        }
-        try:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, 'wb') as f:
-                pickle.dump(state, f)
-            logger.info(f"[{self.class_name}] Saved cache to {cache_path}")
-        except Exception as e:
-            logger.warning(f"[{self.class_name}] Failed to save cache: {e}")
-
-    def load_state(self) -> None:
-        """从磁盘加载缓存"""
-        cache_path = self._get_cache_path()
-        if not os.path.exists(cache_path):
-            return
-        try:
-            with open(cache_path, 'rb') as f:
-                state = pickle.load(f)
-            for key, value in state.get('index_prices_cache', {}).items():
-                self._index_prices_cache[key] = value
-            for key, value in state.get('mark_prices_cache', {}).items():
-                self._mark_prices_cache[key] = value
-            for key, value in state.get('funding_rates_cache', {}).items():
-                self._funding_rates_cache[key] = value
-            logger.info(f"[{self.class_name}] Loaded cache from {cache_path}")
-        except Exception as e:
-            logger.warning(f"[{self.class_name}] Failed to load cache: {e}")
+        tasks = [exchange.close() for exchange in list(self.exchanges.values())]
+        await asyncio.gather(*tasks)

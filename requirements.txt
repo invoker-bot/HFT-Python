@@ -16,6 +16,7 @@ tenacity>=8.2.2
 
 # Database
 sqlalchemy>=2.0.0
+clickhouse_sqlalchemy>=0.3.2
 
 # Technical Analysis
 numpy>=1.24.0

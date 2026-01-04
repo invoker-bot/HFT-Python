@@ -110,6 +110,13 @@ class BaseConfig(BaseModel, Generic[T]):
         return super().__init_subclass__(**kwargs)
 
     @classmethod
+    def get_str_value(cls, field):
+        """对于SecretStr类型，获取其明文值"""
+        if hasattr(field, 'get_secret_value'):
+            return field.get_secret_value()
+        return str(field)
+
+    @classmethod
     def prompt_for_config(cls) -> Self:
         """
         交互式创建配置
@@ -134,12 +141,11 @@ class BaseConfig(BaseModel, Generic[T]):
             print("config class:", name)
             return gen.populate(constructor)
 
-    @property
-    def abs_path(self) -> str:
+    def get_abs_path(self, cwd: str = '.') -> str:
         """获取配置文件的绝对路径"""
-        return path.join(self.class_dir, f"{self.path}.yaml")
+        return path.join(cwd, self.class_dir, f"{self.path}.yaml")
 
-    def save(self):
+    def save(self, cwd: str = '.') -> None:
         """
         保存配置到 YAML 文件
 
@@ -147,12 +153,12 @@ class BaseConfig(BaseModel, Generic[T]):
         """
         data = self.model_dump(mode="json", exclude={"path"})
         data["class_name"] = self.class_name  # add class name for loading
-        makedirs(path.dirname(self.abs_path), exist_ok=True)
-        with open(self.abs_path, "w", encoding="utf-8") as f:
+        makedirs(path.dirname(self.get_abs_path(cwd)), exist_ok=True)
+        with open(self.get_abs_path(cwd), "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f)
 
     @classmethod
-    def load(cls, pathname: str) -> Self:
+    def load(cls, pathname: str, cwd: str = '.') -> Self:
         """
         从 YAML 文件加载配置
 
@@ -162,7 +168,7 @@ class BaseConfig(BaseModel, Generic[T]):
         Returns:
             加载的配置实例
         """
-        path_ = path.join(cls.class_dir, f"{pathname}.yaml")
+        path_ = path.join(cwd, cls.class_dir, f"{pathname}.yaml")
         with open(path_, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         class_name = data.pop("class_name")
@@ -171,16 +177,16 @@ class BaseConfig(BaseModel, Generic[T]):
         return constructor(**data)
 
     @classmethod
-    def list_configs(cls) -> list[str]:
+    def list_configs(cls, cwd: str = '.') -> list[str]:
         """
         列出所有已保存的配置文件
 
         Returns:
             配置文件路径名列表
         """
-        pattern = path.join(cls.class_dir, "**", "*.yaml")
+        pattern = path.join(cwd, cls.class_dir, "**", "*.yaml")
         files = glob(pattern, recursive=True)
         result = []
         for file in files:
-            result.append(path.relpath(path.splitext(file)[0], cls.class_dir))
+            result.append(path.relpath(path.splitext(file)[0], path.join(cwd, cls.class_dir)))
         return result

@@ -29,7 +29,7 @@ def exchange():
     typer.echo("Generating exchange configuration...")
     config_obj = BaseExchangeConfig.prompt_for_config()
     config_obj.save()
-    typer.echo(f"Exchange configuration saved to {config_obj.abs_path}")
+    typer.echo(f"Exchange configuration saved to {config_obj.get_abs_path()}")
 
 
 @gen_group.command()
@@ -40,7 +40,7 @@ def strategy():
     typer.echo("Generating strategy configuration...")
     config_obj = BaseStrategyConfig.prompt_for_config()
     config_obj.save()
-    typer.echo(f"Strategy configuration saved to {config_obj.abs_path}")
+    typer.echo(f"Strategy configuration saved to {config_obj.get_abs_path()}")
 
 
 @gen_group.command(name="app")
@@ -51,7 +51,7 @@ def gen_application():
     typer.echo("Generating application configuration...")
     config_obj = AppConfig.prompt_for_config()
     config_obj.save()
-    typer.echo(f"Application configuration saved to {config_obj.abs_path}")
+    typer.echo(f"Application configuration saved to {config_obj.get_abs_path()}")
 
 
 @show_group.command(name="app")

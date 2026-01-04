@@ -1,13 +1,10 @@
 """
 Binance 交易所实现
 """
-import logging
-from typing import ClassVar, Type
+from typing import ClassVar
 from cachetools import TTLCache
-from cachetools_async import cached
+from cachetools_async import cachedmethod
 from ..base import BaseExchange, FundingRate, FundingRateBill
-
-logger = logging.getLogger(__name__)
 
 
 class BinanceExchange(BaseExchange):
@@ -28,104 +25,114 @@ class BinanceExchange(BaseExchange):
     EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
     PING_ENDPOINT = "/fapi/v1/ping"
 
-    @cached(TTLCache(maxsize=32, ttl=30))
-    async def _fetch_symbols(self) -> dict[str, dict]:
+    def medal_balance_usd(self, data):
+        return data['info'].get('totalWalletBalance', 0.0)
+
+    @cachedmethod(TTLCache(maxsize=32, ttl=30))
+    async def __fetch_symbols(self) -> dict[str, dict]:
         """获取所有永续合约交易对"""
-        data = await self.exchange.fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
+        data = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
         return {
             s["symbol"]: s
             for s in data.get("symbols", [])
             if s.get("contractType") == "PERPETUAL" and s.get("status") == "TRADING"
         }
 
-    @cached(TTLCache(maxsize=32, ttl=30))
-    async def _fetch_fundings(self) -> dict[str, dict]:
+    @staticmethod
+    def __to_ccxt_symbol_id(symbol_data: dict) -> str:
+        """将原始交易对数据转换为 ccxt 交易对 ID"""
+        base = symbol_data['baseAsset']
+        quote = symbol_data['quoteAsset']
+        margin = symbol_data["marginAsset"]
+        return f"{base}/{quote}:{margin}"
+
+    @cachedmethod(TTLCache(maxsize=32, ttl=30))
+    async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
-        fundings = await self.exchange.fetch(f"{self.REST_URL}{self.FUNDING_INFO_ENDPOINT}")
+        fundings = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.FUNDING_INFO_ENDPOINT}")
         return {f["symbol"]: f for f in fundings}
 
-    async def _fetch_premium_indices(self) -> dict[str, dict]:
+    async def __fetch_premium_indices(self) -> dict[str, dict]:
         """获取溢价指数"""
-        indices = await self.exchange.fetch(f"{self.REST_URL}{self.PREMIUM_INDEX_ENDPOINT}")
-        for idx in indices:
-            symbol = idx["symbol"]
-            ts = float(idx['time']) / 1000.0
-            self._mark_prices_cache[symbol].append(ts, float(idx['markPrice']))
-            self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
-        return {idx["symbol"]: idx for idx in indices}
+        indices = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.PREMIUM_INDEX_ENDPOINT}")
+        # for idx in indices:
+        #     symbol = idx["symbol"]
+        #     ts = float(idx['time']) / 1000.0
+        #     # self._mark_prices_cache[symbol].append(ts, float(idx['markPrice']))
+        #     # self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
+        return {indice["symbol"]: indice for indice in indices}
 
-    @cached(TTLCache(maxsize=32, ttl=5))
-    async def fetch_funding_rates(self) -> dict[str, FundingRate]:
+    @cachedmethod(TTLCache(maxsize=32, ttl=3))
+    async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}
 
-        symbols_dict = await self._fetch_symbols()
-        fundings_dict = await self._fetch_fundings()
-        indices_dict = await self._fetch_premium_indices()
+        symbols_dict = await self.__fetch_symbols()
+        fundings_dict = await self.__fetch_fundings()
+        indices_dict = await self.__fetch_premium_indices()
 
         # 更新资金费率缓存
-        for raw_symbol, idx in indices_dict.items():
-            ts = float(idx['time']) / 1000.0
-            rate = float(idx['lastFundingRate'])
-            self._funding_rates_cache[raw_symbol].append(ts, rate)
+        # for raw_symbol, idx in indices_dict.items():
+        #     ts = float(idx['time']) / 1000.0
+        #     rate = float(idx['lastFundingRate'])
+        #     self._funding_rates_cache[raw_symbol].append(ts, rate)
 
         for raw_symbol, symbol_data in symbols_dict.items():
-            info = fundings_dict.get(raw_symbol)
-            idx = indices_dict.get(raw_symbol)
+            info = fundings_dict.get(raw_symbol, None)
+            indices = indices_dict.get(raw_symbol, None)
 
-            if info and idx:
-                base = symbol_data['baseAsset']
-                quote = symbol_data['quoteAsset']
-                symbol = f"{base}/{quote}:{quote}"
-
+            if info and indices:
+                ts = float(indices['time']) / 1000.0
+                symbol = self.__to_ccxt_symbol_id(symbol_data)
+                funding_interval_hours = int(info['fundingIntervalHours'])
+                base_funding_rate = float(info['interestRate']) * funding_interval_hours / 8.0
                 funding_rate = FundingRate(
                     exchange=self.class_name,
                     symbol=symbol,
-                    funding_rate=float(idx['lastFundingRate']),
-                    next_funding_rate=None,
-                    funding_timestamp=float(idx['nextFundingTime']) / 1000,
-                    funding_interval_hours=int(info.get('fundingIntervalHours', 8)),
-                    mark_price=float(idx['markPrice']),
-                    index_price=float(idx['indexPrice']),
-                    min_funding_rate=float(info.get('adjustedFundingRateFloor', -0.03)),
-                    max_funding_rate=float(info.get('adjustedFundingRateCap', 0.03)),
+                    timestamp=ts,
+                    expiry=float(symbol_data['deliveryDate']) / 1000,
+                    base_funding_rate=base_funding_rate,
+                    next_funding_rate=float(indices['lastFundingRate']),
+                    next_funding_timestamp=float(indices['nextFundingTime']) / 1000,
+                    funding_interval_hours=funding_interval_hours,
+                    mark_price=float(indices['markPrice']),
+                    mark_price_timestamp=ts,
+                    index_price=float(indices['indexPrice']),
+                    index_price_timestamp=ts,
+                    minimum_funding_rate=float(info.get('adjustedFundingRateFloor', -0.02)),
+                    maximum_funding_rate=float(info.get('adjustedFundingRateCap', 0.02)),
                 )
                 funding_rates[symbol] = funding_rate
 
         return funding_rates
 
-    async def fetch_funding_rates_history(self) -> list[FundingRateBill]:
+    async def medal_fetch_funding_rates_history(self) -> list[FundingRateBill]:
         """获取资金费率账单"""
         bills = []
         try:
-            raws = await self.exchange.fapiprivate_get_income({
+            symbols_dict = await self.__fetch_symbols()
+            raws = await self.exchanges["swap"].fapiprivate_get_income({
                 "incomeType": "FUNDING_FEE",
                 "limit": 100
             })
             for raw in raws:
                 raw_symbol = raw.get('symbol', '')
-                if raw_symbol.endswith("USDT"):
-                    base = raw_symbol[:-4]
-                    quote = "USDT"
-                    symbol = f"{base}/{quote}:{quote}"
-                    bill = FundingRateBill(
-                        id=str(raw['tranId']),
-                        symbol=symbol,
-                        funding_time=float(raw['time']) / 1000.0,
-                        funding_amount=float(raw['income']),
-                    )
-                    bills.append(bill)
+                symbol_data = symbols_dict.get(raw_symbol, None)
+                if symbol_data is None:
+                    continue
+                symbol = self.__to_ccxt_symbol_id(symbol_data)
+                bill = FundingRateBill(
+                    id=str(raw['tranId']),
+                    symbol=symbol,
+                    funding_time=float(raw['time']) / 1000.0,
+                    funding_amount=float(raw['income']),
+                )
+                bills.append(bill)
         except Exception as e:
-            logger.warning(f"[{self.class_name}] Failed to fetch funding history: {e}")
+            self.logger.warning("Failed to fetch funding history: %s", e)
         return bills
 
     async def on_health_check(self) -> None:
         """健康检查"""
-        if not self.ready:
-            self._health = False
-            return
-        try:
-            await self.exchange.fetch(f"{self.REST_URL}{self.PING_ENDPOINT}")
-            self._health = True
-        except Exception:
-            self._health = False
+        await super().on_health_check()
+        await self.config.ccxt_instance.fetch(f"{self.REST_URL}{self.PING_ENDPOINT}")
