@@ -21,7 +21,7 @@ from enum import StrEnum
 from typing import Optional, Coroutine, Iterator
 from rich.console import Console
 from humanfriendly import format_timespan
-from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState
+from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState, retry_if_not_exception_type
 
 
 class ListenerState(StrEnum):
@@ -84,7 +84,7 @@ class Listener(ABC):
 
         # Internal state
         self._enabled = True
-        self._state: ListenerState = ListenerState.STARTING  # build-in state
+        self._state: ListenerState = ListenerState.STOPPED  # build-in state
         self._healthy = False
         self._alock = asyncio.Lock()
 
@@ -96,7 +96,9 @@ class Listener(ABC):
 
         排除不可序列化的对象（锁、任务、弱引用）。
         """
-        return {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
+        state = {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
+        state.update(self.on_save())
+        return state
 
     def __setstate__(self, state: dict):
         """
@@ -112,10 +114,18 @@ class Listener(ABC):
         self._parent = None
         self._alock = asyncio.Lock()
         self._background_task = None
-
+        self._state = ListenerState.STOPPED
         # Restore children (note: subclasses must handle actual child reconstruction)
         for child in self._children.values():
             child.parent = self
+        self.on_reload(state)
+
+    def on_save(self):
+        """子类可覆盖实现保存时的逻辑"""
+        return {}
+
+    def on_reload(self, state: dict):
+        """子类可覆盖实现重新加载时的逻辑"""
 
     @property
     def current_time(self):
@@ -177,11 +187,16 @@ class Listener(ABC):
                 name=f"{self.name}-background-task"
             )
 
-    def delete_background(self):
+    async def delete_background(self):
         """取消后台任务"""
         bt = self._background_task
         if bt is not None:
-            bt.cancel()
+            # try:
+            if bt.cancel():
+                try:
+                    await bt
+                except asyncio.CancelledError:
+                    pass
             self._background_task = None
 
     @property
@@ -272,18 +287,19 @@ class Listener(ABC):
             for child in list(self.children.values()):
                 await child.health_check(True)
                 if child.state == ListenerState.FINISHED:
-                    child.delete_background()
+                    await child.delete_background()
                     self.remove_child(child.name)
         try:
             async for attempt in AsyncRetrying(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS),
-                                               reraise=True, after=self.on_health_check_error):
+                                               reraise=True, retry_error_callback=self.on_health_check_error, 
+                                               retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt))):
                 with attempt:
                     result = await self.on_health_check()
-                    if not result:
-                        raise ValueError("returned unhealthy status")
+            if not result:
+                raise ValueError("returned unhealthy status")
+            self._healthy = True
             if self.enabled:
                 self.update_background()
-            self._healthy = True
         except Exception as e:
             self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
@@ -297,7 +313,7 @@ class Listener(ABC):
             True 表示任务完成，将停止监听器；False 继续运行
         """
 
-    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True)
+    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True, retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)))
     async def __tick_internal(self) -> bool:
         """
         内部 tick 实现（带重试机制）
@@ -367,6 +383,7 @@ class Listener(ABC):
 
     async def on_start(self):
         """启动回调，子类可覆盖实现初始化逻辑"""
+        self.logger.info("listener started")
 
     async def stop(self, recursive: bool = True):
         """
@@ -386,11 +403,12 @@ class Listener(ABC):
                 self._state = ListenerState.STOPPING
             else:
                 self.logger.warning("Stop called but listener not running")
-        self.delete_background()
+        await self.delete_background()
         await self.tick()
 
     async def on_stop(self):
         """停止回调，子类可覆盖实现清理逻辑"""
+        self.logger.info("listener stopped")
 
     async def restart(self, recursive: bool = True):
         """

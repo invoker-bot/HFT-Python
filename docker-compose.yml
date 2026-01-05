@@ -4,7 +4,7 @@ services:
     container_name: clickhouse
     ports:
       - "8123:8123"
-      - "9000:9000"
+      - "9000:9000"  # 原生协议端口映射到 9001 避免冲突
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server

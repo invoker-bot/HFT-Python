@@ -43,6 +43,9 @@ class CacheListener(Listener):
         """定时回调：保存缓存"""
         self.save_cache()
 
+    async def on_stop(self):
+        self.save_cache()
+
     def save_cache(self):
         """
         保存当前状态到缓存文件
@@ -53,7 +56,7 @@ class CacheListener(Listener):
         try:
             makedirs(path.dirname(self.cache_file), exist_ok=True)
             with open(self.cache_file, 'wb') as f:
-                pickle.dump(self, f)
+                pickle.dump(self.root, f)
             self.logger.info("Cache saved to %s", self.cache_file)
         except Exception as e:
             self.logger.error("Failed to save cache to %s: %s", self.cache_file, e, exc_info=True)

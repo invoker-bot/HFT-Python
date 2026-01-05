@@ -226,7 +226,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """交易所 ID"""
         return self.config.ccxt_instance.id
 
-    # ========== 生命周期 ==========
+    def on_reload(self, state):
+        super().on_reload(state)
+        self.config.instance = self
+
     async def on_start(self) -> None:
         """启动时加载市场数据"""
         await self.open()
@@ -543,11 +546,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 usd += float(amount)
         return usd
 
+    @cached(TTLCache(maxsize=32, ttl=30))
     async def medal_fetch_balance_usd(self, ccxt_instance_key: str) -> float:
         exchange = self.exchanges[ccxt_instance_key]
         balance = await exchange.fetch_balance()
         return self.medal_balance_usd(balance)
 
+    @cached(TTLCache(maxsize=32, ttl=30))
     async def medal_fetch_total_balance_usd(self) -> float:
         # 这个放法只是粗略地估算账户的 USD 价值，并且只利用了稳定币的信息，应该使用平台特定的比较准确
         balances = await self.fetch_parrallel('fetch_balance')
@@ -577,6 +582,17 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             ]
         """
         return await self.exchanges["swap"].fetch_positions()
+
+    async def medal_fetch_positions(self) -> dict[str, float]:
+        result = defaultdict(float)
+        positions = await self.fetch_positions()
+        for position in positions:
+            symbol = position['symbol']
+            amount = abs(float(position['contracts']) * self.get_contract_size(symbol))
+            direction = -1 if position['side'] == 'short' else 1
+            result[position['symbol']] += amount * direction
+        # self._positions = result
+        return result
 
     async def watch_position(self, symbol: str) -> list[Position]:
         """订阅持仓更新"""
@@ -632,7 +648,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         await self.set_margin_mode(symbol, 'CROSSED')
         await self.set_leverage(symbol, leverage)
 
-    @cachedmethod(TTLCache(maxsize=1024, ttl=24*3600))
+    @cached(TTLCache(maxsize=1024, ttl=24*3600))
     async def medal_initialize_symbol(self, symbol: str) -> None:
         """初始化交易对（设置杠杆和保证金模式）"""
         await self.get_exchange(symbol)
@@ -682,7 +698,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
 
     # ========== 转账方法 ==========
-    @cachedmethod(TTLCache(maxsize=32, ttl=60))
+    @cached(TTLCache(maxsize=32, ttl=60))
     async def medal_fetch_deposit_address(self, currency: str, network: str):
         result = await self.exchanges['spot'].fetch_deposit_address(currency, {'network': network})
         return result['address']
@@ -772,12 +788,12 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         results = await asyncio.gather(*tasks)
         return results
 
-    @cachedmethod(TTLCache(maxsize=128, ttl=300))
+    @cached(TTLCache(maxsize=128, ttl=300))
     async def load_time_diff(self) -> None:
         """加载时间差"""
         await self.fetch_parrallel('load_time_difference')
 
-    @cachedmethod(TTLCache(maxsize=128, ttl=300))
+    @cached(TTLCache(maxsize=128, ttl=300))
     async def load_markets(self, reload: bool = False) -> dict:
         """加载市场信息"""
         markets = {}

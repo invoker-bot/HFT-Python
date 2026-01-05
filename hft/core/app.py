@@ -29,6 +29,8 @@ class AppCore(Listener):
     - CacheListener: 定期保存应用状态到磁盘
     """
 
+    __pickle_exclude__ = Listener.__pickle_exclude__ + ("exchange_groups", "database")
+
     def __init__(self, config: "AppConfig"):
         """
         初始化应用核心
@@ -41,20 +43,42 @@ class AppCore(Listener):
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
         self.add_child(StateLogListener(interval=config.log_interval))
         self.add_child(CacheListener(interval=config.cache_interval))
-    
+
+    # def load_exchanges(self):
+    #     """加载交易所配置并添加为子监听器"""
+    #     [exchange for exchange_config in self.config.exchanges_configs]
+    #         exchange = exchange_config.instance
+    #         self.add_child(exchange)
+
+    # def get_exchange_groups(self):
+    #     """获取交易所组"""
+    #     return self.config.exchanges_group
+
     @cached_property
     def database(self):
-        """获取 ClickHouse 数据库连接"""
-        return ClickHouseDatabase(str(self.config.database_url))
+        """
+        获取 ClickHouse 数据库连接
+
+        从 database_url 解析连接参数并创建 ClickHouseDatabase 实例。
+        URL 格式: clickhouse://user:password@host:port/database
+        """
+        url = self.config.database_url
+        return ClickHouseDatabase(str(url))
 
     def loop(self):
         """同步启动主循环（阻塞）"""
         self.logger.info("Starting AppCore loop")
         asyncio.run(self.run_ticks(-1))
 
+    def on_reload(self, state):
+        super().on_reload(state)
+        self.config.instance = self
+
+    async def on_start(self):
+        await self.database.init()
+
     async def on_tick(self):
         """主循环回调，子类可覆盖实现具体逻辑"""
-        pass
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,
@@ -73,25 +97,26 @@ class AppCore(Listener):
             initialize = duration < 0
         if finalize is None:
             finalize = duration < 0
+        # try:
         try:
-            try:
-                if initialize:
-                    await self.start(True)
-                while duration < 0 or self.current_time - self.start_time < duration:
-                    try:
-                        loop_start = self.current_time
-                        # simple sleep interruptions
-                        await asyncio.sleep(max(0, loop_start + self.interval - self.current_time))
-                    except asyncio.CancelledError:
-                        self.logger.info("AppCore loop cancelled")
-                        break
-            finally:
-                if finalize:
-                    await self.stop(True)
-                #     self.logger.error("Error during tick: %s", e, exc_info=True)
-        except KeyboardInterrupt:
-            self.logger.info("AppCore loop interrupted by user")
-        except Exception as e:
-            self.logger.error("Error in AppCore loop: %s", e, exc_info=True)
+            if initialize:
+                await self.start(True)
+            while duration < 0 or self.current_time - self.start_time < duration:
+                try:
+                    loop_start = self.current_time
+                    # simple sleep interruptions
+                    await asyncio.sleep(max(0, loop_start + self.interval - self.current_time))
+                except asyncio.CancelledError:
+                    self.logger.info("AppCore loop cancelled")
+                    break
         finally:
-            self.logger.info("AppCore loop stopped, total duration: %s", self.to_duration_string(self.uptime))
+            if finalize:
+                await self.stop(True)
+        # self.logger.info("AppCore loop totally exited, total duration: %s", self.to_duration_string(self.uptime))
+        #     self.logger.error("Error during tick: %s", e, exc_info=True)
+        # except KeyboardInterrupt:
+        #     self.logger.info("AppCore loop interrupted by user")
+        # except Exception as e:
+        #     self.logger.error("Error in AppCore loop: %s", e, exc_info=True)
+        # finally:
+        #     self.logger.info("AppCore loop stopped, total duration: %s", self.to_duration_string(self.uptime))

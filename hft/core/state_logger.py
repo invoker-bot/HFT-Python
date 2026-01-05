@@ -31,6 +31,7 @@ class StateLogListener(Listener):
             console: Rich Console 实例
         """
         super().__init__(interval=interval)
+        self._start = self.current_time
         self._console = console or Console(width=300)
         self._max_depth = max_depth
 
@@ -98,8 +99,13 @@ class StateLogListener(Listener):
             is_last_child = (i == len(children_list) - 1)
             self._print_tree(child, child_prefix, is_last_child, depth + 1)
 
+    async def on_start(self):
+        self._start = self.current_time
+
     async def on_tick(self) -> None:
         """输出状态日志"""
+        if self.current_time - self._start < self.interval:  # initial delay
+            return
         root = self.root
         start_str = self.to_date_string(root.start_time)
         current_str = self.to_date_string(self.current_time)

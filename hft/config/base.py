@@ -11,13 +11,12 @@ import inspect
 from abc import abstractmethod
 from glob import glob
 from os import path, makedirs
-from functools import cached_property
 from typing import ClassVar, Self, Optional, Union, Generic, TypeVar, Type
 import yaml
 from prompt_toolkit import prompt
 from prompt_toolkit.validation import Validator
 from prompt_toolkit.completion import WordCompleter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from promptantic import ModelGenerator
 
 
@@ -72,17 +71,28 @@ class BaseConfig(BaseModel, Generic[T]):
     data_dir: ClassVar[str] = "data/"
     class_dir: ClassVar[str] = "conf/"
     class_name: ClassVar[Optional[str]] = None
+    _instance: Optional[T] = PrivateAttr(None, init=True)
 
     @classmethod
     @abstractmethod
     def get_class_type(cls) -> Type[T]:
         """获取配置对应的实例类型，子类必须实现"""
-        ...
 
-    @cached_property
+    def create_instance(self) -> T:
+        """根据配置创建对应的实例对象"""
+        return self.get_class_type()(self)
+
+    @property
     def instance(self) -> T:
         """根据配置创建并返回对应的实例对象"""
-        return self.get_class_type()(self)
+        if self._instance is None:
+            self._instance = self.create_instance()
+        return self._instance
+
+    @instance.setter
+    def instance(self, value: T) -> None:
+        """设置实例对象"""
+        self._instance = value
 
     @classmethod
     def all_classes(cls) -> dict[str, type[Self]]:
@@ -190,3 +200,15 @@ class BaseConfig(BaseModel, Generic[T]):
         for file in files:
             result.append(path.relpath(path.splitext(file)[0], path.join(cwd, cls.class_dir)))
         return result
+
+    def __getstate__(self):
+        return {"path": self.path}
+
+    def __setstate__(self, state):
+        path_ = path.join(self.class_dir, f"{state['path']}.yaml")
+        with open(path_, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        data.pop("class_name", None)
+        data["path"] = state["path"]
+        self.__init__(**data)
+

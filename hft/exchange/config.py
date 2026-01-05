@@ -27,6 +27,12 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     testnet: bool = Field(False, description="Use testnet or not")
     debug: bool = Field(False, description="Enable debug mode (no real orders)")
 
+    # fee config
+    swap_maker_fee: float = Field(0.0002, description="Default maker fee for swap trading")
+    swap_taker_fee: float = Field(0.0005, description="Default taker fee for swap trading")
+    spot_maker_fee: float = Field(0.0008, description="Default maker fee for spot trading")
+    spot_taker_fee: float = Field(0.0010, description="Default taker fee for spot trading")
+
     # 期货配置
     leverage: Optional[int] = Field(None, description="Default leverage for futures trading")
     support_types: Optional[list[str]] = Field(None, validate_default=True, description="Supported market types: 'spot', 'swap'")

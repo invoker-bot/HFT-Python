@@ -3,7 +3,7 @@ Binance 交易所实现
 """
 from typing import ClassVar
 from cachetools import TTLCache
-from cachetools_async import cachedmethod
+from cachetools_async import cached, cachedmethod
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
 
@@ -28,7 +28,7 @@ class BinanceExchange(BaseExchange):
     def medal_balance_usd(self, data):
         return data['info'].get('totalWalletBalance', 0.0)
 
-    @cachedmethod(TTLCache(maxsize=32, ttl=30))
+    @cached(TTLCache(maxsize=32, ttl=30))
     async def __fetch_symbols(self) -> dict[str, dict]:
         """获取所有永续合约交易对"""
         data = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
@@ -46,7 +46,7 @@ class BinanceExchange(BaseExchange):
         margin = symbol_data["marginAsset"]
         return f"{base}/{quote}:{margin}"
 
-    @cachedmethod(TTLCache(maxsize=32, ttl=30))
+    @cached(TTLCache(maxsize=32, ttl=30))
     async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
         fundings = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.FUNDING_INFO_ENDPOINT}")
@@ -62,7 +62,7 @@ class BinanceExchange(BaseExchange):
         #     # self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
         return {indice["symbol"]: indice for indice in indices}
 
-    @cachedmethod(TTLCache(maxsize=32, ttl=3))
+    @cached(TTLCache(maxsize=32, ttl=3))
     async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}
@@ -132,7 +132,8 @@ class BinanceExchange(BaseExchange):
             self.logger.warning("Failed to fetch funding history: %s", e)
         return bills
 
-    async def on_health_check(self) -> None:
+    async def on_health_check(self):
         """健康检查"""
         await super().on_health_check()
         await self.config.ccxt_instance.fetch(f"{self.REST_URL}{self.PING_ENDPOINT}")
+        return True

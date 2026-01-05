@@ -20,7 +20,7 @@ app.add_typer(test_group, name="test")
 
 @app.command()
 def main(app_name: str):
-    app_config: AppConfig = AppConfig.load(app_name)
+    app_config: AppConfig = AppConfig.load_from_path(app_name)
     app_core = app_config.instance  # AppCore(app_config)
     app_core.loop()
     # trade_core: TradeCore = TradeCore(app_config)
