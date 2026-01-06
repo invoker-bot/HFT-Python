@@ -3,8 +3,11 @@
 
 自动检测并重启不健康的监听器，确保系统稳定运行。
 """
+from typing import TYPE_CHECKING
 from collections import Counter
 from .listener import Listener
+if TYPE_CHECKING:
+    from .app import AppCore
 
 
 class UnhealthyRestartListener(Listener):
@@ -25,6 +28,11 @@ class UnhealthyRestartListener(Listener):
         super().__init__(interval=interval)
         self.reconfirm_cache = Counter()
         self.reconfirm = reconfirm
+
+    async def on_start(self):
+        await super().on_start()
+        root: 'AppCore' = self.root
+        self.interval = root.config.health_check_interval
 
     async def on_tick(self):
         """

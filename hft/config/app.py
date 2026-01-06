@@ -10,12 +10,9 @@ from os import path
 import logging
 from typing import ClassVar, Type
 from pydantic import Field, ClickHouseDsn
-from functools import cached_property
 from .base import BaseConfig
 from ..core.app import AppCore
 from ..core.cache import CacheListener
-from ..exchange.config import BaseExchangeConfig
-from ..exchange.group import ExchangeGroups
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +66,3 @@ class AppConfig(BaseConfig[AppCore]):
     strategies: list[str] = Field(description="策略配置路径列表")
     database_url: ClickHouseDsn = Field(..., description="ClickHouse 数据库连接 URL")
     exchanges: list[str] = Field(description="交易所配置路径列表")
-
-    @cached_property
-    def exchanges_configs(self) -> list[BaseExchangeConfig]:  # 加载exchanges 配置
-        """加载交易所配置列表"""
-        return [
-            BaseExchangeConfig.load(p)
-            for p in self.exchanges
-        ]

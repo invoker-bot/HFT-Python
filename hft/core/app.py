@@ -14,6 +14,7 @@ from .unhealthy_restart import UnhealthyRestartListener
 from .state_logger import StateLogListener
 from .cache import CacheListener
 from ..data.database import ClickHouseDatabase
+from ..exchange.group import ExchangeGroups
 if TYPE_CHECKING:
     from ..config.app import AppConfig
 
@@ -29,7 +30,7 @@ class AppCore(Listener):
     - CacheListener: 定期保存应用状态到磁盘
     """
 
-    __pickle_exclude__ = Listener.__pickle_exclude__ + ("exchange_groups", "database")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database")
 
     def __init__(self, config: "AppConfig"):
         """
@@ -43,16 +44,8 @@ class AppCore(Listener):
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
         self.add_child(StateLogListener(interval=config.log_interval))
         self.add_child(CacheListener(interval=config.cache_interval))
-
-    # def load_exchanges(self):
-    #     """加载交易所配置并添加为子监听器"""
-    #     [exchange for exchange_config in self.config.exchanges_configs]
-    #         exchange = exchange_config.instance
-    #         self.add_child(exchange)
-
-    # def get_exchange_groups(self):
-    #     """获取交易所组"""
-    #     return self.config.exchanges_group
+        self.exchange_groups = ExchangeGroups()
+        self.add_child(self.exchange_groups)
 
     @cached_property
     def database(self):
@@ -73,8 +66,10 @@ class AppCore(Listener):
     def on_reload(self, state):
         super().on_reload(state)
         self.config.instance = self
+        self.interval = self.config.interval
 
     async def on_start(self):
+        await super().on_start()
         await self.database.init()
 
     async def on_tick(self):

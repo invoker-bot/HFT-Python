@@ -8,15 +8,36 @@
 - ExchangeBalanceUsdListener: 账户余额快照采集
 """
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
-
+from .database import ClickHouseDatabase, FundingRateBillController, BalanceUSDController
 if TYPE_CHECKING:
-    from ..core.app import AppCore
     from ..exchange.base import BaseExchange
 
 
-class ExchangeFundingRateBillListener(Listener):
+class DataListener(Listener):
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "db")
+
+    def __init__(self, interval: float = 300.0):
+        """
+        初始化数据监听器
+
+        Args:
+            interval: 采集间隔（秒），默认 5 分钟
+        """
+        super().__init__(self.__class__.__name__, interval)
+        self.db: Optional[ClickHouseDatabase] = None  # type: ignore
+
+    async def on_start(self):
+        await super().on_start()
+        self.db = self.root.database  # type: ignore
+
+    def on_reload(self, state):
+        super().on_reload(state)
+        self.db = None
+
+
+class ExchangeFundingRateBillListener(DataListener):
     """
     资金费率账单监听器
 
@@ -32,15 +53,6 @@ class ExchangeFundingRateBillListener(Listener):
         - timestamp: 时间戳
     """
 
-    def __init__(self, interval: float = 300.0):
-        """
-        初始化资金费率账单监听器
-
-        Args:
-            interval: 采集间隔（秒），默认 5 分钟
-        """
-        super().__init__("ExchangeFundingRateBillListener", interval)
-
     async def on_tick(self):
         """
         定时回调：获取并保存资金费率账单
@@ -48,36 +60,19 @@ class ExchangeFundingRateBillListener(Listener):
         仅当父交易所处于就绪状态时执行。
         """
         parent: 'BaseExchange' = self.parent
-        root: 'AppCore' = self.root  # type: ignore
 
         # 只有当交易所准备好时才执行
-        if not parent.ready:
+        if not parent.ready or not self.db:
             return
-
+        controller = FundingRateBillController(self.db)
         # 从交易所获取资金费率账单
         bills = await parent.medal_fetch_funding_rates_history()
         if not bills:
             return
-
-        # 转换为数据库格式
-        data = [
-            {
-                'id': f"{parent.class_name}-{bill.id}",
-                'exchange_name': parent.class_name,
-                'exchange_path': parent.config.path,
-                'trading_pair': bill.symbol,
-                'funding_profit': bill.funding_amount,
-                'timestamp': datetime.fromtimestamp(bill.funding_time),
-            }
-            for bill in bills
-        ]
-
-        # 批量插入数据库
-        await root.database.insert('funding_rate_bill', data)
-        self.logger.debug("Saved %d funding rate bills", len(data))
+        await controller.update(bills, parent)
 
 
-class ExchangeBalanceUsdListener(Listener):
+class ExchangeBalanceUsdListener(DataListener):
     """
     账户余额快照监听器
 
@@ -92,15 +87,6 @@ class ExchangeBalanceUsdListener(Listener):
         - balance_usd: 账户余额（美元）
     """
 
-    def __init__(self, interval: float = 60.0):
-        """
-        初始化余额快照监听器
-
-        Args:
-            interval: 采集间隔（秒），默认 1 分钟
-        """
-        super().__init__("ExchangeBalanceUsdListener", interval)
-
     async def on_tick(self):
         """
         定时回调：获取并保存余额快照
@@ -108,26 +94,16 @@ class ExchangeBalanceUsdListener(Listener):
         仅当父交易所处于就绪状态时执行。
         """
         parent: 'BaseExchange' = self.parent
-        root: 'AppCore' = self.root  # type: ignore
 
         # 只有当交易所准备好时才执行
-        if not parent.ready:
+        if not parent.ready or not self.db:
             return
 
         # 获取余额和持仓
-        balance_usd = await parent.medal_fetch_balance_usd()
+        balance_usd = await parent.medal_fetch_total_balance_usd()
         positions = await parent.medal_fetch_positions()
 
         # 计算持仓总价值（取绝对值）
         position_usd = sum(abs(pos) for pos in positions.values())
-
-        # 插入数据库
-        await root.database.insert_row(
-            'balance_usd',
-            timestamp=datetime.now(),
-            exchange_name=parent.class_name,
-            exchange_path=parent.config.path,
-            balance_usd=balance_usd,
-            position_usd=position_usd,
-        )
-        self.logger.debug("Saved balance snapshot: balance=%.2f, position=%.2f", balance_usd, position_usd)
+        controller = BalanceUSDController(self.db)
+        await controller.update(position_usd, balance_usd, parent)

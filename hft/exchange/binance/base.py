@@ -26,7 +26,7 @@ class BinanceExchange(BaseExchange):
     PING_ENDPOINT = "/fapi/v1/ping"
 
     def medal_balance_usd(self, data):
-        return data['info'].get('totalWalletBalance', 0.0)
+        return float(data['info'].get('totalWalletBalance', 0.0))
 
     @cached(TTLCache(maxsize=32, ttl=30))
     async def __fetch_symbols(self) -> dict[str, dict]:

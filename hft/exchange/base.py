@@ -32,6 +32,7 @@ from cachetools import TTLCache
 from cachetools_async import cached, cachedmethod
 from .utils import round_to_precision
 from ..core.listener import Listener
+from ..data.listener import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
 
 if TYPE_CHECKING:
     from .config import BaseExchangeConfig
@@ -104,6 +105,7 @@ class OrderParams:
 
 class MarketTradingPairRow:
     """市场交易对列表"""
+
     def __init__(self, symbol: str):
         pass
 
@@ -175,9 +177,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     提供统一的交易所 API 封装
     """
     class_name: ClassVar[str] = "base_exchange"
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_positions_cache")
 
     def __init__(self, config: "BaseExchangeConfig"):
-        super().__init__(name=f"{config.class_name}/{config.class_name}")
+        super().__init__(name=config.path)
         self.config = config
         self.event = AsyncIOEventEmitter()
         self._markets: dict = {}  # id -> market dict
@@ -185,7 +188,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         self._currencies: dict = {}  # 货币信息
         self._positions_cache = TTLCache(maxsize=1, ttl=5)  # 持仓缓存
         self._positions: dict[str, float] = {}
-        # self._positions:
+        self.add_child(ExchangeFundingRateBillListener())
+        self.add_child(ExchangeBalanceUsdListener(60))
 
     def to_raw_symbol(self, pair: str | MarketTradingPair) -> str:
         if isinstance(pair, MarketTradingPair):
@@ -229,15 +233,19 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     def on_reload(self, state):
         super().on_reload(state)
         self.config.instance = self
+        self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
+        self._positions_cache = TTLCache(maxsize=1, ttl=5)
 
     async def on_start(self) -> None:
         """启动时加载市场数据"""
+        await super().on_start()
         await self.open()
         await self.on_tick()
 
     async def on_stop(self) -> None:
         """停止时保存状态"""
         await self.close()
+        await super().on_stop()
 
     async def on_tick(self):
         """每 tick 刷新数据"""
@@ -296,7 +304,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
         exchange = self.get_exchange(symbol)
         return await exchange.fetch_order_book(symbol, limit)
-    
+
     async def watch_order_book(self, symbol: str, limit: Optional[int] = None) -> OrderBook:
         """订阅订单簿"""
         exchange = self.get_exchange(symbol)
@@ -454,7 +462,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         else:
             self.logger.info("Debug: %s", place_str)
             return None
-        
+
     async def create_orders(self, order_params: list[OrderRequest]) -> list[Order]:
         """批量下单"""
         order_params = list(filter(None,  map(self.__resolve_order, order_params)))

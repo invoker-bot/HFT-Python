@@ -23,6 +23,7 @@ class CacheListener(Listener):
 
     缓存文件路径由 AppConfig.data_path 指定。
     """
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "cache_file")
 
     def __init__(self, interval: float = 300.0):
         """
@@ -36,8 +37,14 @@ class CacheListener(Listener):
     @cached_property
     def cache_file(self) -> str:
         """获取缓存文件路径"""
-        root: AppCore = self.root
+        root: 'AppCore' = self.root
         return root.config.data_path
+
+    async def on_start(self):
+        """启动时调整间隔为配置值"""
+        await super().on_start()
+        root: 'AppCore' = self.root
+        self.interval = root.config.cache_interval
 
     async def on_tick(self):
         """定时回调：保存缓存"""
@@ -45,6 +52,25 @@ class CacheListener(Listener):
 
     async def on_stop(self):
         self.save_cache()
+        await super().on_stop()
+
+    @staticmethod
+    def find_unpicklable(obj, path="root"):
+        try:
+            pickle.dumps(obj)
+            return None
+        except Exception as e:
+            if hasattr(obj, '__dict__'):
+                for k, v in obj.__dict__.items():
+                    result = CacheListener.find_unpicklable(v, f"{path}.{k}")
+                    if result:
+                        return result
+            if hasattr(obj, '_children'):
+                for i, child in enumerate(obj._children):
+                    result = CacheListener.find_unpicklable(child, f"{path}._children[{i}]")
+                    if result:
+                        return result
+            return f"{path}: {type(obj)} - {e}"
 
     def save_cache(self):
         """
@@ -59,7 +85,8 @@ class CacheListener(Listener):
                 pickle.dump(self.root, f)
             self.logger.info("Cache saved to %s", self.cache_file)
         except Exception as e:
-            self.logger.error("Failed to save cache to %s: %s", self.cache_file, e, exc_info=True)
+            unpicklable_path = self.find_unpicklable(self.root)
+            self.logger.error("Failed to save cache to %s: %s, Unpicklable path: %s", self.cache_file, e, unpicklable_path, exc_info=True)
 
     @classmethod
     def load_cache(cls, cache_file: str) -> "AppCore":

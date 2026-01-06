@@ -3,10 +3,12 @@ State Logger Listener
 
 定期输出 Listener 树状态，使用树形目录格式显示
 """
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from rich.console import Console
 from .listener import Listener, ListenerState
 from .._version import __version__
+if TYPE_CHECKING:
+    from .app import AppCore
 
 
 class StateLogListener(Listener):
@@ -100,7 +102,10 @@ class StateLogListener(Listener):
             self._print_tree(child, child_prefix, is_last_child, depth + 1)
 
     async def on_start(self):
+        await super().on_start()
         self._start = self.current_time
+        app: 'AppCore' = self.root
+        self.interval = app.config.log_interval
 
     async def on_tick(self) -> None:
         """输出状态日志"""
