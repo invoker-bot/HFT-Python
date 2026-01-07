@@ -1,15 +1,9 @@
 import typer
 from rich.console import Console
-from ..exchange import (
-    BaseExchangeConfig,
-    BinanceExchangeConfig,  # noqa: F401 - 注册子类
-    OKXExchangeConfig,      # noqa: F401 - 注册子类
-)
-from ..strategy import (
-    BaseStrategyConfig,
-    SimpleStrategyConfig,   # noqa: F401 - 注册子类
-)
-from ..config import AppConfig
+from ..exchange import BaseExchangeConfig
+from ..strategy.config import BaseStrategyConfig
+    # SimpleStrategyConfig,   # noqa: F401 - 注册子类
+from ..core.app.config import AppConfig
 
 app = typer.Typer()
 gen_group = typer.Typer()

@@ -5,8 +5,8 @@ from functools import cached_property
 from typing import Optional, ClassVar, Type, Union, Literal
 from pydantic import Field, AnyUrl, field_validator
 from ccxt.pro import Exchange as CCXTExchange
-from .base import BaseExchange, TradeType
 from ..config.base import BaseConfig
+from .base import BaseExchange, TradeType
 
 
 class BaseExchangeConfig(BaseConfig["BaseExchange"]):

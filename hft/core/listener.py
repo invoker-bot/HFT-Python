@@ -385,6 +385,12 @@ class Listener(ABC):
         """启动回调，子类可覆盖实现初始化逻辑"""
         self.logger.info("listener started")
 
+    async def set_stop(self, recursive: bool = True):
+        self.enabled = False
+        if recursive:
+            for child in list(self.children.values()):
+                await child.set_stop(True)
+
     async def stop(self, recursive: bool = True):
         """
         停止监听器
@@ -392,6 +398,7 @@ class Listener(ABC):
         Args:
             recursive: 是否递归停止子监听器
         """
+        await self.set_stop(recursive)
         if recursive:
             for child in list(self.children.values()):
                 await child.stop(True)

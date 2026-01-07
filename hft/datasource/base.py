@@ -43,7 +43,6 @@ class BaseDataSource(Listener, Generic[T]):
 
     def __init__(
         self,
-        name: str,
         exchange: "BaseExchange",
         symbol: str,
         watch_timeout: float = DEFAULT_WATCH_TIMEOUT,

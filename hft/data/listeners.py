@@ -7,7 +7,6 @@
 - ExchangeFundingRateBillListener: 资金费率账单采集
 - ExchangeBalanceUsdListener: 账户余额快照采集
 """
-from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
 from .database import ClickHouseDatabase, FundingRateBillController, BalanceUSDController

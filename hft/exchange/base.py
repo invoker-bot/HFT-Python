@@ -10,17 +10,11 @@
 - WebSocket 订阅
 - 状态持久化
 """
-import os
-import math
 import time
 import asyncio
-import pickle
-import logging
 from abc import abstractmethod, ABCMeta
 from enum import StrEnum
 from operator import attrgetter
-from datetime import datetime, timedelta
-from functools import cached_property
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, ClassVar, TYPE_CHECKING
@@ -30,10 +24,10 @@ from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Posit
 from ccxt.base.errors import InvalidOrder
 from cachetools import TTLCache
 from cachetools_async import cached, cachedmethod
-from .utils import round_to_precision
 from ..core.listener import Listener
-from ..data.listener import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
-
+from ..data.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
+from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener
+from .utils import round_to_precision
 if TYPE_CHECKING:
     from .config import BaseExchangeConfig
 
@@ -186,10 +180,23 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         self._markets: dict = {}  # id -> market dict
         self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
         self._currencies: dict = {}  # 货币信息
-        self._positions_cache = TTLCache(maxsize=1, ttl=5)  # 持仓缓存
-        self._positions: dict[str, float] = {}
+        self._positions_cache = TTLCache(maxsize=1, ttl=1)  # 持仓缓存
+        self._positions: dict[str, float] = {}  # 目前仅支持合约账户
+        self._balances: dict[str, dict[str, dict[str, float]]] = defaultdict(
+            dict)  # ccxt key -> {pair -> "used/free/total"}
         self.add_child(ExchangeFundingRateBillListener())
         self.add_child(ExchangeBalanceUsdListener(60))
+        self.add_child(ExchangeOrderBillListener())
+        self.add_child(ExchangePositionListener())
+        self.add_child(ExchangeBalanceListener())
+
+    @property
+    def positions(self):
+        return self._positions
+
+    @property
+    def balances(self):
+        return self._balances
 
     def to_raw_symbol(self, pair: str | MarketTradingPair) -> str:
         if isinstance(pair, MarketTradingPair):
@@ -469,7 +476,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         if len(order_params) == 0:
             return []
         # only support swap for now
-        if self.config.debug:
+        if not self.config.debug:
             try:
                 results = await self.exchanges['swap'].create_orders(order_params)
                 for order_param, order in zip(order_params, results):
@@ -536,6 +543,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """订单更新"""
         exchange = self.exchanges[ccxt_exchange_key]
         orders = await exchange.watch_orders()
+        self._positions_cache.clear()  # 订单更新后仓位可能变化
         return orders
 
     async def un_watch_orders(self, ccxt_exchange_key: str):
@@ -566,6 +574,22 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         balances = await self.fetch_parrallel('fetch_balance')
         return sum([self.medal_balance_usd(balance) for balance in balances])
 
+    def medal_cache_balance(self, ccxt_instance_key: str, balance: dict):
+        result = {asset: info for asset, info in balance.items() if asset.isupper()}
+        self._balances[ccxt_instance_key] = result
+        return result
+
+    async def medal_fetch_balance(self, ccxt_instance_key: str) -> dict[str, float]:
+        exchange = self.exchanges[ccxt_instance_key]
+        balance = await exchange.fetch_balance()
+        return self.medal_cache_balance(ccxt_instance_key, balance)
+
+    async def medal_watch_balance(self, ccxt_instance_key: str) -> dict[str, float]:
+        """订阅余额更新"""
+        exchange = self.exchanges[ccxt_instance_key]
+        balance = await exchange.watch_balance()
+        return self.medal_cache_balance(ccxt_instance_key, balance)
+
     async def fetch_position(self, symbol: str) -> list[Position]:
         exchange = self.get_exchange(symbol)
         return await exchange.fetch_position(symbol)
@@ -591,16 +615,19 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
         return await self.exchanges["swap"].fetch_positions()
 
-    async def medal_fetch_positions(self) -> dict[str, float]:
+    def medal_cache_positions(self, positions: dict):
         result = defaultdict(float)
-        positions = await self.fetch_positions()
         for position in positions:
             symbol = position['symbol']
             amount = abs(float(position['contracts']) * self.get_contract_size(symbol))
             direction = -1 if position['side'] == 'short' else 1
             result[position['symbol']] += amount * direction
-        # self._positions = result
+        self._positions = result
         return result
+
+    async def medal_fetch_positions(self) -> dict[str, float]:
+        positions = await self.fetch_positions()
+        return self.medal_cache_positions(positions)
 
     async def watch_position(self, symbol: str) -> list[Position]:
         """订阅持仓更新"""
@@ -621,6 +648,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """取消订阅持仓更新"""
         exchange = self.exchanges["swap"]
         return await exchange.un_watch_positions()
+
+    async def medal_watch_positions(self) -> dict[str, float]:
+        positions = await self.watch_positions()
+        return self.medal_cache_positions(positions)
 
     async def fetch_my_trades(
         self,

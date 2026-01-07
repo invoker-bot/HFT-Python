@@ -56,7 +56,7 @@ class ExchangeGroups(Listener):
             if exchange is not None:
                 return exchange
         return None
-    
+
     def get_exchanges_by_class(self, class_name: str) -> list[BaseExchange]:
         result = []
         exchange_names = self.exchanges_map[class_name]

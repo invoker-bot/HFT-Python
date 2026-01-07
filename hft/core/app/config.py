@@ -10,9 +10,9 @@ from os import path
 import logging
 from typing import ClassVar, Type
 from pydantic import Field, ClickHouseDsn
-from .base import BaseConfig
-from ..core.app import AppCore
-from ..core.cache import CacheListener
+from ...config.base import BaseConfig
+from .base import AppCore
+from .listeners import CacheListener
 
 logger = logging.getLogger(__name__)
 

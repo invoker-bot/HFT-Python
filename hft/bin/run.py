@@ -3,13 +3,7 @@ import traceback
 import typer
 from rich.table import Table
 from .config import console
-from ..config import AppConfig
-from ..exchange import (
-    BaseExchangeConfig,
-    BinanceExchangeConfig,  # noqa: F401 - 注册子类
-    OKXExchangeConfig,      # noqa: F401 - 注册子类
-)
-from ..core.app import AppCore
+from ..core.app.config import AppConfig
 from ..test.exchange import test_exchange_async
 
 
@@ -23,8 +17,6 @@ def main(app_name: str):
     app_config: AppConfig = AppConfig.load_from_path(app_name)
     app_core = app_config.instance  # AppCore(app_config)
     app_core.loop()
-    # trade_core: TradeCore = TradeCore(app_config)
-    # trade_core.loop()
 
 
 @app.command()

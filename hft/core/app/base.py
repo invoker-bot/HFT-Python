@@ -9,14 +9,12 @@ AppCore 是整个 HFT 系统的入口，负责：
 import asyncio
 from functools import cached_property
 from typing import Optional, TYPE_CHECKING
-from .listener import Listener
-from .unhealthy_restart import UnhealthyRestartListener
-from .state_logger import StateLogListener
-from .cache import CacheListener
-from ..data.database import ClickHouseDatabase
-from ..exchange.group import ExchangeGroups
+from ...data.database import ClickHouseDatabase
+from ...exchange.group import ExchangeGroups
+from ..listener import Listener
+from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
 if TYPE_CHECKING:
-    from ..config.app import AppConfig
+    from .config import AppConfig
 
 
 class AppCore(Listener):
@@ -74,6 +72,7 @@ class AppCore(Listener):
 
     async def on_tick(self):
         """主循环回调，子类可覆盖实现具体逻辑"""
+        # TODO: 根据策略组确定是否停止
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,
@@ -107,11 +106,3 @@ class AppCore(Listener):
         finally:
             if finalize:
                 await self.stop(True)
-        # self.logger.info("AppCore loop totally exited, total duration: %s", self.to_duration_string(self.uptime))
-        #     self.logger.error("Error during tick: %s", e, exc_info=True)
-        # except KeyboardInterrupt:
-        #     self.logger.info("AppCore loop interrupted by user")
-        # except Exception as e:
-        #     self.logger.error("Error in AppCore loop: %s", e, exc_info=True)
-        # finally:
-        #     self.logger.info("AppCore loop stopped, total duration: %s", self.to_duration_string(self.uptime))
