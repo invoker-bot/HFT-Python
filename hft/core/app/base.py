@@ -59,7 +59,32 @@ class AppCore(Listener):
     def loop(self):
         """同步启动主循环（阻塞）"""
         self.logger.info("Starting AppCore loop")
-        asyncio.run(self.run_ticks(-1))
+
+        def exception_handler(loop, context):
+            # 忽略关闭时的 CancelledError
+            if "exception" in context:
+                exc = context["exception"]
+                if isinstance(exc, asyncio.CancelledError):
+                    return
+            # 其他异常正常处理
+            loop.default_exception_handler(context)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.set_exception_handler(exception_handler)
+        try:
+            loop.run_until_complete(self.run_ticks(-1))
+        except KeyboardInterrupt:
+            self.logger.info("Received keyboard interrupt")
+        finally:
+            # 取消所有待处理的任务
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            # 等待所有任务完成取消
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.close()
 
     def on_reload(self, state):
         super().on_reload(state)
@@ -69,10 +94,14 @@ class AppCore(Listener):
     async def on_start(self):
         await super().on_start()
         await self.database.init()
+        for child in list(self.children.values()):
+            child.enabled = True
 
     async def on_tick(self):
         """主循环回调，子类可覆盖实现具体逻辑"""
         # TODO: 根据策略组确定是否停止
+        # for child in list(self):
+        #    await child.update_background_task()
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,
@@ -99,6 +128,11 @@ class AppCore(Listener):
                 try:
                     loop_start = self.current_time
                     # simple sleep interruptions
+                    for child in list(self):
+                        await child.update_background_task()
+                    # print("on tick:", self.interval)
+                    # for child in list(self):
+                    #     await child.update_background_task()  # make sure background tasks are updated
                     await asyncio.sleep(max(0, loop_start + self.interval - self.current_time))
                 except asyncio.CancelledError:
                     self.logger.info("AppCore loop cancelled")

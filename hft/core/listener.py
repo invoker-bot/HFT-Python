@@ -32,7 +32,7 @@ class ListenerState(StrEnum):
     STARTING -> RUNNING -> STOPPING -> STOPPED
                     |                      ^
                     v                      |
-                 FINISHED (任务完成)        |
+                  ERROR (错误)             |
                     |                      |
                     +----------------------+
     """
@@ -40,7 +40,7 @@ class ListenerState(StrEnum):
     RUNNING = "running"     # 运行中
     STOPPING = "stopping"   # 停止中
     STOPPED = "stopped"     # 已停止
-    FINISHED = "finished"   # 任务完成（正常退出）
+    # FINISHED = "finished"   # 任务完成（正常退出）
     ERROR = "error"         # 错误状态
 
 
@@ -63,7 +63,7 @@ class Listener(ABC):
     - 可用于 Listener 之间的通信
     """
     __pickle_exclude__ = ("_parent", "_background_task", "_alock")
-
+                     
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
         初始化监听器
@@ -75,20 +75,21 @@ class Listener(ABC):
         if name is None:
             name = f"{self.__class__.__name__}"
         self.name = name
-        self.interval = interval
-
-        # Initialize Listener-specific attributes
-        self._parent: Optional[weakref.ReferenceType['Listener']] = None
-        self._children: dict[str, 'Listener'] = {}
-        self._background_task: Optional[asyncio.Task] = None
+        self.interval = interval  # may update from config
 
         # Internal state
         self._enabled = True
-        self._state: ListenerState = ListenerState.STOPPED  # build-in state
         self._healthy = False
-        self._alock = asyncio.Lock()
-
         self.start_time = self.current_time
+        self._children: dict[str, 'Listener'] = {}
+
+        self.initialize()
+
+    def initialize(self):  # 这里面初始化不可序列化的对象
+        self._parent: Optional[weakref.ReferenceType['Listener']] = None
+        self._alock = asyncio.Lock()
+        self._background_task: Optional[asyncio.Task] = None
+        self._state = ListenerState.STOPPED
 
     def __getstate__(self) -> dict:
         """
@@ -111,10 +112,7 @@ class Listener(ABC):
         self.__dict__.update(state)
 
         # Reinitialize non-serializable objects
-        self._parent = None
-        self._alock = asyncio.Lock()
-        self._background_task = None
-        self._state = ListenerState.STOPPED
+        self.initialize()
         # Restore children (note: subclasses must handle actual child reconstruction)
         for child in self._children.values():
             child.parent = self
@@ -178,8 +176,7 @@ class Listener(ABC):
                     await finalizer()
                 break
 
-    def update_background(self):
-        """创建或更新后台任务"""
+    async def __create_background_task_internal(self):
         bt = self._background_task
         if bt is None or bt.done():  # 没有任务或已完成
             self._background_task = asyncio.create_task(
@@ -187,22 +184,32 @@ class Listener(ABC):
                 name=f"{self.name}-background-task"
             )
 
-    async def delete_background(self):
-        """取消后台任务"""
+    async def __delete_background_task_internal(self):
+        """取消后台任务的实际实现"""
         bt = self._background_task
-        if bt is not None:
-            # try:
-            if bt.cancel():
-                try:
-                    await bt
-                except asyncio.CancelledError:
-                    pass
+        if bt is not None and bt.cancel():
+            await bt  # 等待取消完成
             self._background_task = None
+
+    async def __update_background_task_internal(self):
+        if self.enabled:
+            await self.__create_background_task_internal()
+        else:
+            await self.__delete_background_task_internal()
+
+    async def update_background_task(self):
+        async with self._alock:
+            await self.__update_background_task_internal()
 
     @property
     def state(self) -> ListenerState:
         """获取当前状态"""
         return self._state
+    
+    @state.setter
+    def state(self, value: ListenerState):
+        """设置当前状态"""
+        self._state = value
 
     @property
     def root(self) -> 'Listener':
@@ -286,10 +293,12 @@ class Listener(ABC):
         if recursive:
             for child in list(self.children.values()):
                 await child.health_check(True)
-                if child.state == ListenerState.FINISHED:
-                    await child.delete_background()
-                    self.remove_child(child.name)
+                # if child.state == ListenerState.FINISHED:
+                #     await child.delete_background()
+                #     self.remove_child(child.name)
         try:
+            # self.logger.info("Performing health check")
+            # self.logger.info("Health check: running state is %s", self.state)
             async for attempt in AsyncRetrying(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS),
                                                reraise=True, retry_error_callback=self.on_health_check_error, 
                                                retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt))):
@@ -298,8 +307,6 @@ class Listener(ABC):
             if not result:
                 raise ValueError("returned unhealthy status")
             self._healthy = True
-            if self.enabled:
-                self.update_background()
         except Exception as e:
             self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
@@ -313,7 +320,8 @@ class Listener(ABC):
             True 表示任务完成，将停止监听器；False 继续运行
         """
 
-    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True, retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)))
+    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True, 
+           retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)))
     async def __tick_internal(self) -> bool:
         """
         内部 tick 实现（带重试机制）
@@ -321,41 +329,49 @@ class Listener(ABC):
         状态机核心逻辑，根据当前状态执行相应操作。
         """
         try:
-            match self._state:
+            match self.state:
                 case ListenerState.STARTING:
                     if self.enabled:
                         await self.on_start()
                         self.start_time = self.current_time
-                        self._state = ListenerState.RUNNING
+                        self.state = ListenerState.RUNNING
                     else:
-                        self._state = ListenerState.STOPPED
+                        self.state = ListenerState.STOPPED
                 case ListenerState.RUNNING:
                     if self.enabled:
-                        try:
-                            result = await self.on_tick()
-                            self._healthy = True
-                            if result:  # task signaled completion
-                                self._state = ListenerState.STOPPING
-                                await self.on_stop()
-                                self._state = ListenerState.FINISHED
-                        except asyncio.CancelledError:
-                            self._state = ListenerState.STOPPING
+                        # try:
+                        result = await self.on_tick()
+                        self._healthy = True
+                        if result:  # task signaled completion
+                            self.enabled = False
+                            self.state = ListenerState.STOPPING
+                            # await asyncio.shield(self.on_stop())
+                            # self.state = ListenerState.STOPPED
+                            # self.state = ListenerState.FINISHED
+                        # except asyncio.CancelledError:
+                        #     self.state = ListenerState.STOPPING
                     else:
-                        self._state = ListenerState.STOPPING
-                    if self._state == ListenerState.STOPPING:  # disabled or stopping
-                        await self.on_stop()
-                        self._state = ListenerState.STOPPED
+                        self.state = ListenerState.STOPPING
+                    # if self.state == ListenerState.STOPPING:  # disabled or stopping
+                    #     await asyncio.shield(self.on_stop())
+                    #     self.state = ListenerState.STOPPED
                 case ListenerState.STOPPING:
-                    await self.on_stop()
-                    self._state = ListenerState.STOPPED
+                    try:
+                        await asyncio.shield(self.on_stop())
+                    except Exception as e:
+                        if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt)):
+                            raise
+                        self.logger.error("Error during on_stop: %s", e, exc_info=True)
+                    self.state = ListenerState.STOPPED
                 case ListenerState.STOPPED:
                     if self.enabled:
-                        self._state = ListenerState.STARTING
-                # ListenerState.FINISHED | ListenerState.ERROR:
+                        self.state = ListenerState.STARTING
+                # ListenerState.ERROR:
                 #     if self.enabled
         except Exception as e:
             self._healthy = False
             self.logger.error("Error during tick execution: %s", e, exc_info=True)
+        return self.state in (ListenerState.STOPPED, ListenerState.STOPPING)
 
     async def tick(self):
         """执行一次 tick（加锁保证线程安全）"""
@@ -371,12 +387,12 @@ class Listener(ABC):
         """
         async with self._alock:
             self.enabled = True
-            if self._state == ListenerState.STOPPED:
-                self._state = ListenerState.STARTING
-            else:
-                self.logger.warning("Start called but listener not stopped")
-        await self.tick()
-        self.update_background()
+            if self.state == ListenerState.STOPPED:
+                self.state = ListenerState.STARTING
+            # else:
+            #     self.logger.warning("Start called but listener not stopped")
+            # await self.__tick_internal()
+            # await self.__update_background_task_internal()
         if recursive:
             for child in list(self.children.values()):
                 await child.start(True)
@@ -385,33 +401,45 @@ class Listener(ABC):
         """启动回调，子类可覆盖实现初始化逻辑"""
         self.logger.info("listener started")
 
-    async def set_stop(self, recursive: bool = True):
-        self.enabled = False
+    # async def set_stop(self, recursive: bool = True):
+    #     self.enabled = False
+    #     if recursive:
+    #         for child in list(self.children.values()):
+    #             await child.set_stop(True)
+
+    async def __stop_internal(self, recursive: bool = True):
+        """stop() 的实际实现，被 shield 保护"""
+        # async with self._alock:
+        await self.__delete_background_task_internal()
         if recursive:
             for child in list(self.children.values()):
-                await child.set_stop(True)
+                await child.stop(True)
+        self.enabled = False
+        match self.state:
+            case ListenerState.STARTING:
+                self.state = ListenerState.STOPPED
+            case ListenerState.RUNNING:
+                self.state = ListenerState.STOPPING
+            # case _:
+            #     self.logger.warning("Stop called but listener not running")
+        await self.__tick_internal()
+
+    async def __stop_private(self, recursive: bool = True):
+        async with self._alock:
+            await self.__stop_internal(recursive)
 
     async def stop(self, recursive: bool = True):
         """
-        停止监听器
+        停止监听器（使用 shield 保护，防止被 CancelledError 中断）
 
         Args:
             recursive: 是否递归停止子监听器
         """
-        await self.set_stop(recursive)
-        if recursive:
-            for child in list(self.children.values()):
-                await child.stop(True)
-        async with self._alock:
-            self.enabled = False
-            if self._state == ListenerState.STARTING:
-                self._state = ListenerState.STOPPED
-            elif self._state == ListenerState.RUNNING:
-                self._state = ListenerState.STOPPING
-            else:
-                self.logger.warning("Stop called but listener not running")
-        await self.delete_background()
-        await self.tick()
+        try:
+            await asyncio.shield(self.__stop_private(recursive))
+        except asyncio.CancelledError:
+            pass
+            # self.logger.warning("listener stopped by cancellation")
 
     async def on_stop(self):
         """停止回调，子类可覆盖实现清理逻辑"""

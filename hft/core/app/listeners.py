@@ -129,7 +129,7 @@ class StateLogListener(Listener):
     """
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "_console")
 
-    def __init__(self, interval: float = 300, max_depth: int = 5, console: Optional[Console] = None):
+    def __init__(self, interval: float = 300, max_depth: int = 6, console: Optional[Console] = None):
         """
         Args:
             interval: 日志输出间隔（秒）
