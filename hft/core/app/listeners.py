@@ -5,8 +5,9 @@
 - 定期将应用状态序列化到磁盘
 - 支持从缓存文件恢复应用状态
 """
+import asyncio
 import pickle
-from os import makedirs, path
+from os import makedirs, path, replace
 from collections import Counter
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional
@@ -52,45 +53,47 @@ class CacheListener(Listener):
 
     async def on_tick(self):
         """定时回调：保存缓存"""
-        self.save_cache()
+        await self.save_cache_async()
 
     async def on_stop(self):
-        self.save_cache()
+        await self.save_cache_async()
         await super().on_stop()
 
-    @staticmethod
-    def find_unpicklable(obj, path="root"):
-        try:
-            pickle.dumps(obj)
-            return None
-        except Exception as e:
-            if hasattr(obj, '__dict__'):
-                for k, v in obj.__dict__.items():
-                    result = CacheListener.find_unpicklable(v, f"{path}.{k}")
-                    if result:
-                        return result
-            if hasattr(obj, '_children'):
-                for i, child in enumerate(obj._children):
-                    result = CacheListener.find_unpicklable(child, f"{path}._children[{i}]")
-                    if result:
-                        return result
-            return f"{path}: {type(obj)} - {e}"
-
-    def save_cache(self):
+    async def save_cache_async(self):
         """
-        保存当前状态到缓存文件
+        异步保存当前状态到缓存文件
 
-        使用 pickle 序列化整个监听器树。
-        自动创建目录结构。
+        优化策略：
+        1. 在主线程中序列化为 bytes（CPU 密集但通常较快）
+        2. 使用 asyncio.to_thread() 将文件 I/O 放到线程池
+        3. 使用临时文件 + 原子重命名，防止写入中断导致文件损坏
         """
         try:
-            makedirs(path.dirname(self.cache_file), exist_ok=True)
-            with open(self.cache_file, 'wb') as f:
-                pickle.dump(self.root, f)
-            self.logger.info("Cache saved to %s", self.cache_file)
+            # 序列化（CPU 密集型，但通常比 I/O 快）
+            data = pickle.dumps(self.root, protocol=pickle.HIGHEST_PROTOCOL)
+
+            # 异步写入文件
+            await asyncio.to_thread(self._write_cache_file, data)
+            self.logger.info("Cache saved to %s (%d bytes)", self.cache_file, len(data))
         except Exception as e:
-            unpicklable_path = self.find_unpicklable(self.root)
-            self.logger.error("Failed to save cache to %s: %s, Unpicklable path: %s", self.cache_file, e, unpicklable_path, exc_info=True)
+            self.logger.error("Failed to save cache to %s: %s", self.cache_file, e, exc_info=True)
+
+    def _write_cache_file(self, data: bytes):
+        """
+        写入缓存文件（在线程池中执行）
+
+        使用临时文件 + 原子重命名，确保文件完整性。
+        """
+        cache_file = self.cache_file
+        temp_file = cache_file + '.tmp'
+        makedirs(path.dirname(cache_file), exist_ok=True)
+
+        with open(temp_file, 'wb') as f:
+            f.write(data)
+            f.flush()
+
+        # 原子重命名（Windows 上 replace 是原子的）
+        replace(temp_file, cache_file)
 
     @classmethod
     def load_cache(cls, cache_file: str) -> "AppCore":
@@ -148,18 +151,18 @@ class StateLogListener(Listener):
     def _get_state_icon(self, listener: Listener) -> str:
         """获取状态图标"""
         state = listener._state
-        if state == ListenerState.RUNNING:
-            return "[green]●[/green]"
-        elif state == ListenerState.STOPPED:
-            return "[dim]○[/dim]"
-        elif state == ListenerState.ERROR:
-            return "[red]✗[/red]"
-        elif state == ListenerState.STARTING:
-            return "[yellow]◐[/yellow]"
-        elif state == ListenerState.STOPPING:
-            return "[yellow]◑[/yellow]"
-        elif state == ListenerState.FINISHED:
-            return "[blue]◉[/blue]"
+        match state:
+            case ListenerState.RUNNING:
+                return "[green]●[/green]"
+            case ListenerState.STOPPED:
+                return "[dim]○[/dim]"
+            case ListenerState.ERROR:
+                return "[red]✗[/red]"
+            case ListenerState.STARTING:
+                return "[yellow]◐[/yellow]"
+            case ListenerState.STOPPING:
+                return "[yellow]◑[/yellow]"
+        #     return "[blue]◉[/blue]"
         return "[dim]?[/dim]"
 
     def _get_health_icon(self, listener: Listener) -> str:
