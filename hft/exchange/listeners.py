@@ -2,7 +2,7 @@ import time
 import asyncio
 from typing import TYPE_CHECKING
 from ccxt.base.errors import UnsubscribeError
-from ..core.listener import Listener
+from ..core.listener import Listener, GroupListener
 from ..data.database import OrderBillController
 from ..data.listeners import DataListener
 if TYPE_CHECKING:
@@ -11,11 +11,15 @@ if TYPE_CHECKING:
 
 class ExchangeOrderBillWatchListener(DataListener):
 
-    def __init__(self, ccxt_instance_key: str, exchange: 'BaseExchange', interval=0.1):
+    def __init__(self, ccxt_instance_key: str, interval=0.1):
         super().__init__(interval)
-        self.exchange = exchange
         self.ccxt_instance_key = ccxt_instance_key
         self.name = f"{self.name}-{ccxt_instance_key}"
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange（parent.parent）"""
+        return self.parent.parent
 
     async def on_tick(self):
         if not self.exchange.ready or not self.db:
@@ -40,9 +44,13 @@ class ExchangeOrderBillWatchListener(DataListener):
 
 
 class ExchangeOrderBillFetchListener(DataListener):
-    def __init__(self, exchange: 'BaseExchange', interval=60.0):
+    def __init__(self, interval=60.0):
         super().__init__(interval)
-        self.exchange = exchange
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange（parent.parent）"""
+        return self.parent.parent
 
     async def on_tick(self):
         if not self.exchange.ready or not self.db:
@@ -60,20 +68,34 @@ class ExchangeOrderBillFetchListener(DataListener):
             await asyncio.sleep(1)  # 避免请求过快
 
 
-class ExchangeOrderBillListener(DataListener):
+class ExchangeOrderBillListener(GroupListener, DataListener):
+    """
+    交易所订单账单监听器
 
-    __pickle_exclude__ = (*DataListener.__pickle_exclude__, "_children", "children")
+    使用 GroupListener 自动管理动态子节点。
+    """
+
+    def sync_children_params(self) -> dict[str, any]:
+        """根据 ccxt_instances 声明需要的 children"""
+        exchange: 'BaseExchange' = self.parent
+        if not exchange:
+            return {}
+        params = {}
+        for key in exchange.config.ccxt_instances.keys():
+            params[f"watch-{key}"] = {"key": key, "type": "watch"}
+        params["fetch"] = {"type": "fetch"}
+        return params
+
+    def create_dynamic_child(self, name: str, param: any) -> Listener:
+        """根据参数创建 WatchListener 或 FetchListener"""
+        if param["type"] == "watch":
+            return ExchangeOrderBillWatchListener(param["key"])
+        else:
+            return ExchangeOrderBillFetchListener()
 
     async def on_start(self):
         await super().on_start()
         exchange: 'BaseExchange' = self.parent
-        for ccxt_instance_key in list(exchange.config.ccxt_instances.keys()):
-            watch_listener = ExchangeOrderBillWatchListener(ccxt_instance_key, exchange)
-            self.add_child(watch_listener)
-            await watch_listener.start()
-        fetch_listener = ExchangeOrderBillFetchListener(exchange)
-        self.add_child(fetch_listener)
-        await fetch_listener.start()
         exchange.event.add_listener("order_created", self.on_order_created)
 
     async def on_order_created(self, resolved_order, order):
@@ -82,22 +104,10 @@ class ExchangeOrderBillListener(DataListener):
             controller = OrderBillController(self.db)
             await controller.update(order, exchange)
 
-    def on_save(self):
-        d = super().on_save()
-        d["_children"] = {}
-        return d
-
-    async def on_tick(self):
-        pass  # TODO: fetch open orders periodically
-
     async def on_stop(self):
         exchange: 'BaseExchange' = self.parent
         if exchange is not None:
             exchange.event.remove_listener("order_created", self.on_order_created)
-        for child in list(self.children.values()):
-            await child.stop()
-            self.remove_child(child.name)
-
         await super().on_stop()
 
 
@@ -108,9 +118,13 @@ class ExchangePositionWatchListener(Listener):
     定期从交易所获取持仓信息并更新到 Exchange 实例中。
     """
 
-    def __init__(self, exchange: 'BaseExchange', interval=0.1):
+    def __init__(self, interval=0.1):
         super().__init__(self.__class__.__name__, interval)
-        self.exchange = exchange
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange（parent.parent）"""
+        return self.parent.parent
 
     async def on_tick(self) -> None:
         """获取并更新持仓信息"""
@@ -128,41 +142,40 @@ class ExchangePositionWatchListener(Listener):
         await super().on_stop()
 
 
-class ExchangePositionListener(Listener):
+class ExchangePositionListener(GroupListener):
+    """
+    交易所持仓监听器
 
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_children", "children")
+    使用 GroupListener 自动管理动态子节点。
+    """
 
     def __init__(self, interval=1):
         super().__init__(self.__class__.__name__, interval)
 
-    def on_save(self):
-        d = super().on_save()
-        d["_children"] = {}
-        return d
+    def sync_children_params(self) -> dict[str, any]:
+        """声明需要一个 watch listener"""
+        return {"watch": {}}
 
-    async def on_start(self):
-        await super().on_start()
-        exchange: 'BaseExchange' = self.parent
-        position_listener = ExchangePositionWatchListener(exchange)
-        self.add_child(position_listener)
-        await position_listener.start()
+    def create_dynamic_child(self, name: str, param: any) -> Listener:
+        """创建 PositionWatchListener"""
+        return ExchangePositionWatchListener()
 
     async def on_tick(self):
+        await super().on_tick()  # 调用 GroupListener 的同步逻辑
         exchange: 'BaseExchange' = self.parent
         await exchange.medal_fetch_positions()
-
-    async def on_stop(self):
-        for child in list(self.children.values()):
-            await child.stop()
-            self.remove_child(child.name)
-        await super().on_stop()
+        return False
 
 
 class ExchangeBalanceWatchListener(Listener):
-    def __init__(self, ccxt_instance_key: str, exchange: 'BaseExchange', interval=1):
+    def __init__(self, ccxt_instance_key: str, interval=1):
         super().__init__(f"{self.__class__.__name__}-{ccxt_instance_key}", interval)
         self.ccxt_instance_key = ccxt_instance_key
-        self.exchange = exchange
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange（parent.parent）"""
+        return self.parent.parent
 
     async def on_tick(self) -> None:
         """获取并更新余额信息"""
@@ -172,10 +185,14 @@ class ExchangeBalanceWatchListener(Listener):
 
 
 class ExchangeBalanceFetchListener(Listener):
-    def __init__(self, ccxt_instance_key: str, exchange: 'BaseExchange', interval=5):
+    def __init__(self, ccxt_instance_key: str, interval=5):
         super().__init__(f"{self.__class__.__name__}-{ccxt_instance_key}", interval)
         self.ccxt_instance_key = ccxt_instance_key
-        self.exchange = exchange
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange（parent.parent）"""
+        return self.parent.parent
 
     async def on_tick(self) -> None:
         """获取并更新余额信息"""
@@ -184,40 +201,33 @@ class ExchangeBalanceFetchListener(Listener):
         await self.exchange.medal_fetch_balance(self.ccxt_instance_key)
 
 
-class ExchangeBalanceListener(Listener):
+class ExchangeBalanceListener(GroupListener):
     """
     交易所余额监听器
 
     定期从交易所获取余额信息并更新到 Exchange 实例中。
+    使用 GroupListener 自动管理动态子节点。
     """
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_children", "children")
 
     def __init__(self):
         super().__init__(self.__class__.__name__, 60)
 
-    def on_save(self):
-        d = super().on_save()
-        d["_children"] = {}
-        return d
-
-    async def on_start(self):
-        await super().on_start()
+    def sync_children_params(self) -> dict[str, any]:
+        """根据 ccxt_instances 声明需要的 children"""
         exchange: 'BaseExchange' = self.parent
-        for ccxt_instance_key in list(exchange.config.ccxt_instances.keys()):
-            watch_listener = ExchangeBalanceWatchListener(ccxt_instance_key, exchange)
-            self.add_child(watch_listener)
-            await watch_listener.start()
-            fetch_listener = ExchangeBalanceFetchListener(ccxt_instance_key, exchange)
-            self.add_child(fetch_listener)
-            await fetch_listener.start()
-    
-    async def on_stop(self):
-        for child in list(self.children.values()):
-            await child.stop()
-            self.remove_child(child.name)
-        await super().on_stop()
+        if not exchange:
+            return {}
+        params = {}
+        for key in exchange.config.ccxt_instances.keys():
+            params[f"watch-{key}"] = {"key": key, "type": "watch"}
+            params[f"fetch-{key}"] = {"key": key, "type": "fetch"}
+        return params
 
-    async def on_tick(self) -> None:
-        """获取并更新余额信息"""
+    def create_dynamic_child(self, name: str, param: any) -> Listener:
+        """根据参数创建 WatchListener 或 FetchListener"""
+        if param["type"] == "watch":
+            return ExchangeBalanceWatchListener(param["key"])
+        else:
+            return ExchangeBalanceFetchListener(param["key"])
 
 

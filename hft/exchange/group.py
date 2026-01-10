@@ -1,18 +1,18 @@
 """
 交易所分组管理模块
 
-ExchangeGroups 按交易所类型（class_name）组织多账户：
+ExchangeGroup 按交易所类型（class_name）组织多账户：
 - 同类交易所（如 okx）的多个账户共享数据订阅，避免重复获取
 - 支持动态添加/移除交易所实例
 - 为 Executor 提供按类型获取交易所的接口
 
 数据流：
-    Strategy 请求数据 -> ExchangeGroups.get_exchange_by_class()
+    Strategy 请求数据 -> ExchangeGroup.get_exchange_by_class()
                             -> 返回主交易所实例
                             -> 调用 exchange.watch_xxx() 或 fetch_xxx()
 
 执行流：
-    Executor.on_tick() -> ExchangeGroups.get_exchanges_by_class()
+    Executor.on_tick() -> ExchangeGroup.get_exchanges_by_class()
                             -> 返回该类型所有账户
                             -> 依次在所有账户执行（老鼠仓模式）
 """
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..core.app import AppCore
 
 
-class ExchangeGroups(Listener):
+class ExchangeGroup(Listener):
     """
     交易所分组管理器
 
@@ -45,11 +45,11 @@ class ExchangeGroups(Listener):
 
     使用方式：
         # 获取主交易所（用于数据订阅）
-        okx = exchange_groups.get_exchange_by_class("okx")
+        okx = exchange_group.get_exchange_by_class("okx")
         ticker = await okx.fetch_ticker("BTC/USDT:USDT")
 
         # 获取所有账户（用于下单）
-        all_okx = exchange_groups.get_exchanges_by_class("okx")
+        all_okx = exchange_group.get_exchanges_by_class("okx")
         for ex in all_okx:
             await ex.create_order(...)
 
@@ -58,7 +58,7 @@ class ExchangeGroups(Listener):
     """
 
     def __init__(self):
-        super().__init__("ExchangeGroups", interval=60.0)
+        super().__init__("ExchangeGroup", interval=60.0)
         self.exchanges_map = defaultdict(list)
 
     async def add_exchange(self, exchange: BaseExchange):

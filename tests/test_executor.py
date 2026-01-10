@@ -45,7 +45,7 @@ class MockExchange:
         self.medal_fetch_positions = AsyncMock(return_value={})
 
 
-class MockExchangeGroups:
+class MockExchangeGroup:
     """Mock exchange groups for testing."""
 
     def __init__(self, exchanges: list[MockExchange] = None):
@@ -380,10 +380,10 @@ class TestMarketExecutorExecution:
             value=0.5
         )
 
-        # Mock exchange_groups property using PropertyMock
-        mock_groups = MockExchangeGroups(exchanges=[])
+        # Mock exchange_group property using PropertyMock
+        mock_groups = MockExchangeGroup(exchanges=[])
         with patch.object(
-            type(executor), 'exchange_groups',
+            type(executor), 'exchange_group',
             new_callable=lambda: property(lambda self: mock_groups)
         ):
             results = await executor.execute_signal(signal)

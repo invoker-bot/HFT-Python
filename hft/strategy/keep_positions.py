@@ -93,13 +93,18 @@ class KeepPositionsStrategy(BaseStrategy):
         self._targets_reached: set[str] = set()
 
     @property
-    def exchange_groups(self):
+    def exchange_group(self):
         """获取交易所组"""
-        return self.root.exchange_groups
+        return self.root.exchange_group
 
     def get_target_positions_usd(self) -> TargetPositions:
         """
         返回配置的目标仓位
+
+        支持 exchange_class 通配符：
+        - "*": 匹配所有交易所类
+        - "okx": 精确匹配 okx 类
+        - "!okx": 排除 okx 类（暂不支持）
 
         Returns:
             {exchange_class: {symbol: (position_usd, speed)}}
@@ -107,12 +112,21 @@ class KeepPositionsStrategy(BaseStrategy):
         if not self.config.positions_usd:
             return {}
 
-        return {
-            self.config.exchange_class: {
-                symbol: (usd, self.config.speed)
-                for symbol, usd in self.config.positions_usd.items()
-            }
+        symbols_dict = {
+            symbol: (usd, self.config.speed)
+            for symbol, usd in self.config.positions_usd.items()
         }
+
+        # 通配符匹配
+        if self.config.exchange_class == "*":
+            # 获取所有交易所类
+            exchange_classes = self.exchange_group.get_exchange_classes()
+            return {
+                exchange_class: symbols_dict.copy()
+                for exchange_class in exchange_classes
+            }
+
+        return {self.config.exchange_class: symbols_dict}
 
     async def on_start(self):
         await super().on_start()
@@ -138,7 +152,7 @@ class KeepPositionsStrategy(BaseStrategy):
             return False  # 不退出，持续运行
 
         # 获取交易所检查仓位
-        exchange = self.exchange_groups.get_exchange_by_class(self.config.exchange_class)
+        exchange = self.exchange_group.get_exchange_by_class(self.config.exchange_class)
         if exchange is None:
             return False  # 交易所未就绪，继续等待
 

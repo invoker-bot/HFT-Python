@@ -10,7 +10,7 @@ AppCore (根节点)
 ├── StateLogListener           # 状态日志输出
 ├── UnhealthyRestartListener   # 不健康自动重启
 │
-├── ExchangeGroups             # 交易所分组管理
+├── ExchangeGroup             # 交易所分组管理
 │   ├── okx: [OKX_1, OKX_2, ...]
 │   ├── binance: [Binance_1, ...]
 │   └── ...
@@ -29,7 +29,7 @@ AppCore (根节点)
 | 组件 | 职责 | 详见 |
 |------|------|------|
 | **AppCore** | 应用根节点，管理生命周期和退出流程 | `hft/core/app/base.py` |
-| **ExchangeGroups** | 按类型分组管理多账户，数据去重 | `hft/exchange/group.py` |
+| **ExchangeGroup** | 按类型分组管理多账户，数据去重 | `hft/exchange/group.py` |
 | **StrategyGroup** | 管理策略，聚合并转发交易信号 | `hft/strategy/group.py` |
 | **TradeSignal** | 策略与执行器的通信协议 | `hft/strategy/signal.py` |
 | **MarketExecutor** | 监听信号，执行市价单 | `hft/executor/market.py` |
@@ -38,12 +38,12 @@ AppCore (根节点)
 ## 数据流
 
 ```
-ExchangeGroups ──watch/fetch──> DataSourceGroup ──query──> Strategy
+ExchangeGroup ──watch/fetch──> DataSourceGroup ──query──> Strategy
                                                               │
                                                          emit_signal()
                                                               │
                                                               ▼
-ExchangeGroups <──create_order── MarketExecutor <── StrategyGroup.event
+ExchangeGroup <──create_order── MarketExecutor <── StrategyGroup.event
 ```
 
 ## 信号机制

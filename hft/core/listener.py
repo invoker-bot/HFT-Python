@@ -67,7 +67,7 @@ class Listener(ABC):
     - 通知系统：发送告警、通知
     - 可用于 Listener 之间的通信
     """
-    __pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index")
+    __pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index", "root")
 
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
@@ -720,3 +720,122 @@ class Listener(ABC):
         for child in self.children.values():
             yield from child
         yield self
+
+
+class GroupListener(Listener):
+    """
+    动态子节点管理的 Listener 基类
+
+    适用于需要根据配置动态创建/删除子节点的场景，如：
+    - ExchangeBalanceListener: 根据 ccxt_instances 创建多个 WatchListener
+    - DataSourceGroup: 根据请求动态创建 DataSource
+
+    特点：
+    - 自身可以 pickle，但不保存 children（children 在启动时重建）
+    - 通过 sync_children_params() 声明需要哪些 children
+    - 自动同步：缺少的创建，多余的删除
+
+    子类需要实现：
+    - sync_children_params(): 返回 {name: param} 字典
+    - create_dynamic_child(name, param): 根据参数创建 child
+
+    Example:
+        class ExchangeBalanceListener(GroupListener):
+            def sync_children_params(self) -> dict[str, Any]:
+                exchange = self.parent
+                return {
+                    f"watch-{key}": {"key": key, "type": "watch"}
+                    for key in exchange.config.ccxt_instances.keys()
+                }
+
+            def create_dynamic_child(self, name: str, param: Any) -> Listener:
+                if param["type"] == "watch":
+                    return ExchangeBalanceWatchListener(param["key"])
+    """
+
+    # 不 pickle children，启动时重建
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_children", "children")
+
+    def on_save(self):
+        """保存时排除 children"""
+        d = super().on_save()
+        d["_children"] = {}
+        return d
+
+    def sync_children_params(self) -> dict[str, any]:
+        """
+        返回需要的 children 参数字典
+
+        子类必须实现此方法，返回 {name: param} 字典。
+        框架会根据这个字典自动同步 children。
+
+        Returns:
+            {child_name: create_param} 字典
+        """
+        return {}
+
+    def create_dynamic_child(self, name: str, param: any) -> 'Listener':
+        """
+        根据参数创建动态 child
+
+        子类必须实现此方法。
+
+        Args:
+            name: child 名称
+            param: 创建参数（来自 sync_children_params）
+
+        Returns:
+            新创建的 Listener 实例
+        """
+        raise NotImplementedError("Subclass must implement create_dynamic_child")
+
+    async def _sync_children(self) -> tuple[int, int]:
+        """
+        同步 children：创建缺少的，删除多余的
+
+        Returns:
+            (created_count, removed_count)
+        """
+        target_params = self.sync_children_params()
+        target_names = set(target_params.keys())
+        current_names = set(self._children.keys())
+
+        created = 0
+        removed = 0
+
+        # 删除多余的 children
+        for name in current_names - target_names:
+            child = self._children[name]
+            await child.stop()
+            self.remove_child(name)
+            removed += 1
+            self.logger.debug("Removed dynamic child: %s", name)
+
+        # 创建缺少的 children
+        for name in target_names - current_names:
+            param = target_params[name]
+            child = self.create_dynamic_child(name, param)
+            self.add_child(child)
+            if self.state == ListenerState.RUNNING:
+                await child.start()
+            created += 1
+            self.logger.debug("Created dynamic child: %s", name)
+
+        return created, removed
+
+    async def on_start(self):
+        """启动时同步 children"""
+        await super().on_start()
+        await self._sync_children()
+
+    async def on_tick(self) -> bool:
+        """每次 tick 同步 children"""
+        await self._sync_children()
+        return False
+
+    async def on_stop(self):
+        """停止时清理所有 children"""
+        for child in list(self._children.values()):
+            await child.stop()
+            self.remove_child(child.name)
+        await super().on_stop()

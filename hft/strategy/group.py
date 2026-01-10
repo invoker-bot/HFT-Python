@@ -61,6 +61,7 @@ class StrategyGroup(Listener):
 
     def __init__(self):
         super().__init__("StrategyGroup", interval=60.0)
+        self._initialized = False  # 标记是否已初始化加载策略
 
     async def add_strategy(self, strategy: BaseStrategy):
         """添加策略"""
@@ -84,6 +85,7 @@ class StrategyGroup(Listener):
                 strategy_config = BaseStrategyConfig.load(strategy_name)
                 strategy_instance: BaseStrategy = strategy_config.instance
                 await self.add_strategy(strategy_instance)
+        self._initialized = True  # 标记已完成初始化
 
     @property
     def strategies(self) -> list[BaseStrategy]:
@@ -144,13 +146,13 @@ class StrategyGroup(Listener):
         """
         检查策略组是否已完成
 
-        当没有任何策略在运行时，认为策略组已完成。
+        当初始化完成且没有任何策略在运行时，认为策略组已完成。
         这会触发 AppCore 的退出流程。
 
         Returns:
-            True 如果没有策略在运行
+            True 如果初始化完成且没有策略在运行
         """
-        return len(self.children) == 0
+        return self._initialized and len(self.children) == 0
 
     async def on_tick(self) -> bool:
         """
