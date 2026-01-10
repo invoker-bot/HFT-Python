@@ -16,14 +16,14 @@ MarketExecutor - 市价单执行器
 - 不支持分批执行，不适合大仓位
 - 所有账户同步执行，适合个人多账户管理
 
-Example:
-    executor = MarketExecutor(
-        per_order_usd=100.0,  # 单笔订单 100 美元
-        interval=1.0,         # 每秒执行一次
-    )
+Example config (conf/executor/market/default.yaml):
+    class_name: market
+    per_order_usd: 100.0
+    interval: 1.0
 """
 from typing import TYPE_CHECKING
 from .base import BaseExecutor, ExecutionResult
+from .config import MarketExecutorConfig
 
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
@@ -41,10 +41,8 @@ class MarketExecutor(BaseExecutor):
     3. 将 USD 价值转换为交易数量
     4. 执行市价单
 
-    参数说明（继承自 BaseExecutor）：
+    配置参数（MarketExecutorConfig）：
         per_order_usd: 单笔订单大小 / 执行阈值（USD）
-            - delta 超过此值才会执行
-            - 每次执行的订单大小
         interval: tick 间隔（秒）
 
     特点：
@@ -53,16 +51,21 @@ class MarketExecutor(BaseExecutor):
         - 适合流动性好的交易对
     """
 
-    def __init__(self, name: str = "MarketExecutor"):
+    config: MarketExecutorConfig
+
+    def __init__(self, config: MarketExecutorConfig):
         """
         初始化市价单执行器
 
         Args:
-            name: 执行器名称
-
-        配置参数从 root.config 获取（见 BaseExecutor）。
+            config: 市价单执行器配置
         """
-        super().__init__(name=name)
+        super().__init__(config)
+
+    @property
+    def per_order_usd(self) -> float:
+        """从配置获取单笔订单大小"""
+        return self.config.per_order_usd
 
     async def execute_delta(
         self,
@@ -92,17 +95,16 @@ class MarketExecutor(BaseExecutor):
             await exchange.medal_initialize_symbol(symbol)
 
             # 2. 将 USD 转换为交易数量
-            if current_price <= 0:
+            amount = abs(self.usd_to_amount(exchange, symbol, delta_usd, current_price))
+            if amount <= 0:
                 return ExecutionResult(
                     exchange_class=exchange.class_name,
                     symbol=symbol,
                     success=False,
                     exchange_name=exchange.name,
                     delta_usd=delta_usd,
-                    error="Invalid price"
+                    error="Invalid price or amount"
                 )
-
-            amount = abs(delta_usd) / current_price
             side = "buy" if delta_usd > 0 else "sell"
 
             # 3. 执行市价单

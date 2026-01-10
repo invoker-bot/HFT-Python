@@ -7,7 +7,7 @@ AppCore 是整个 HFT 系统的入口，负责：
 - 协调健康检查、状态日志、缓存等功能
 
 核心组件（按初始化顺序）：
-1. ExchangeGroups - 交易所连接管理
+1. ExchangeGroup - 交易所连接管理
 2. DataSourceGroup - 市场数据源管理
 3. StrategyGroup - 策略管理
 4. Executor - 交易执行器
@@ -26,10 +26,11 @@ import asyncio
 from functools import cached_property
 from typing import Optional, TYPE_CHECKING
 from ...data.database import ClickHouseDatabase
-from ...exchange.group import ExchangeGroups
+from ...exchange.group import ExchangeGroup
 from ...datasource.group import DataSourceGroup
 from ...strategy.group import StrategyGroup
-from ...executor.market import MarketExecutor
+from ...executor.config import BaseExecutorConfig
+from ...executor.base import BaseExecutor
 from ..listener import Listener
 from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
 
@@ -48,7 +49,7 @@ class AppCore(Listener):
         ├── UnhealthyRestartListener  # 健康检查与自动重启
         ├── StateLogListener          # 状态日志输出
         ├── CacheListener             # 状态持久化
-        ├── ExchangeGroups            # 交易所连接
+        ├── ExchangeGroup            # 交易所连接
         │   └── [各交易所实例...]
         ├── DataSourceGroup           # 市场数据源
         │   └── [各数据源实例...]
@@ -84,8 +85,8 @@ class AppCore(Listener):
 
         # === 核心组件 ===
         # 1. 交易所连接管理
-        self.exchange_groups = ExchangeGroups()
-        self.add_child(self.exchange_groups)
+        self.exchange_group = ExchangeGroup()
+        self.add_child(self.exchange_group)
 
         # 2. 市场数据源管理
         self.datasource_group = DataSourceGroup()
@@ -95,9 +96,9 @@ class AppCore(Listener):
         self.strategy_group = StrategyGroup()
         self.add_child(self.strategy_group)
 
-        # 4. 交易执行器（默认使用 MarketExecutor）
-        # 配置从 root.config 动态获取
-        self.executor = MarketExecutor()
+        # 4. 交易执行器（从配置加载）
+        executor_config = BaseExecutorConfig.load(config.executor)
+        self.executor: BaseExecutor = executor_config.instance
         self.add_child(self.executor)
 
     @cached_property
@@ -112,8 +113,20 @@ class AppCore(Listener):
         return ClickHouseDatabase(str(url))
 
     def loop(self):
-        """同步启动主循环（阻塞）"""
-        self.logger.info("Starting AppCore loop")
+        """
+        同步启动主循环（阻塞）
+
+        运行时长由 config.max_duration 控制：
+        - None: 无限运行直到策略退出
+        - float: 运行指定秒数后退出
+        """
+        # 计算运行时长
+        duration = -1 if self.config.max_duration is None else self.config.max_duration
+        if self.config.debug:
+            self.logger.info("Starting AppCore loop (DEBUG mode, duration=%.1fs)",
+                           duration if duration > 0 else float('inf'))
+        else:
+            self.logger.info("Starting AppCore loop")
 
         def exception_handler(loop, context):
             # 忽略关闭时的 CancelledError
@@ -128,7 +141,8 @@ class AppCore(Listener):
         asyncio.set_event_loop(loop)
         loop.set_exception_handler(exception_handler)
         try:
-            loop.run_until_complete(self.run_ticks(-1))
+            # 有限时长运行时也要正常初始化和清理
+            loop.run_until_complete(self.run_ticks(duration, initialize=True, finalize=True))
         except KeyboardInterrupt:
             self.logger.info("Received keyboard interrupt")
         finally:

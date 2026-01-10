@@ -35,7 +35,7 @@ from typing import Optional, Generic, TypeVar, Type, TYPE_CHECKING
 from ..core.listener import Listener, ListenerState
 
 if TYPE_CHECKING:
-    from ..exchange.group import ExchangeGroups
+    from ..exchange.group import ExchangeGroup
     from ..exchange.base import BaseExchange
     from .base import BaseDataSource
 
@@ -314,9 +314,9 @@ class DataSourceGroup(Listener):
     # ===== 属性 =====
 
     @property
-    def exchange_groups(self) -> "ExchangeGroups":
-        """获取 ExchangeGroups（从 root 获取）"""
-        return self.root.exchange_groups
+    def exchange_group(self) -> "ExchangeGroup":
+        """获取 ExchangeGroup（从 root 获取）"""
+        return self.root.exchange_group
 
     # ===== DataSource 类映射 =====
 
@@ -367,8 +367,8 @@ class DataSourceGroup(Listener):
             ds.request_watch()  # 刷新 watch 计时器
             return ds
 
-        # 创建新的
-        exchange = self.exchange_groups.get_exchange_by_class(class_name)
+        # 检查交易所是否存在
+        exchange = self.exchange_group.get_exchange_by_class(class_name)
         if exchange is None:
             self.logger.warning("No exchange found for class %s", class_name)
             return None

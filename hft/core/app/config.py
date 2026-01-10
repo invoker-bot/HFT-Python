@@ -67,6 +67,9 @@ class AppConfig(BaseConfig[AppCore]):
     database_url: ClickHouseDsn | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
     exchanges: list[str] = Field(description="交易所配置路径列表")
 
-    # Executor 配置
-    executor_interval: float = Field(1.0, description="执行器 tick 间隔（秒）")
-    executor_per_order_usd: float = Field(100.0, description="单笔订单大小 / 执行阈值（USD）")
+    # Executor 配置路径
+    executor: str = Field(description="执行器配置路径（如 market/default）")
+
+    # 调试和测试
+    debug: bool = Field(False, description="调试模式，验证流程而不实际下单")
+    max_duration: float | None = Field(None, description="最大运行时长（秒），None 表示无限运行直到策略退出")

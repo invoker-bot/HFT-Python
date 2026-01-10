@@ -39,7 +39,7 @@ class BaseDataSource(Listener, Generic[T]):
     Events:
     - update(data): 新数据到达
     """
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_exchange")
 
     # 默认配置
     DEFAULT_WATCH_TIMEOUT: float = 5.0          # watch 超时时间（秒）
@@ -60,6 +60,7 @@ class BaseDataSource(Listener, Generic[T]):
             name = f"{self.__class__.__name__}:{symbol}"
         super().__init__(name=name, interval=interval)
         self._exchange = exchange
+        self._exchange_class = exchange.class_name
         self._symbol = symbol
         self._watch_timeout = watch_timeout
         self._auto_unwatch_timeout = auto_unwatch_timeout
@@ -83,6 +84,7 @@ class BaseDataSource(Listener, Generic[T]):
 
     @property
     def exchange(self) -> "BaseExchange":
+        """获取 exchange"""
         return self._exchange
 
     @property
