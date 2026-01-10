@@ -1,8 +1,18 @@
 """
-简单策略实现
+简单策略实现（已弃用）
 
-SimpleController: 根据目标仓位和当前仓位的差值控制执行器
-SimpleStrategy: 整合 TradingPairTable, Controller, Executor 的简单策略
+.. deprecated::
+    本模块中的类已弃用，将在未来版本中移除。
+    请使用新的 BaseStrategy + StrategyGroup.emit_signal() + TradeSignal 架构。
+
+遗留类：
+- SimpleController: 根据目标仓位和当前仓位的差值控制执行器
+- SimpleStrategy: 整合 TradingPairTable, Controller, Executor 的简单策略
+
+新架构说明：
+- 继承 BaseStrategy，在 on_tick() 中实现策略逻辑
+- 调用 self.strategy_group.emit_signal(TradeSignal(...)) 发出交易信号
+- TradeSignal 通过事件机制传递给 Executor 执行
 """
 import logging
 from dataclasses import dataclass

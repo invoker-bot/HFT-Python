@@ -74,7 +74,7 @@ class OHLCVDataSource(BaseDataSource[OHLCVData]):
 
     async def _watch(self) -> Optional[OHLCVData]:
         """WebSocket 订阅 OHLCV"""
-        ohlcv_list = await self._exchange.exchange.watch_ohlcv(
+        ohlcv_list = await self._exchange.watch_ohlcv(
             self._symbol,
             self._timeframe
         )
@@ -84,7 +84,7 @@ class OHLCVDataSource(BaseDataSource[OHLCVData]):
 
     async def _fetch(self) -> Optional[OHLCVData]:
         """REST API 获取 OHLCV"""
-        ohlcv_list = await self._exchange.exchange.fetch_ohlcv(
+        ohlcv_list = await self._exchange.fetch_ohlcv(
             self._symbol,
             self._timeframe,
             limit=1
@@ -110,7 +110,7 @@ class OHLCVDataSource(BaseDataSource[OHLCVData]):
         if limit == 0:
             limit = self._initial_limit
 
-        ohlcv_list = await self._exchange.exchange.fetch_ohlcv(
+        ohlcv_list = await self._exchange.fetch_ohlcv(
             self._symbol,
             self._timeframe,
             limit=limit

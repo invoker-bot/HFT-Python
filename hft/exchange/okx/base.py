@@ -31,9 +31,20 @@ class OKXExchange(BaseExchange):
     INDEX_PRICE_ENDPOINT = "/api/v5/market/index-tickers"
     MARK_PRICE_ENDPOINT = "/api/v5/public/mark-price"
 
+    def _default_order_params(self) -> dict:
+        """OKX 需要在所有订单中指定 posSide 参数（单向持仓模式）"""
+        return {"posSide": "net"}
+
     async def set_leverage_and_cross_margin_mode(self, symbol: str, leverage: int):
-        """设置保证金模式"""
+        """设置保证金模式和持仓模式"""
         exchange = self.get_exchange(symbol)
+        # 设置持仓模式为单向模式（net mode）
+        try:
+            await exchange.set_position_mode(hedged=False, symbol=symbol)
+            self.logger.info("Set position mode to one-way (net)")
+        except Exception as e:
+            self.logger.debug("Failed to set position mode (may already be net): %s", e)
+        # 设置保证金模式为全仓
         await exchange.set_margin_mode("cross", symbol, {
             "posSide": "net",
             "leverage": leverage

@@ -1,9 +1,19 @@
 """
-订单执行器
+订单执行器（已弃用）
 
-MarketOrderExecutor: 市价单执行器
-LimitOrderExecutor: 限价单执行器
-MultipleLimitOrderExecutor: 多级限价单执行器
+.. deprecated::
+    本模块中的类已弃用，将在未来版本中移除。
+    请使用 hft.executor.base.BaseExecutor 和 hft.executor.market.MarketExecutor 替代。
+
+遗留类：
+- MarketOrderExecutor: 市价单执行器（使用 tick_callback 模式）
+- LimitOrderExecutor: 限价单执行器
+- MultipleLimitOrderExecutor: 多级限价单执行器
+
+新架构说明：
+- 新的 BaseExecutor 通过 on_signal() 接收 TradeSignal
+- TradeSignal 包含 value [-1.0, 1.0] 表示目标仓位比例
+- 通过 StrategyGroup.emit_signal() 发送信号到执行器
 """
 import time
 import logging

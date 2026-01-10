@@ -9,6 +9,7 @@ from abc import abstractmethod
 from enum import Enum
 from collections import deque
 from typing import Optional, Any, Generic, TypeVar, TYPE_CHECKING
+from pyee.asyncio import AsyncIOEventEmitter
 from ..core.listener import Listener
 
 if TYPE_CHECKING:
@@ -34,7 +35,11 @@ class BaseDataSource(Listener, Generic[T]):
     2. watch + fallback fetch：优先使用 WebSocket，超时后 fallback 到 REST
     3. 数据去重：确保不收集重复数据
     4. 缓存管理：从前往后缓存，限制最大长度
+
+    Events:
+    - update(data): 新数据到达
     """
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event")
 
     # 默认配置
     DEFAULT_WATCH_TIMEOUT: float = 5.0          # watch 超时时间（秒）
@@ -45,17 +50,23 @@ class BaseDataSource(Listener, Generic[T]):
         self,
         exchange: "BaseExchange",
         symbol: str,
+        name: Optional[str] = None,
         watch_timeout: float = DEFAULT_WATCH_TIMEOUT,
         auto_unwatch_timeout: float = DEFAULT_AUTO_UNWATCH_TIMEOUT,
         max_cache_size: int = DEFAULT_MAX_CACHE_SIZE,
         interval: float = 0.1,
     ):
+        if name is None:
+            name = f"{self.__class__.__name__}:{symbol}"
         super().__init__(name=name, interval=interval)
         self._exchange = exchange
         self._symbol = symbol
         self._watch_timeout = watch_timeout
         self._auto_unwatch_timeout = auto_unwatch_timeout
         self._max_cache_size = max_cache_size
+
+        # 事件发射器
+        self.event = AsyncIOEventEmitter()
 
         # 状态
         self._ds_state = DataSourceState.IDLE
@@ -65,6 +76,10 @@ class BaseDataSource(Listener, Generic[T]):
         # 缓存
         self._cache: deque[T] = deque(maxlen=max_cache_size)
         self._last_data_id: Optional[Any] = None  # 用于去重
+
+    def initialize(self):
+        super().initialize()
+        self.event = AsyncIOEventEmitter()
 
     @property
     def exchange(self) -> "BaseExchange":
@@ -174,29 +189,29 @@ class BaseDataSource(Listener, Generic[T]):
         self._last_data_time = time.time()
 
         # 发出更新事件
-        self.emit("update", processed)
+        self.event.emit("update", processed)
         return True
 
-    async def tick_callback(self) -> bool:
+    async def on_tick(self) -> bool:
         """每 tick 获取数据"""
         # 检查是否应该自动 unwatch
         if self.should_auto_unwatch():
             self._ds_state = DataSourceState.IDLE
-            self.emit("auto_unwatch", self._symbol)
-            return True
+            self.logger.debug("Auto unwatch %s", self._symbol)
+            return True  # 信号完成，停止 tick
 
         # 只有收到过 watch 请求才获取数据
         if self._last_watch_request == 0:
-            return True
+            return False  # 继续等待
 
         try:
             data = await self._watch_with_fallback()
             if data is not None:
                 self._add_to_cache(data)
-            return True
+            return False  # 继续 tick
         except Exception as e:
-            self.emit("error", {"symbol": self._symbol, "error": str(e)})
-            return False
+            self.logger.warning("Watch error for %s: %s", self._symbol, e)
+            return False  # 继续 tick，下次重试
         finally:
             if self._ds_state != DataSourceState.IDLE:
                 self._ds_state = DataSourceState.WATCHING

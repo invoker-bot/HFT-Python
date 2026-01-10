@@ -120,7 +120,7 @@ class OrderBookDataSource(BaseDataSource[OrderBookData]):
 
     async def _watch(self) -> Optional[OrderBookData]:
         """WebSocket 订阅订单簿"""
-        data = await self._exchange.exchange.watch_order_book(
+        data = await self._exchange.watch_order_book(
             self._symbol,
             limit=self._limit
         )
@@ -128,7 +128,7 @@ class OrderBookDataSource(BaseDataSource[OrderBookData]):
 
     async def _fetch(self) -> Optional[OrderBookData]:
         """REST API 获取订单簿"""
-        data = await self._exchange.exchange.fetch_order_book(
+        data = await self._exchange.fetch_order_book(
             self._symbol,
             limit=self._limit
         )

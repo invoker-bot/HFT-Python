@@ -153,21 +153,20 @@ class StateLogListener(Listener):
         state = listener._state
         match state:
             case ListenerState.RUNNING:
-                return "[green]●[/green]"
+                return "[green]R[/green]"
             case ListenerState.STOPPED:
-                return "[dim]○[/dim]"
+                return "[dim]S[/dim]"
             case ListenerState.ERROR:
-                return "[red]✗[/red]"
+                return "[red]E[/red]"
             case ListenerState.STARTING:
-                return "[yellow]◐[/yellow]"
+                return "[yellow]>[/yellow]"
             case ListenerState.STOPPING:
-                return "[yellow]◑[/yellow]"
-        #     return "[blue]◉[/blue]"
+                return "[yellow]<[/yellow]"
         return "[dim]?[/dim]"
 
     def _get_health_icon(self, listener: Listener) -> str:
         """获取健康状态图标"""
-        return "[green]♥[/green]" if listener.healthy else "[red]♡[/red]"
+        return "[green]OK[/green]" if listener.healthy else "[red]!!![/red]"
 
     def _print_tree(self, listener: Listener, prefix: str = "", is_last: bool = True, depth: int = 0) -> None:
         """
@@ -184,9 +183,9 @@ class StateLogListener(Listener):
 
         # 确定连接符
         if depth == 0:
-            connector = "📦 "
+            connector = "[*] "
         else:
-            connector = "└── " if is_last else "├── "
+            connector = "`-- " if is_last else "|-- "
 
         # 状态图标
         state_icon = self._get_state_icon(listener)
@@ -200,7 +199,7 @@ class StateLogListener(Listener):
         if depth == 0:
             child_prefix = ""
         else:
-            child_prefix = prefix + ("    " if is_last else "│   ")
+            child_prefix = prefix + ("    " if is_last else "|   ")
 
         # 输出子节点
         children_list = list(listener.children.values())
@@ -223,7 +222,7 @@ class StateLogListener(Listener):
         current_str = self.to_date_string(self.current_time)
         duration_str = self.to_duration_string(self.current_time - root.start_time)
 
-        self._console.print(f"\n[bold cyan]━━━ HFT ━━━[/bold cyan] [yellow]v{__version__}[/yellow]")
+        self._console.print(f"\n[bold cyan]=== HFT ===[/bold cyan] [yellow]v{__version__}[/yellow]")
         self._console.print(f"[dim]Start:[/dim] {start_str}  [dim]Current:[/dim] {current_str}  [dim]Uptime:[/dim] {duration_str}")
         self._console.print()
 

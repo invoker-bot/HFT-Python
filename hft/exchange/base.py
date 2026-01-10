@@ -369,6 +369,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         return await exchange.un_watch_ohlcv(symbol, timeframe)
 
     # ========== 交易方法 create/cancel/fetch/watch order ==========
+    def _default_order_params(self) -> dict:
+        """默认订单参数，子类可覆盖以添加交易所特定参数"""
+        return {}
+
     def __resolve_order(self, order_request: OrderRequest) -> Optional[OrderRequest]:
         """将 OrderRequest 转换为内置的 OrderRequest"""
         symbol = self.to_raw_symbol(order_request["symbol"])
@@ -376,8 +380,12 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         if market is None:
             self.logger.error("Symbol %s not found in markets", symbol)
             return None
+        # 合并默认参数和请求参数
+        default_params = self._default_order_params()
         if order_request.get("params", None) is None:
-            order_request["params"] = {}
+            order_request["params"] = default_params
+        else:
+            order_request["params"] = {**default_params, **order_request["params"]}
         # 精度处理
         precision = float(market["precision"]['amount'])  # another price
         aligned_amount = round_to_precision(order_request['amount'], precision)
@@ -390,13 +398,25 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         direction = 1 if order_request["side"] == "buy" else -1
         if position_amount * direction < -1e-9:  # reverse direction, 减仓
             if abs(aligned_amount) < precision:
+                self.logger.debug(
+                    "Order rejected: reduce amount %.6f < precision %.6f",
+                    abs(aligned_amount), precision
+                )
                 return None
             order_request["params"]["reduceOnly"] = True  # 减仓订单
         else:
             price = order_request.get("price", None)
             if abs(aligned_amount) < limit_amount_min:
+                self.logger.debug(
+                    "Order rejected: amount %.6f (original %.6f) < min %.6f",
+                    abs(aligned_amount), order_request['amount'], limit_amount_min
+                )
                 return None
             elif price and (price < limit_price_min or price * abs(aligned_amount) < limit_cost_min):
+                self.logger.debug(
+                    "Order rejected: price %.2f < min %.2f or cost %.2f < min %.2f",
+                    price, limit_price_min, price * abs(aligned_amount), limit_cost_min
+                )
                 return None
         order_request['amount'] = aligned_amount
         return order_request
@@ -690,7 +710,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     @cached(TTLCache(maxsize=1024, ttl=24*3600))
     async def medal_initialize_symbol(self, symbol: str) -> None:
         """初始化交易对（设置杠杆和保证金模式）"""
-        await self.get_exchange(symbol)
+        self.get_exchange(symbol)  # 确保交易所实例存在
         symbol_info = self._markets[symbol]
         if symbol_info["type"] in ("future", "swap"):
             max_leverage = symbol_info['limits']['leverage']['max'] or 125
@@ -709,7 +729,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     # ========== 资金费率方法 ==========
     async def fetch_funding_rate(self, symbol: str) -> dict:
         """获取资金费率"""
-        exchange = await self.get_exchange(symbol)
+        exchange = self.get_exchange(symbol)
         return await exchange.fetch_funding_rate(symbol)
 
     async def fetch_funding_rate_history(
@@ -719,7 +739,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         limit: Optional[int] = None,
     ) -> list:
         """获取历史资金费率"""
-        exchange = await self.get_exchange(symbol)
+        exchange = self.get_exchange(symbol)
         return await exchange.fetch_funding_rate_history(symbol, since, limit)
 
     @abstractmethod

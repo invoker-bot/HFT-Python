@@ -64,5 +64,9 @@ class AppConfig(BaseConfig[AppCore]):
     log_interval: float = Field(120.0, description="状态日志间隔（秒）")
     cache_interval: float = Field(300.0, description="缓存保存间隔（秒）")
     strategies: list[str] = Field(description="策略配置路径列表")
-    database_url: ClickHouseDsn = Field(..., description="ClickHouse 数据库连接 URL")
+    database_url: ClickHouseDsn | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
     exchanges: list[str] = Field(description="交易所配置路径列表")
+
+    # Executor 配置
+    executor_interval: float = Field(1.0, description="执行器 tick 间隔（秒）")
+    executor_per_order_usd: float = Field(100.0, description="单笔订单大小 / 执行阈值（USD）")

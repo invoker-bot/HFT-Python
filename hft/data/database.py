@@ -297,6 +297,8 @@ class OHLCVController(Controller):
     """
 
     async def init(self):
+        # 注意：TTL GROUP BY 需要是 ORDER BY 的前缀
+        # 这里使用 timestamp_15min 作为 ORDER BY 的一部分，支持 15 分钟聚合
         await self.db.client.command('''
             CREATE TABLE IF NOT EXISTS ohlcv (
                 timestamp DateTime64(3),
@@ -307,14 +309,15 @@ class OHLCVController(Controller):
                 high Float64,
                 low Float64,
                 close Float64,
-                volume Float64
+                volume Float64,
+                timestamp_15min DateTime64(3) MATERIALIZED toStartOfFifteenMinutes(timestamp)
             )
             ENGINE = MergeTree()
             PARTITION BY toYYYYMM(timestamp)
-            ORDER BY (exchange_name, trading_pair, timestamp, close_timestamp)
+            ORDER BY (exchange_name, trading_pair, timestamp_15min, timestamp, close_timestamp)
             TTL
                 toDateTime(timestamp) + INTERVAL 1 DAY
-                    GROUP BY exchange_name, trading_pair, toStartOfFifteenMinutes(timestamp)
+                    GROUP BY exchange_name, trading_pair, timestamp_15min
                     SET
                         timestamp = min(timestamp),
                         close_timestamp = max(close_timestamp),
@@ -410,6 +413,8 @@ class TradesController(Controller):
     """
 
     async def init(self):
+        # 注意：TTL GROUP BY 需要是 ORDER BY 的前缀
+        # 使用 timestamp_1min 作为 ORDER BY 的一部分，支持 1 分钟聚合
         await self.db.client.command('''
             CREATE TABLE IF NOT EXISTS trades (
                 id String,
@@ -419,14 +424,15 @@ class TradesController(Controller):
                 side String,
                 price Float64,
                 volume Float64,
-                price_volume Float64 MATERIALIZED price * volume
+                price_volume Float64 MATERIALIZED price * volume,
+                timestamp_1min DateTime64(3) MATERIALIZED toStartOfMinute(timestamp)
             )
             ENGINE = ReplacingMergeTree(timestamp)
             PARTITION BY toYYYYMMDD(timestamp)
-            ORDER BY (exchange_name, trading_pair, id)
+            ORDER BY (exchange_name, trading_pair, side, timestamp_1min, id)
             TTL
                 toDateTime(timestamp) + INTERVAL 10 MINUTE
-                    GROUP BY exchange_name, trading_pair, side, toStartOfMinute(timestamp)
+                    GROUP BY exchange_name, trading_pair, side, timestamp_1min
                     SET
                         id = any(id),
                         timestamp = min(timestamp),
@@ -501,6 +507,8 @@ class TickerController(Controller):
     """
 
     async def init(self):
+        # 注意：TTL GROUP BY 需要是 ORDER BY 的前缀
+        # 使用 timestamp_1min 作为 ORDER BY 的一部分，支持 1 分钟聚合
         await self.db.client.command('''
             CREATE TABLE IF NOT EXISTS ticker (
                 timestamp DateTime64(3),
@@ -508,14 +516,15 @@ class TickerController(Controller):
                 trading_pair String,
                 bid Float64,
                 ask Float64,
-                last Float64
+                last Float64,
+                timestamp_1min DateTime64(3) MATERIALIZED toStartOfMinute(timestamp)
             )
             ENGINE = MergeTree()
             PARTITION BY toYYYYMMDD(timestamp)
-            ORDER BY (exchange_name, trading_pair, timestamp)
+            ORDER BY (exchange_name, trading_pair, timestamp_1min, timestamp)
             TTL
                 toDateTime(timestamp) + INTERVAL 10 MINUTE
-                    GROUP BY exchange_name, trading_pair, toStartOfMinute(timestamp)
+                    GROUP BY exchange_name, trading_pair, timestamp_1min
                     SET
                         timestamp = min(timestamp),
                         bid = avg(bid),
@@ -579,6 +588,8 @@ class FundingRateController(Controller):
     """
 
     async def init(self):
+        # 注意：TTL GROUP BY 需要是 ORDER BY 的前缀
+        # 使用 timestamp_1min 作为 ORDER BY 的一部分，支持 1 分钟聚合
         await self.db.client.command('''
             CREATE TABLE IF NOT EXISTS funding_rate (
                 timestamp DateTime64(3),
@@ -587,14 +598,15 @@ class FundingRateController(Controller):
                 index_price Float64,
                 mark_price Float64,
                 funding_rate Float64,
-                daily_funding_rate Float64
+                daily_funding_rate Float64,
+                timestamp_1min DateTime64(3) MATERIALIZED toStartOfMinute(timestamp)
             )
             ENGINE = MergeTree()
             PARTITION BY toYYYYMMDD(timestamp)
-            ORDER BY (exchange_name, trading_pair, timestamp)
+            ORDER BY (exchange_name, trading_pair, timestamp_1min, timestamp)
             TTL
                 toDateTime(timestamp) + INTERVAL 10 MINUTE
-                    GROUP BY exchange_name, trading_pair, toStartOfMinute(timestamp)
+                    GROUP BY exchange_name, trading_pair, timestamp_1min
                     SET
                         timestamp = min(timestamp),
                         index_price = avg(index_price),

@@ -2,7 +2,7 @@ import typer
 from rich.console import Console
 from ..exchange import BaseExchangeConfig
 from ..strategy.config import BaseStrategyConfig
-    # SimpleStrategyConfig,   # noqa: F401 - 注册子类
+from ..strategy.keep_positions import KeepPositionsStrategyConfig  # noqa: F401 - 注册子类
 from ..core.app.config import AppConfig
 
 app = typer.Typer()

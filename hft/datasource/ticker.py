@@ -61,17 +61,16 @@ class TickerDataSource(BaseDataSource[TickerData]):
         symbol: str,
         **kwargs,
     ):
-        name = f"ticker:{symbol}"
-        super().__init__(name=name, exchange=exchange, symbol=symbol, **kwargs)
+        super().__init__(exchange=exchange, symbol=symbol, **kwargs)
 
     async def _watch(self) -> Optional[TickerData]:
         """WebSocket 订阅 ticker"""
-        data = await self._exchange.exchange.watch_ticker(self._symbol)
+        data = await self._exchange.watch_ticker(self._symbol)
         return TickerData(data) if data else None
 
     async def _fetch(self) -> Optional[TickerData]:
         """REST API 获取 ticker"""
-        data = await self._exchange.exchange.fetch_ticker(self._symbol)
+        data = await self._exchange.fetch_ticker(self._symbol)
         return TickerData(data) if data else None
 
     def _get_data_id(self, data: TickerData) -> Any:

@@ -39,6 +39,42 @@ class MockListener(Listener):
         return await super().on_health_check()
 
 
+# ============================================================
+# 类索引测试用的 Mock 类层次结构
+# ============================================================
+
+class MockExecutor(Listener):
+    """模拟执行器基类"""
+    async def on_tick(self) -> bool:
+        return False
+
+
+class MockMarketExecutor(MockExecutor):
+    """模拟市价执行器"""
+    pass
+
+
+class MockLimitExecutor(MockExecutor):
+    """模拟限价执行器"""
+    pass
+
+
+class MockStrategy(Listener):
+    """模拟策略基类"""
+    async def on_tick(self) -> bool:
+        return False
+
+
+class MockTrendStrategy(MockStrategy):
+    """模拟趋势策略"""
+    pass
+
+
+class MockMeanReversionStrategy(MockStrategy):
+    """模拟均值回归策略"""
+    pass
+
+
 @pytest.fixture
 def mock_listener():
     """Create a basic mock listener."""

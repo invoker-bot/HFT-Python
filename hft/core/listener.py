@@ -9,19 +9,24 @@
 - 父子关系：支持树形结构，递归操作
 - 后台任务：自动管理定时执行的后台任务
 - 序列化：支持 pickle 持久化
+- 类索引：按类快速查找子监听器（O(1) 查找）
 """
 import time
 import asyncio
 import logging
 import weakref
+from collections import defaultdict
 from datetime import datetime
 from functools import cached_property
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Optional, Coroutine, Iterator
+from typing import Optional, Coroutine, Iterator, TypeVar, Type
 from rich.console import Console
 from humanfriendly import format_timespan
 from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState, retry_if_not_exception_type
+
+# 泛型类型变量，用于类型安全的查找方法
+T = TypeVar('T', bound='Listener')
 
 
 class ListenerState(StrEnum):
@@ -62,8 +67,8 @@ class Listener(ABC):
     - 通知系统：发送告警、通知
     - 可用于 Listener 之间的通信
     """
-    __pickle_exclude__ = ("_parent", "_background_task", "_alock")
-                     
+    __pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index")
+
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
         初始化监听器
@@ -90,6 +95,9 @@ class Listener(ABC):
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
         self._state = ListenerState.STOPPED
+        # 类索引: Type -> list[(weakref, depth)]
+        # 只在根节点维护，用于快速按类查找子监听器
+        self._class_index: dict[type, list[tuple[weakref.ReferenceType['Listener'], int]]] = defaultdict(list)
 
     def __getstate__(self) -> dict:
         """
@@ -106,7 +114,7 @@ class Listener(ABC):
         从序列化数据恢复状态
 
         重新初始化不可序列化的对象（锁、任务、弱引用）。
-        恢复子监听器的父引用。
+        恢复子监听器的父引用和类索引。
         """
         # Restore basic attributes
         self.__dict__.update(state)
@@ -116,6 +124,8 @@ class Listener(ABC):
         # Restore children (note: subclasses must handle actual child reconstruction)
         for child in self._children.values():
             child.parent = self
+            # 重建类索引
+            self._register_to_class_index(child, relative_depth=1)
         self.on_reload(state)
 
     def on_save(self):
@@ -211,13 +221,21 @@ class Listener(ABC):
         """设置当前状态"""
         self._state = value
 
-    @property
+    @cached_property
     def root(self) -> 'Listener':
-        """获取根监听器（向上遍历到顶层）"""
+        """获取根监听器（向上遍历到顶层，缓存结果）"""
         parent = self.parent
         if parent is None:
             return self
         return parent.root
+
+    def _clear_root_cache(self):
+        """清除 root 缓存（在 parent 变化时调用）"""
+        if 'root' in self.__dict__:
+            del self.__dict__['root']
+        # 递归清除子节点的缓存
+        for child in self._children.values():
+            child._clear_root_cache()
 
     @property
     def parent(self) -> Optional['Listener']:
@@ -229,6 +247,7 @@ class Listener(ABC):
     @parent.setter
     def parent(self, parent: Optional['Listener']):
         """设置父监听器"""
+        self._clear_root_cache()  # 清除 root 缓存
         if parent is None:
             self._parent = None
         else:
@@ -240,15 +259,223 @@ class Listener(ABC):
         return self._children
 
     def add_child(self, child: 'Listener'):
-        """添加子监听器"""
+        """
+        添加子监听器
+
+        同时更新根节点的类索引，以支持按类快速查找。
+
+        Args:
+            child: 要添加的子监听器
+        """
         self._children[child.name] = child
         child.parent = self
+        # 更新类索引
+        self._register_to_class_index(child, relative_depth=1)
 
     def remove_child(self, child_name: str):
-        """移除子监听器"""
+        """
+        移除子监听器
+
+        同时从根节点的类索引中移除。
+
+        Args:
+            child_name: 要移除的子监听器名称
+        """
         if child_name in self._children:
-            self._children[child_name].parent = None
+            child = self._children[child_name]
+            # 从类索引中移除
+            self._unregister_from_class_index(child)
+            child.parent = None
             self._children.pop(child_name, None)
+
+    # ============================================================
+    # 类索引相关方法
+    # ============================================================
+
+    def _get_depth_from_root(self) -> int:
+        """
+        计算当前节点相对于根节点的深度
+
+        Returns:
+            深度值（根节点 = 0，直接子节点 = 1，孙节点 = 2，等等）
+        """
+        depth = 0
+        node = self
+        while node.parent is not None:
+            depth += 1
+            node = node.parent
+        return depth
+
+    def _register_to_class_index(self, listener: 'Listener', relative_depth: int):
+        """
+        将监听器及其所有后代注册到根节点的类索引中
+
+        Args:
+            listener: 要注册的监听器
+            relative_depth: 相对于当前节点的深度（1 = 直接子节点）
+        """
+        root = self.root
+        index = root._class_index
+
+        # 计算相对于根节点的绝对深度
+        base_depth = self._get_depth_from_root()
+        absolute_depth = base_depth + relative_depth
+
+        # 注册该监听器本身（遍历其所有父类）
+        for cls in type(listener).__mro__:
+            if cls is Listener or cls is ABC or cls is object:
+                break
+            index[cls].append((weakref.ref(listener), absolute_depth))
+
+        # 递归注册其子监听器
+        for child in listener.children.values():
+            self._register_to_class_index(child, relative_depth + 1)
+
+    def _unregister_from_class_index(self, listener: 'Listener'):
+        """
+        从根节点的类索引中移除监听器及其所有后代
+
+        Args:
+            listener: 要移除的监听器
+        """
+        root = self.root
+        index = root._class_index
+
+        # 移除该监听器本身
+        for cls in type(listener).__mro__:
+            if cls is Listener or cls is ABC or cls is object:
+                break
+            if cls in index:
+                # 过滤掉该监听器的弱引用
+                index[cls] = [
+                    (ref, d) for ref, d in index[cls]
+                    if ref() is not None and ref() is not listener
+                ]
+                # 如果列表为空，删除该键
+                if not index[cls]:
+                    del index[cls]
+
+        # 递归移除其子监听器
+        for child in listener.children.values():
+            self._unregister_from_class_index(child)
+
+    def _cleanup_class_index(self):
+        """
+        清理类索引中的无效弱引用
+
+        在查找时自动调用，移除已被垃圾回收的实例。
+        """
+        index = self._class_index
+        for cls in list(index.keys()):
+            # 过滤掉已效的弱引用
+            index[cls] = [(ref, d) for ref, d in index[cls] if ref() is not None]
+            if not index[cls]:
+                del index[cls]
+
+    def find_child_by_class(self, cls: Type[T]) -> Optional[T]:
+        """
+        按类查找第一个匹配的子监听器
+
+        从根节点的类索引中查找，O(1) 复杂度。
+        返回深度最浅的第一个匹配项。
+
+        Args:
+            cls: 要查找的类
+
+        Returns:
+            匹配的监听器实例，如果没有找到则返回 None
+
+        Example:
+            executor = app.find_child_by_class(MarketExecutor)
+            if executor:
+                executor.pause()
+        """
+        root = self.root
+        if cls not in root._class_index:
+            return None
+
+        entries = root._class_index[cls]
+        # 按深度排序，返回最浅的
+        entries.sort(key=lambda x: x[1])
+
+        for ref, _ in entries:
+            instance = ref()
+            if instance is not None:
+                return instance
+
+        # 如果所有引用都失效了，清理索引
+        root._cleanup_class_index()
+        return None
+
+    def find_children_by_class(self, cls: Type[T]) -> list[T]:
+        """
+        按类查找所有匹配的子监听器
+
+        从根节点的类索引中查找，O(n) 复杂度（n = 匹配数量）。
+        返回按深度排序的列表（浅的在前）。
+
+        Args:
+            cls: 要查找的类
+
+        Returns:
+            匹配的监听器实例列表，按深度排序
+
+        Example:
+            strategies = app.find_children_by_class(BaseStrategy)
+            for strategy in strategies:
+                print(strategy.name)
+        """
+        root = self.root
+        if cls not in root._class_index:
+            return []
+
+        entries = root._class_index[cls]
+        # 按深度排序
+        entries.sort(key=lambda x: x[1])
+
+        result = []
+        valid_entries = []
+        for ref, depth in entries:
+            instance = ref()
+            if instance is not None:
+                result.append(instance)
+                valid_entries.append((ref, depth))
+
+        # 更新索引，移除失效的引用
+        if len(valid_entries) != len(entries):
+            root._class_index[cls] = valid_entries
+            if not valid_entries:
+                del root._class_index[cls]
+
+        return result
+
+    def find_children_by_class_at_depth(self, cls: Type[T], depth: int) -> list[T]:
+        """
+        按类和深度查找子监听器
+
+        Args:
+            cls: 要查找的类
+            depth: 指定的深度（1 = 直接子节点，2 = 孙节点，等等）
+
+        Returns:
+            匹配的监听器实例列表
+
+        Example:
+            # 只获取直接子节点中的策略
+            direct_strategies = app.find_children_by_class_at_depth(BaseStrategy, 1)
+        """
+        root = self.root
+        if cls not in root._class_index:
+            return []
+
+        result = []
+        for ref, d in root._class_index[cls]:
+            if d == depth:
+                instance = ref()
+                if instance is not None:
+                    result.append(instance)
+
+        return result
 
     @property
     def enabled(self) -> bool:

@@ -52,7 +52,7 @@ class TradesDataSource(BaseDataSource[TradeData]):
 
     async def _watch(self) -> Optional[TradeData]:
         """WebSocket 订阅 trades"""
-        trades = await self._exchange.exchange.watch_trades(self._symbol)
+        trades = await self._exchange.watch_trades(self._symbol)
         if trades:
             # 返回最新一笔
             return TradeData.from_ccxt(trades[-1])
@@ -60,7 +60,7 @@ class TradesDataSource(BaseDataSource[TradeData]):
 
     async def _fetch(self) -> Optional[TradeData]:
         """REST API 获取 trades"""
-        trades = await self._exchange.exchange.fetch_trades(self._symbol, limit=1)
+        trades = await self._exchange.fetch_trades(self._symbol, limit=1)
         if trades:
             return TradeData.from_ccxt(trades[-1])
         return None

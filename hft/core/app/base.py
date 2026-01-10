@@ -5,14 +5,34 @@ AppCore 是整个 HFT 系统的入口，负责：
 - 管理所有子监听器的生命周期
 - 运行主循环并处理异常
 - 协调健康检查、状态日志、缓存等功能
+
+核心组件（按初始化顺序）：
+1. ExchangeGroups - 交易所连接管理
+2. DataSourceGroup - 市场数据源管理
+3. StrategyGroup - 策略管理
+4. Executor - 交易执行器
+
+辅助组件：
+- UnhealthyRestartListener - 自动重启不健康的监听器
+- StateLogListener - 定期输出状态日志
+- CacheListener - 定期保存应用状态到磁盘
+
+退出流程（级联退出机制）：
+1. Strategy.on_tick() 返回 True -> 策略完成，从 StrategyGroup 中移除
+2. StrategyGroup.is_finished 变为 True -> StrategyGroup.on_tick() 返回 True
+3. AppCore.on_tick() 检测到策略组完成 -> 返回 True -> 程序正常退出
 """
 import asyncio
 from functools import cached_property
 from typing import Optional, TYPE_CHECKING
 from ...data.database import ClickHouseDatabase
 from ...exchange.group import ExchangeGroups
+from ...datasource.group import DataSourceGroup
+from ...strategy.group import StrategyGroup
+from ...executor.market import MarketExecutor
 from ..listener import Listener
 from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
+
 if TYPE_CHECKING:
     from .config import AppConfig
 
@@ -22,10 +42,27 @@ class AppCore(Listener):
     应用核心类
 
     作为所有监听器的根节点，管理整个应用的生命周期。
-    默认包含三个子监听器：
-    - UnhealthyRestartListener: 自动重启不健康的监听器
-    - StateLogListener: 定期输出状态日志
-    - CacheListener: 定期保存应用状态到磁盘
+
+    组件结构：
+        AppCore
+        ├── UnhealthyRestartListener  # 健康检查与自动重启
+        ├── StateLogListener          # 状态日志输出
+        ├── CacheListener             # 状态持久化
+        ├── ExchangeGroups            # 交易所连接
+        │   └── [各交易所实例...]
+        ├── DataSourceGroup           # 市场数据源
+        │   └── [各数据源实例...]
+        ├── StrategyGroup             # 策略组
+        │   └── [各策略实例...]
+        └── Executor                  # 交易执行器
+
+    数据流（轮询模式）：
+        Executor.on_tick()
+            -> StrategyGroup.get_aggregated_targets()
+                -> 遍历所有 Strategy.get_target_positions_usd()
+                -> 聚合（position sum, speed 加权平均）
+            -> Executor 计算当前仓位与目标的差值
+            -> 执行交易
     """
 
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "database")
@@ -39,11 +76,29 @@ class AppCore(Listener):
         """
         super().__init__(interval=config.interval)
         self.config = config
+
+        # === 辅助监听器 ===
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
         self.add_child(StateLogListener(interval=config.log_interval))
         self.add_child(CacheListener(interval=config.cache_interval))
+
+        # === 核心组件 ===
+        # 1. 交易所连接管理
         self.exchange_groups = ExchangeGroups()
         self.add_child(self.exchange_groups)
+
+        # 2. 市场数据源管理
+        self.datasource_group = DataSourceGroup()
+        self.add_child(self.datasource_group)
+
+        # 3. 策略组
+        self.strategy_group = StrategyGroup()
+        self.add_child(self.strategy_group)
+
+        # 4. 交易执行器（默认使用 MarketExecutor）
+        # 配置从 root.config 动态获取
+        self.executor = MarketExecutor()
+        self.add_child(self.executor)
 
     @cached_property
     def database(self):
@@ -93,15 +148,31 @@ class AppCore(Listener):
 
     async def on_start(self):
         await super().on_start()
-        await self.database.init()
+        # 只有配置了数据库才初始化
+        if self.config.database_url:
+            await self.database.init()
         for child in list(self.children.values()):
             child.enabled = True
 
-    async def on_tick(self):
-        """主循环回调，子类可覆盖实现具体逻辑"""
-        # TODO: 根据策略组确定是否停止
-        # for child in list(self):
-        #    await child.update_background_task()
+    async def on_tick(self) -> bool:
+        """
+        主循环回调
+
+        检查策略组是否已完成，如果是则返回 True 触发程序退出。
+
+        退出流程：
+        1. Strategy.on_tick() 返回 True -> 策略退出
+        2. StrategyGroup.is_finished 变为 True -> StrategyGroup.on_tick() 返回 True
+        3. AppCore.on_tick() 检测到策略组完成 -> 返回 True -> 程序退出
+
+        Returns:
+            True 如果策略组已完成，程序应该退出
+        """
+        # 检查策略组是否已完成
+        if self.strategy_group.is_finished:
+            self.logger.info("StrategyGroup finished, AppCore exiting")
+            return True
+        return False
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,

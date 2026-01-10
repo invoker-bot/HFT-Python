@@ -1,3 +1,21 @@
+"""
+交易所分组管理模块
+
+ExchangeGroups 按交易所类型（class_name）组织多账户：
+- 同类交易所（如 okx）的多个账户共享数据订阅，避免重复获取
+- 支持动态添加/移除交易所实例
+- 为 Executor 提供按类型获取交易所的接口
+
+数据流：
+    Strategy 请求数据 -> ExchangeGroups.get_exchange_by_class()
+                            -> 返回主交易所实例
+                            -> 调用 exchange.watch_xxx() 或 fetch_xxx()
+
+执行流：
+    Executor.on_tick() -> ExchangeGroups.get_exchanges_by_class()
+                            -> 返回该类型所有账户
+                            -> 依次在所有账户执行（老鼠仓模式）
+"""
 from typing import TYPE_CHECKING, Optional
 from collections import defaultdict
 from cryptography.fernet import InvalidToken
@@ -10,6 +28,34 @@ if TYPE_CHECKING:
 
 
 class ExchangeGroups(Listener):
+    """
+    交易所分组管理器
+
+    设计理念：
+    - 按 class_name 分组（okx, binance, bybit 等）
+    - 每个 class_name 下可有多个账户实例
+    - 数据订阅去重：同类交易所共享数据源，由主交易所（第一个）负责订阅
+    - 多账户执行：下单时同类交易所的所有账户同步执行
+
+    结构示例：
+        exchanges_map = {
+            "okx": ["okx_main", "okx_sub1", "okx_sub2"],
+            "binance": ["binance_main"],
+        }
+
+    使用方式：
+        # 获取主交易所（用于数据订阅）
+        okx = exchange_groups.get_exchange_by_class("okx")
+        ticker = await okx.fetch_ticker("BTC/USDT:USDT")
+
+        # 获取所有账户（用于下单）
+        all_okx = exchange_groups.get_exchanges_by_class("okx")
+        for ex in all_okx:
+            await ex.create_order(...)
+
+    Attributes:
+        exchanges_map: class_name -> [instance_names] 映射
+    """
 
     def __init__(self):
         super().__init__("ExchangeGroups", interval=60.0)

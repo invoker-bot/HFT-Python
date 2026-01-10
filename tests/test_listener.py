@@ -437,3 +437,316 @@ class TestListenerSerialization:
         assert '_parent' not in state
 
         await mock_listener.stop(recursive=False)
+
+
+# ============================================================
+# 类索引功能测试
+# ============================================================
+
+from tests.conftest import (
+    MockExecutor,
+    MockMarketExecutor,
+    MockLimitExecutor,
+    MockStrategy,
+    MockTrendStrategy,
+    MockMeanReversionStrategy,
+)
+
+
+class TestClassIndexBasic:
+    """Tests for basic class index functionality."""
+
+    def test_add_child_registers_to_index(self):
+        """add_child should register the child to class index."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+
+        assert MockMarketExecutor in root._class_index
+        assert len(root._class_index[MockMarketExecutor]) == 1
+
+    def test_add_child_registers_parent_classes(self):
+        """add_child should also register parent classes in MRO."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+
+        # Should be registered under both MockMarketExecutor and MockExecutor
+        assert MockMarketExecutor in root._class_index
+        assert MockExecutor in root._class_index
+
+    def test_remove_child_unregisters_from_index(self):
+        """remove_child should unregister from class index."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+        root.remove_child("executor")
+
+        assert MockMarketExecutor not in root._class_index
+        assert MockExecutor not in root._class_index
+
+    def test_class_index_tracks_depth(self):
+        """Class index should track the correct depth."""
+        root = MockListener(name="root")
+        level1 = MockListener(name="level1")
+        level2 = MockMarketExecutor(name="level2")
+
+        root.add_child(level1)
+        level1.add_child(level2)
+
+        # level2 is at depth 2 from root's perspective
+        # But when added via level1, it should be registered at depth 2
+        entries = root._class_index.get(MockMarketExecutor, [])
+        assert len(entries) == 1
+        _, depth = entries[0]
+        assert depth == 2
+
+
+class TestFindChildByClass:
+    """Tests for find_child_by_class method."""
+
+    def test_find_child_returns_first_match(self):
+        """find_child_by_class should return the first matching child."""
+        root = MockListener(name="root")
+        executor1 = MockMarketExecutor(name="executor1")
+        executor2 = MockMarketExecutor(name="executor2")
+
+        root.add_child(executor1)
+        root.add_child(executor2)
+
+        result = root.find_child_by_class(MockMarketExecutor)
+
+        assert result is not None
+        assert isinstance(result, MockMarketExecutor)
+
+    def test_find_child_returns_none_when_not_found(self):
+        """find_child_by_class should return None when not found."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+
+        result = root.find_child_by_class(MockStrategy)
+
+        assert result is None
+
+    def test_find_child_with_parent_class(self):
+        """find_child_by_class should find by parent class."""
+        root = MockListener(name="root")
+        market_executor = MockMarketExecutor(name="market_executor")
+
+        root.add_child(market_executor)
+
+        # Should find MockMarketExecutor when searching for MockExecutor
+        result = root.find_child_by_class(MockExecutor)
+
+        assert result is market_executor
+
+    def test_find_child_returns_shallowest(self):
+        """find_child_by_class should return the shallowest match."""
+        root = MockListener(name="root")
+        level1 = MockListener(name="level1")
+        shallow_executor = MockMarketExecutor(name="shallow")
+        deep_executor = MockMarketExecutor(name="deep")
+
+        root.add_child(shallow_executor)
+        root.add_child(level1)
+        level1.add_child(deep_executor)
+
+        result = root.find_child_by_class(MockMarketExecutor)
+
+        # Should return the shallower one (depth 1)
+        assert result.name == "shallow"
+
+
+class TestFindChildrenByClass:
+    """Tests for find_children_by_class method."""
+
+    def test_find_children_returns_all_matches(self):
+        """find_children_by_class should return all matching children."""
+        root = MockListener(name="root")
+        executor1 = MockMarketExecutor(name="executor1")
+        executor2 = MockMarketExecutor(name="executor2")
+        strategy = MockTrendStrategy(name="strategy")
+
+        root.add_child(executor1)
+        root.add_child(executor2)
+        root.add_child(strategy)
+
+        result = root.find_children_by_class(MockMarketExecutor)
+
+        assert len(result) == 2
+        assert all(isinstance(r, MockMarketExecutor) for r in result)
+
+    def test_find_children_returns_empty_list_when_not_found(self):
+        """find_children_by_class should return empty list when not found."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+
+        result = root.find_children_by_class(MockStrategy)
+
+        assert result == []
+
+    def test_find_children_includes_subclasses(self):
+        """find_children_by_class should include subclass instances."""
+        root = MockListener(name="root")
+        market_executor = MockMarketExecutor(name="market")
+        limit_executor = MockLimitExecutor(name="limit")
+
+        root.add_child(market_executor)
+        root.add_child(limit_executor)
+
+        # Search for parent class should find both
+        result = root.find_children_by_class(MockExecutor)
+
+        assert len(result) == 2
+
+    def test_find_children_sorted_by_depth(self):
+        """find_children_by_class should return results sorted by depth."""
+        root = MockListener(name="root")
+        level1 = MockListener(name="level1")
+        shallow = MockMarketExecutor(name="shallow")
+        deep = MockMarketExecutor(name="deep")
+
+        root.add_child(level1)
+        level1.add_child(deep)
+        root.add_child(shallow)
+
+        result = root.find_children_by_class(MockMarketExecutor)
+
+        # Shallow (depth 1) should come before deep (depth 2)
+        assert result[0].name == "shallow"
+        assert result[1].name == "deep"
+
+
+class TestFindChildrenByClassAtDepth:
+    """Tests for find_children_by_class_at_depth method."""
+
+    def test_find_at_specific_depth(self):
+        """find_children_by_class_at_depth should filter by depth."""
+        root = MockListener(name="root")
+        level1 = MockListener(name="level1")
+        shallow = MockMarketExecutor(name="shallow")
+        deep = MockMarketExecutor(name="deep")
+
+        root.add_child(shallow)  # depth 1
+        root.add_child(level1)
+        level1.add_child(deep)   # depth 2
+
+        result_depth1 = root.find_children_by_class_at_depth(MockMarketExecutor, 1)
+        result_depth2 = root.find_children_by_class_at_depth(MockMarketExecutor, 2)
+
+        assert len(result_depth1) == 1
+        assert result_depth1[0].name == "shallow"
+
+        assert len(result_depth2) == 1
+        assert result_depth2[0].name == "deep"
+
+    def test_find_at_depth_returns_empty_when_no_match(self):
+        """find_children_by_class_at_depth returns empty list if no match at depth."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+
+        root.add_child(executor)
+
+        # No executors at depth 2
+        result = root.find_children_by_class_at_depth(MockMarketExecutor, 2)
+
+        assert result == []
+
+
+class TestClassIndexWithNestedChildren:
+    """Tests for class index with deeply nested children."""
+
+    def test_add_child_with_existing_children(self):
+        """Adding a child with its own children should register all."""
+        root = MockListener(name="root")
+        parent = MockListener(name="parent")
+        child = MockMarketExecutor(name="child")
+        grandchild = MockTrendStrategy(name="grandchild")
+
+        # Build the subtree first
+        child.add_child(grandchild)
+        parent.add_child(child)
+
+        # Then add to root
+        root.add_child(parent)
+
+        # All should be registered
+        assert MockMarketExecutor in root._class_index
+        assert MockTrendStrategy in root._class_index
+
+    def test_remove_child_with_existing_children(self):
+        """Removing a child should unregister all its descendants."""
+        root = MockListener(name="root")
+        parent = MockListener(name="parent")
+        child = MockMarketExecutor(name="child")
+        grandchild = MockTrendStrategy(name="grandchild")
+
+        child.add_child(grandchild)
+        parent.add_child(child)
+        root.add_child(parent)
+
+        # Remove parent (should remove child and grandchild too)
+        root.remove_child("parent")
+
+        assert MockMarketExecutor not in root._class_index
+        assert MockTrendStrategy not in root._class_index
+
+
+class TestClassIndexWeakReferences:
+    """Tests for weak reference handling in class index."""
+
+    def test_find_cleans_up_dead_references(self):
+        """find methods should clean up dead weak references."""
+        root = MockListener(name="root")
+
+        # Create executor and add it
+        executor = MockMarketExecutor(name="executor")
+        root.add_child(executor)
+
+        # Verify it's in the index
+        assert root.find_child_by_class(MockMarketExecutor) is executor
+
+        # Remove the child (simulating it being garbage collected)
+        root.remove_child("executor")
+
+        # Should return None now
+        result = root.find_child_by_class(MockMarketExecutor)
+        assert result is None
+
+
+class TestClassIndexSerialization:
+    """Tests for class index with pickle serialization."""
+
+    def test_class_index_excluded_from_pickle(self):
+        """_class_index should not be pickled."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+        root.add_child(executor)
+
+        state = root.__getstate__()
+
+        assert '_class_index' not in state
+
+    def test_class_index_rebuilt_on_setstate(self):
+        """Class index should be rebuilt when restoring from pickle."""
+        root = MockListener(name="root")
+        executor = MockMarketExecutor(name="executor")
+        root.add_child(executor)
+
+        state = root.__getstate__()
+
+        # Create new root and restore
+        new_root = MockListener(name="new_root")
+        new_root.__setstate__(state)
+
+        # Class index should be rebuilt
+        result = new_root.find_child_by_class(MockMarketExecutor)
+        assert result is not None
+        assert result.name == "executor"
