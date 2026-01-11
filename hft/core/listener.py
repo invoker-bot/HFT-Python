@@ -816,7 +816,8 @@ class GroupListener(Listener):
             param = target_params[name]
             child = self.create_dynamic_child(name, param)
             self.add_child(child)
-            if self.state == ListenerState.RUNNING:
+            # 启动子节点：STARTING 状态（on_start 中创建）或 RUNNING 状态（on_tick 中创建）
+            if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
                 await child.start()
             created += 1
             self.logger.debug("Created dynamic child: %s", name)

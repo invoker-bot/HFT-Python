@@ -102,14 +102,19 @@ class AppCore(Listener):
         self.add_child(self.executor)
 
     @cached_property
-    def database(self):
+    def database(self) -> ClickHouseDatabase | None:
         """
         获取 ClickHouse 数据库连接
 
         从 database_url 解析连接参数并创建 ClickHouseDatabase 实例。
         URL 格式: clickhouse://user:password@host:port/database
+
+        Returns:
+            ClickHouseDatabase 实例，如果未配置 database_url 则返回 None
         """
         url = self.config.database_url
+        if url is None:
+            return None
         return ClickHouseDatabase(str(url))
 
     def loop(self):

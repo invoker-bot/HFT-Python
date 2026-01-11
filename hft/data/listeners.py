@@ -27,6 +27,11 @@ class DataListener(Listener):
         super().__init__(self.__class__.__name__, interval)
         self.db: Optional[ClickHouseDatabase] = None  # type: ignore
 
+    @property
+    def db_ready(self) -> bool:
+        """检查数据库是否就绪（已配置且已初始化）"""
+        return self.db is not None and self.db.client is not None
+
     async def on_start(self):
         await super().on_start()
         self.db = self.root.database  # type: ignore
@@ -61,7 +66,7 @@ class ExchangeFundingRateBillListener(DataListener):
         parent: 'BaseExchange' = self.parent
 
         # 只有当交易所准备好时才执行
-        if not parent.ready or not self.db:
+        if not parent.ready or not self.db_ready:
             return
         controller = FundingRateBillController(self.db)
         # 从交易所获取资金费率账单
@@ -95,7 +100,7 @@ class ExchangeBalanceUsdListener(DataListener):
         parent: 'BaseExchange' = self.parent
 
         # 只有当交易所准备好时才执行
-        if not parent.ready or not self.db:
+        if not parent.ready or not self.db_ready:
             return
 
         # 获取余额和持仓
