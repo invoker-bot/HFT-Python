@@ -9,13 +9,20 @@
 """
 from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
-from .database import ClickHouseDatabase, FundingRateBillController, BalanceUSDController
+from .client import ClickHouseDatabase, FundingRateBillController, BalanceUSDController
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
 
 
 class DataListener(Listener):
+    """
+    数据采集监听器基类
+
+    提供数据库访问和持久化配置检查功能。
+    子类需要指定 persist_key 属性来关联持久化配置项。
+    """
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "db")
+    persist_key: str = ""  # 子类覆盖，对应 PersistConfig 中的字段名
 
     def __init__(self, interval: float = 300.0):
         """
@@ -31,6 +38,14 @@ class DataListener(Listener):
     def db_ready(self) -> bool:
         """检查数据库是否就绪（已配置且已初始化）"""
         return self.db is not None and self.db.client is not None
+
+    @property
+    def persist_enabled(self) -> bool:
+        """检查当前数据类型是否启用持久化"""
+        if not self.persist_key:
+            return True  # 未指定 persist_key 时默认启用
+        persist_config = self.root.config.persist  # type: ignore
+        return getattr(persist_config, self.persist_key, True)
 
     async def on_start(self):
         await super().on_start()
@@ -56,17 +71,18 @@ class ExchangeFundingRateBillListener(DataListener):
         - funding_profit: 资金费收益
         - timestamp: 时间戳
     """
+    persist_key = "funding_rate_bill"
 
     async def on_tick(self):
         """
         定时回调：获取并保存资金费率账单
 
-        仅当父交易所处于就绪状态时执行。
+        仅当父交易所处于就绪状态且启用持久化时执行。
         """
         parent: 'BaseExchange' = self.parent
 
-        # 只有当交易所准备好时才执行
-        if not parent.ready or not self.db_ready:
+        # 检查交易所就绪、数据库就绪、持久化启用
+        if not parent.ready or not self.db_ready or not self.persist_enabled:
             return
         controller = FundingRateBillController(self.db)
         # 从交易所获取资金费率账单
@@ -90,17 +106,18 @@ class ExchangeBalanceUsdListener(DataListener):
         - position_usd: 持仓价值（美元）
         - balance_usd: 账户余额（美元）
     """
+    persist_key = "balance_usd"
 
     async def on_tick(self):
         """
         定时回调：获取并保存余额快照
 
-        仅当父交易所处于就绪状态时执行。
+        仅当父交易所处于就绪状态且启用持久化时执行。
         """
         parent: 'BaseExchange' = self.parent
 
-        # 只有当交易所准备好时才执行
-        if not parent.ready or not self.db_ready:
+        # 检查交易所就绪、数据库就绪、持久化启用
+        if not parent.ready or not self.db_ready or not self.persist_enabled:
             return
 
         # 获取余额和持仓

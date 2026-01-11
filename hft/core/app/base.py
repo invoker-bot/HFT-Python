@@ -25,7 +25,7 @@ AppCore 是整个 HFT 系统的入口，负责：
 import asyncio
 from functools import cached_property
 from typing import Optional, TYPE_CHECKING
-from ...data.database import ClickHouseDatabase
+from ...database.client import ClickHouseDatabase
 from ...exchange.group import ExchangeGroup
 from ...datasource.group import DataSourceGroup
 from ...strategy.group import StrategyGroup
@@ -171,7 +171,8 @@ class AppCore(Listener):
         if self.config.database_url:
             await self.database.init()
         for child in list(self.children.values()):
-            child.enabled = True
+            if not child.lazy_start:
+                child.enabled = True
 
     async def on_tick(self) -> bool:
         """

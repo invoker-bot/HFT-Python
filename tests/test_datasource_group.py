@@ -413,20 +413,23 @@ class TestDataSourceGroupBasic:
         """DataSourceGroup should initialize correctly."""
         from hft.datasource.group import DataSourceGroup
 
-        group = DataSourceGroup(auto_cleanup_timeout=300.0)
+        group = DataSourceGroup(auto_destroy_timeout=300.0)
 
         assert group.name == "DataSourceGroup"
-        assert group._auto_cleanup_timeout == 300.0
-        assert len(group._datasources) == 0
+        assert group._auto_destroy_timeout == 300.0
+        assert len(group.children) == 0
 
     def test_get_stats_empty(self):
-        """get_stats should return empty dict when no datasources."""
+        """get_stats should return correct structure when no datasources."""
         from hft.datasource.group import DataSourceGroup
 
         group = DataSourceGroup()
         stats = group.get_stats()
 
-        assert stats == {}
+        assert stats["total_pairs"] == 0
+        assert stats["by_exchange"] == {}
+        assert stats["active_datasources"] == {}
+        assert stats["active_indicators"] == {}
 
     def test_log_state_dict(self):
         """log_state_dict should return correct structure."""
@@ -435,50 +438,63 @@ class TestDataSourceGroupBasic:
         group = DataSourceGroup()
         state = group.log_state_dict
 
-        assert "datasources" in state
-        assert state["datasources"] == 0
+        assert "trading_pairs" in state
+        assert state["trading_pairs"] == 0
+        assert "by_exchange" in state
 
 
-class TestDataSourceGroupDatasourceClass:
-    """Tests for _get_datasource_class method."""
+class TestTradingPairDataSourceClass:
+    """Tests for TradingPairDataSource._get_datasource_class method."""
 
     def test_get_ticker_class(self):
         """Should return TickerDataSource for TICKER type."""
-        from hft.datasource.group import DataSourceGroup
+        from hft.datasource.group import TradingPairDataSource
         from hft.datasource.ticker import TickerDataSource
+        from unittest.mock import MagicMock
 
-        group = DataSourceGroup()
-        cls = group._get_datasource_class(DataType.TICKER)
+        mock_exchange = MagicMock()
+        mock_exchange.class_name = "test"
+        pair = TradingPairDataSource(exchange=mock_exchange, symbol="BTC/USDT")
+        cls = pair._get_datasource_class(DataType.TICKER)
 
         assert cls is TickerDataSource
 
     def test_get_orderbook_class(self):
         """Should return OrderBookDataSource for ORDER_BOOK type."""
-        from hft.datasource.group import DataSourceGroup
+        from hft.datasource.group import TradingPairDataSource
         from hft.datasource.orderbook import OrderBookDataSource
+        from unittest.mock import MagicMock
 
-        group = DataSourceGroup()
-        cls = group._get_datasource_class(DataType.ORDER_BOOK)
+        mock_exchange = MagicMock()
+        mock_exchange.class_name = "test"
+        pair = TradingPairDataSource(exchange=mock_exchange, symbol="BTC/USDT")
+        cls = pair._get_datasource_class(DataType.ORDER_BOOK)
 
         assert cls is OrderBookDataSource
 
     def test_get_trades_class(self):
         """Should return TradesDataSource for TRADES type."""
-        from hft.datasource.group import DataSourceGroup
+        from hft.datasource.group import TradingPairDataSource
         from hft.datasource.trades import TradesDataSource
+        from unittest.mock import MagicMock
 
-        group = DataSourceGroup()
-        cls = group._get_datasource_class(DataType.TRADES)
+        mock_exchange = MagicMock()
+        mock_exchange.class_name = "test"
+        pair = TradingPairDataSource(exchange=mock_exchange, symbol="BTC/USDT")
+        cls = pair._get_datasource_class(DataType.TRADES)
 
         assert cls is TradesDataSource
 
     def test_get_ohlcv_class(self):
         """Should return OHLCVDataSource for OHLCV type."""
-        from hft.datasource.group import DataSourceGroup
+        from hft.datasource.group import TradingPairDataSource
         from hft.datasource.ohlcv import OHLCVDataSource
+        from unittest.mock import MagicMock
 
-        group = DataSourceGroup()
-        cls = group._get_datasource_class(DataType.OHLCV)
+        mock_exchange = MagicMock()
+        mock_exchange.class_name = "test"
+        pair = TradingPairDataSource(exchange=mock_exchange, symbol="BTC/USDT")
+        cls = pair._get_datasource_class(DataType.OHLCV)
 
         assert cls is OHLCVDataSource
 

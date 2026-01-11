@@ -69,6 +69,7 @@ class HealthyData(Generic[T]):
     _data: Optional[T] = field(default=None, repr=False)  # 存储的数据
     _timestamp: float = 0.0  # 数据更新时间戳（Unix 时间）
     _update_count: int = 0  # 累计更新次数，用于统计
+    _dirty: bool = False  # 数据是否被标记为脏（需要刷新）
 
     def set(self, data: T, timestamp: Optional[float] = None) -> None:
         """
@@ -81,6 +82,20 @@ class HealthyData(Generic[T]):
         self._data = data
         self._timestamp = timestamp if timestamp is not None else time.time()
         self._update_count += 1
+        self._dirty = False  # 设置新数据后清除 dirty 标记
+
+    def mark_dirty(self) -> None:
+        """
+        标记数据为脏（需要刷新）
+
+        典型场景：下单后仓位数据需要刷新
+        """
+        self._dirty = True
+
+    @property
+    def is_dirty(self) -> bool:
+        """数据是否被标记为脏"""
+        return self._dirty
 
     def get(self, raise_on_unhealthy: bool = True) -> Optional[T]:
         """
@@ -109,8 +124,10 @@ class HealthyData(Generic[T]):
 
     @property
     def is_healthy(self) -> bool:
-        """检查数据是否健康"""
+        """检查数据是否健康（非空、未过期、未标记为脏）"""
         if self._data is None:
+            return False
+        if self._dirty:
             return False
         return self.age <= self.max_age
 
@@ -145,6 +162,7 @@ class HealthyData(Generic[T]):
         """清除数据"""
         self._data = None
         self._timestamp = 0.0
+        self._dirty = False
 
     def __bool__(self) -> bool:
         """bool 转换：有数据且健康"""

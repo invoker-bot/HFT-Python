@@ -31,15 +31,19 @@ class BaseDataSource(Listener, Generic[T]):
     数据源基类
 
     特性：
-    1. 自动开启/关闭：5分钟没有收到 watch 请求就自动 unwatch
-    2. watch + fallback fetch：优先使用 WebSocket，超时后 fallback 到 REST
-    3. 数据去重：确保不收集重复数据
-    4. 缓存管理：从前往后缓存，限制最大长度
+    1. lazy_start：初始为 STOPPED 状态，首次 query 时才启动
+    2. 自动休眠：5分钟没有 query 就自动 stop()（保留缓存）
+    3. watch + fallback fetch：优先使用 WebSocket，超时后 fallback 到 REST
+    4. 数据去重：确保不收集重复数据
+    5. 缓存管理：从前往后缓存，限制最大长度
 
     Events:
     - update(data): 新数据到达
     """
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_exchange")
+
+    # 延迟启动：初始为 STOPPED，首次 query 时才启动
+    lazy_start: bool = True
 
     # 默认配置
     DEFAULT_WATCH_TIMEOUT: float = 5.0          # watch 超时时间（秒）

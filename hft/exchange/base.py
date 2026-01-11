@@ -18,14 +18,14 @@ from operator import attrgetter
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, ClassVar, TYPE_CHECKING
+from cachetools import cached, TTLCache
 from pyee.asyncio import AsyncIOEventEmitter
 from ccxt.pro import Exchange as CCXTExchange
 from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Position
 from ccxt.base.errors import InvalidOrder
-from cachetools import TTLCache
-from cachetools_async import cached, cachedmethod
 from ..core.listener import Listener
-from ..data.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
+from ..core.healthy import HealthyDataWithFallback
+from ..database.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
 from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener
 from .utils import round_to_precision
 if TYPE_CHECKING:
@@ -171,7 +171,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     提供统一的交易所 API 封装
     """
     class_name: ClassVar[str] = "base_exchange"
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_positions_cache")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_positions_data")
 
     def __init__(self, config: "BaseExchangeConfig"):
         super().__init__(name=config.path)
@@ -180,8 +180,11 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         self._markets: dict = {}  # id -> market dict
         self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
         self._currencies: dict = {}  # 货币信息
-        self._positions_cache = TTLCache(maxsize=1, ttl=1)  # 持仓缓存
-        self._positions: dict[str, float] = {}  # 目前仅支持合约账户
+        # 持仓数据：使用 HealthyDataWithFallback 管理缓存和刷新
+        self._positions_data: HealthyDataWithFallback[dict[str, float]] = HealthyDataWithFallback(
+            max_age=5.0,  # 5秒过期
+            fetch_func=self._fetch_positions_internal
+        )
         self._balances: dict[str, dict[str, dict[str, float]]] = defaultdict(
             dict)  # ccxt key -> {pair -> "used/free/total"}
         self.add_child(ExchangeFundingRateBillListener())
@@ -191,8 +194,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         self.add_child(ExchangeBalanceListener())
 
     @property
-    def positions(self):
-        return self._positions
+    def positions(self) -> dict[str, float]:
+        """获取缓存的持仓数据（不检查健康状态）"""
+        return self._positions_data.get_unchecked() or {}
 
     @property
     def balances(self):
@@ -241,7 +245,11 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         super().on_reload(state)
         self.config.instance = self
         self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
-        self._positions_cache = TTLCache(maxsize=1, ttl=5)
+        # 重新创建持仓数据管理器
+        self._positions_data = HealthyDataWithFallback(
+            max_age=5.0,
+            fetch_func=self._fetch_positions_internal
+        )
 
     async def on_start(self) -> None:
         """启动时加载市场数据"""
@@ -394,7 +402,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         limit_amount_min = market['limits']['amount']['min'] or precision
         limit_price_min = market['limits']['price']['min'] or 0.0
         limit_cost_min = market["limits"]["cost"]["min"] or 0.0
-        position_amount = self._positions.get(symbol, 0.0)
+        position_amount = self.positions.get(symbol, 0.0)
         direction = 1 if order_request["side"] == "buy" else -1
         if position_amount * direction < -1e-9:  # reverse direction, 减仓
             if abs(aligned_amount) < precision:
@@ -479,7 +487,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 if type != "market":  # TODO: 记录限价订单
                     pass
                 else:
-                    self._positions_cache.clear()  # 市价的仓位需要立即刷新
+                    self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
                 self.event.emit("order_created", resolved_order, order)  # TODO: 可以记录order
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
                 return order
@@ -504,7 +512,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     if order_param['type'] != "market":  # TODO: 记录限价订单
                         pass
                     else:
-                        self._positions_cache.clear()  # 市价的仓位需要立即刷新
+                        self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
                     self.event.emit("order_created", order_param, order)  # TODO: 可以记录order
                     self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
                 return results
@@ -563,7 +571,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """订单更新"""
         exchange = self.exchanges[ccxt_exchange_key]
         orders = await exchange.watch_orders()
-        self._positions_cache.clear()  # 订单更新后仓位可能变化
+        self._positions_data.mark_dirty()  # 订单更新后仓位可能变化
         return orders
 
     async def un_watch_orders(self, ccxt_exchange_key: str):
@@ -614,10 +622,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         return await exchange.fetch_position(symbol)
 
-    @cachedmethod(attrgetter("_positions_cache"))
     async def fetch_positions(self) -> list[Position]:
         """
-        获取持仓
+        获取原始持仓数据
 
         Returns:
             [
@@ -635,19 +642,30 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
         return await self.exchanges["swap"].fetch_positions()
 
-    def medal_cache_positions(self, positions: dict):
+    def _transform_positions(self, positions: list[Position]) -> dict[str, float]:
+        """将原始持仓数据转换为 {symbol: amount} 格式"""
         result = defaultdict(float)
         for position in positions:
             symbol = position['symbol']
             amount = abs(float(position['contracts']) * self.get_contract_size(symbol))
             direction = -1 if position['side'] == 'short' else 1
-            result[position['symbol']] += amount * direction
-        self._positions = result
+            result[symbol] += amount * direction
+        return dict(result)
+
+    async def _fetch_positions_internal(self) -> dict[str, float]:
+        """内部方法：获取并转换持仓数据（用于 HealthyDataWithFallback）"""
+        positions = await self.fetch_positions()
+        return self._transform_positions(positions)
+
+    def medal_cache_positions(self, positions: list[Position]) -> dict[str, float]:
+        """缓存持仓数据（供 watch/fetch 调用）"""
+        result = self._transform_positions(positions)
+        self._positions_data.set(result)
         return result
 
     async def medal_fetch_positions(self) -> dict[str, float]:
-        positions = await self.fetch_positions()
-        return self.medal_cache_positions(positions)
+        """获取持仓（优先使用缓存，过期或 dirty 时自动刷新）"""
+        return await self._positions_data.get_or_fetch()
 
     async def watch_position(self, symbol: str) -> list[Position]:
         """订阅持仓更新"""

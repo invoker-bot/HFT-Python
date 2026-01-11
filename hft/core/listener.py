@@ -66,8 +66,14 @@ class Listener(ABC):
     - 数据记录：记录交易、市场数据
     - 通知系统：发送告警、通知
     - 可用于 Listener 之间的通信
+
+    类属性：
+    - lazy_start: 是否延迟启动（True 时不跟随父节点自动启动，需要显式调用 start()）
     """
     __pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index", "root")
+
+    # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
+    lazy_start: bool = False
 
     def __init__(self, name: Optional[str] = None, interval: float = 1.0):
         """
@@ -85,6 +91,7 @@ class Listener(ABC):
         # Internal state
         self._enabled = True
         self._healthy = False
+        self._state = ListenerState.STOPPED  # Set initial state here (not in initialize)
         self.start_time = self.current_time
         self._children: dict[str, 'Listener'] = {}
 
@@ -94,7 +101,7 @@ class Listener(ABC):
         self._parent: Optional[weakref.ReferenceType['Listener']] = None
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
-        self._state = ListenerState.STOPPED
+        # Note: _state is set in __init__, not here, to preserve state during pickle restore
         # 类索引: Type -> list[(weakref, depth)]
         # 只在根节点维护，用于快速按类查找子监听器
         self._class_index: dict[type, list[tuple[weakref.ReferenceType['Listener'], int]]] = defaultdict(list)
@@ -622,6 +629,9 @@ class Listener(ABC):
             # await self.__update_background_task_internal()
         if recursive:
             for child in list(self.children.values()):
+                # 跳过 lazy_start 的子节点，它们需要显式调用 start()
+                if child.lazy_start:
+                    continue
                 await child.start(True)
 
     async def on_start(self):

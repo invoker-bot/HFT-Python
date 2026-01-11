@@ -1,30 +1,24 @@
 """
 DataSourceGroup - 数据源管理器
 
-统一管理各类市场数据，复用现有的 BaseDataSource 子类。
-
-模块组成：
-- DataType: 数据类型枚举（ticker, orderbook, trades, ohlcv）
-- DataArray: 时序数据数组，支持健康检查和自动过期
-- DataSourceGroup: 数据源管理器，自动创建/清理 DataSource 实例
+三层架构：
+- DataSourceGroup: 顶层管理器，从 load_markets() 同步所有交易对
+- TradingPairDataSource: 中间层，代表 (exchange_class, symbol) 对，持久存在
+- BaseDataSource: 底层数据源（ticker, orderbook 等），按需创建，自动销毁
 
 设计理念：
-- 策略通过 query() 方法获取数据源，不需要关心 DataSource 的创建和生命周期
-- DataSourceGroup 自动管理 DataSource 的 watch/unwatch
-- 长时间未访问的 DataSource 会自动清理，节省资源
+- TradingPairDataSource 持久存在，可存储元数据
+- 底层 DataSource 按需创建（query 时），无访问时自动 unwatch 并销毁
+- 资源浪费在 watch 操作，所以只管理 watch 层的生命周期
 
 使用示例：
-    # 在策略中获取数据源
-    ds = datasource_group.query_single(DataType.TICKER, "okx", "BTC/USDT:USDT")
-    if ds:
-        ticker = ds.get_latest()
+    # 获取 ticker 数据
+    ticker_ds = datasource_group.query("okx", "BTC/USDT:USDT", DataType.TICKER)
+    if ticker_ds:
+        data = ticker_ds.get_latest()
 
-    # 批量获取多个交易对
-    sources = datasource_group.query(
-        DataType.OHLCV,
-        "binance",
-        ["BTC/USDT:USDT", "ETH/USDT:USDT"]
-    )
+    # 批量获取
+    sources = datasource_group.query_many("okx", ["BTC/USDT:USDT", "ETH/USDT:USDT"], DataType.TICKER)
 """
 import time
 import asyncio
@@ -32,12 +26,13 @@ from enum import Enum
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
 from typing import Optional, Generic, TypeVar, Type, TYPE_CHECKING
-from ..core.listener import Listener, ListenerState
+from ..core.listener import Listener, GroupListener, ListenerState
 
 if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
     from ..exchange.base import BaseExchange
     from .base import BaseDataSource
+    from ..indicator.lazy import LazyIndicator
 
 
 T = TypeVar('T')  # 数据元素类型
@@ -283,40 +278,54 @@ class DataArray(Generic[T]):
         return self.get_latest(n)
 
 
-class DataSourceGroup(Listener):
+class TradingPairDataSource(GroupListener):
     """
-    数据源管理器
+    交易对数据源 - 中间层
 
-    复用现有的 BaseDataSource 子类（TickerDataSource, TradesDataSource 等）
+    代表一个 (exchange_class, symbol) 对，持久存在。
+    管理各类型数据源（ticker, orderbook 等）的生命周期。
 
-    Features:
-    - 自动创建和管理 DataSource 实例
-    - query 时自动触发 request_watch()
-    - 长时间无 query 自动清理 DataSource
+    特性：
+    - lazy_start：初始为 STOPPED 状态
+    - 持久存在，不会被 DataSourceGroup 删除
+    - 底层 DataSource 按需创建（query 时），不删除只 stop()
+    - 底层 DataSource 无访问时自动 stop()（保留缓存）
     """
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_datasources")
+    __pickle_exclude__ = (*GroupListener.__pickle_exclude__, "_exchange")
 
-    def __init__(self, auto_cleanup_timeout: float = 300.0):
-        super().__init__("DataSourceGroup", interval=10.0)
-        self._auto_cleanup_timeout = auto_cleanup_timeout
+    # 延迟启动
+    lazy_start: bool = True
 
-        # DataSource 实例: (DataType, class_name, symbol) -> BaseDataSource
-        self._datasources: dict[tuple[DataType, str, str], "BaseDataSource"] = {}
+    # 数据源自动休眠超时（秒）
+    DEFAULT_AUTO_STOP_TIMEOUT: float = 300.0
 
-        # 最后访问时间: key -> timestamp
-        self._last_access: dict[tuple[DataType, str, str], float] = {}
+    def __init__(
+        self,
+        exchange: "BaseExchange",
+        symbol: str,
+        auto_stop_timeout: float = DEFAULT_AUTO_STOP_TIMEOUT,
+    ):
+        name = f"{exchange.class_name}:{symbol}"
+        super().__init__(name=name, interval=10.0)
+        self._exchange = exchange
+        self._exchange_class = exchange.class_name
+        self._symbol = symbol
+        self._auto_stop_timeout = auto_stop_timeout
 
-    def initialize(self):
-        super().initialize()
-        self._datasources = {}
-        self._last_access = {}
-
-    # ===== 属性 =====
+        # 各数据类型的最后访问时间
+        self._last_query_time: dict[DataType, float] = {}
 
     @property
-    def exchange_group(self) -> "ExchangeGroup":
-        """获取 ExchangeGroup（从 root 获取）"""
-        return self.root.exchange_group
+    def exchange(self) -> "BaseExchange":
+        return self._exchange
+
+    @property
+    def exchange_class(self) -> str:
+        return self._exchange_class
+
+    @property
+    def symbol(self) -> str:
+        return self._symbol
 
     # ===== DataSource 类映射 =====
 
@@ -339,153 +348,400 @@ class DataSourceGroup(Listener):
             raise ValueError(f"Unsupported DataType: {data_type}")
         return cls
 
-    # ===== 核心方法 =====
+    def _get_child_name(self, data_type: DataType) -> str:
+        """获取数据源的 child name"""
+        return data_type.value
 
-    def get_datasource(
-        self,
-        data_type: DataType,
-        class_name: str,
-        symbol: str
-    ) -> Optional["BaseDataSource"]:
+    # ===== GroupListener 接口 =====
+
+    def sync_children_params(self) -> dict[str, any]:
         """
-        获取或创建 DataSource 实例
+        返回所有已创建的 children（不删除，只管理 stop/start）
+        """
+        params = {}
+        for data_type in self._last_query_time.keys():
+            params[data_type.value] = {"data_type": data_type}
+        return params
+
+    def create_dynamic_child(self, name: str, param: any) -> Listener:
+        """创建数据源实例（lazy_start，初始为 STOPPED）"""
+        data_type = param["data_type"]
+        ds_class = self._get_datasource_class(data_type)
+        ds = ds_class(exchange=self._exchange, symbol=self._symbol)
+        # 不调用 request_watch()，因为 lazy_start 会保持 STOPPED
+        return ds
+
+    # ===== 查询接口 =====
+
+    def query(self, data_type: DataType) -> Optional["BaseDataSource"]:
+        """
+        获取指定类型的数据源
+
+        首次 query 时创建，后续 query 刷新访问时间。
+        如果数据源已 stop()，会重新 start()。
 
         Args:
             data_type: 数据类型
-            class_name: 交易所类型
-            symbol: 交易对
 
         Returns:
-            DataSource 实例，或 None（如果无法创建）
+            DataSource 实例
         """
-        key = (data_type, class_name, symbol)
+        from ..core.listener import ListenerState
+
+        # 更新访问时间
+        self._last_query_time[data_type] = time.time()
+
+        child_name = self._get_child_name(data_type)
 
         # 已存在
-        if key in self._datasources:
-            self._last_access[key] = time.time()
-            ds = self._datasources[key]
+        if child_name in self.children:
+            ds = self.children[child_name]
             ds.request_watch()  # 刷新 watch 计时器
+
+            # 如果已 stop，重新 start
+            if ds.state == ListenerState.STOPPED:
+                asyncio.create_task(ds.start())
+                self.logger.debug("Restarted datasource: %s/%s", self._symbol, data_type.value)
+
             return ds
 
-        # 检查交易所是否存在
-        exchange = self.exchange_group.get_exchange_by_class(class_name)
-        if exchange is None:
-            self.logger.warning("No exchange found for class %s", class_name)
-            return None
-
+        # 不存在，需要创建
         try:
-            ds_class = self._get_datasource_class(data_type)
-            ds = ds_class(exchange=exchange, symbol=symbol)
-
-            # 添加为子 Listener
+            ds = self.create_dynamic_child(child_name, {"data_type": data_type})
             self.add_child(ds)
 
-            # 如果正在运行，启动它
-            if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
-                asyncio.create_task(ds.start())
+            # 立即启动（因为是 query 触发的）
+            ds.request_watch()
+            asyncio.create_task(ds.start())
 
-            self._datasources[key] = ds
-            self._last_access[key] = time.time()
-
-            self.logger.info("Created datasource: %s/%s/%s", data_type.value, class_name, symbol)
+            self.logger.debug("Created datasource: %s/%s", self._symbol, data_type.value)
             return ds
 
         except Exception as e:
-            self.logger.exception("Failed to create datasource: %s", e)
+            self.logger.exception("Failed to create datasource %s: %s", data_type.value, e)
             return None
+
+    def has_active_datasource(self, data_type: DataType) -> bool:
+        """检查是否有活跃的数据源（已创建且正在运行）"""
+        from ..core.listener import ListenerState
+
+        child_name = self._get_child_name(data_type)
+        if child_name not in self.children:
+            return False
+        return self.children[child_name].state == ListenerState.RUNNING
+
+    def has_datasource(self, data_type: DataType) -> bool:
+        """检查是否有数据源（不管是否运行）"""
+        child_name = self._get_child_name(data_type)
+        return child_name in self.children
+
+    # ===== 指标查询接口 =====
+
+    def query_indicator(
+        self,
+        indicator_class: Type["LazyIndicator"],
+        **kwargs
+    ) -> Optional["LazyIndicator"]:
+        """
+        获取指定类型的指标
+
+        首次 query 时创建并启动，后续 query 刷新访问时间。
+        如果指标已 stop()，会重新 start()。
+
+        Args:
+            indicator_class: 指标类（如 VWAPIndicator）
+            **kwargs: 传递给指标构造函数的参数
+
+        Returns:
+            指标实例
+
+        Example:
+            vwap = trading_pair.query_indicator(VWAPIndicator, window=200)
+            value = vwap.get_value()
+        """
+        from ..core.listener import ListenerState
+
+        indicator_name = indicator_class.__name__
+
+        # 已存在
+        if indicator_name in self.children:
+            indicator = self.children[indicator_name]
+            indicator.request_access()  # 刷新访问时间
+
+            # 如果已 stop，重新 start
+            if indicator.state == ListenerState.STOPPED:
+                asyncio.create_task(indicator.start())
+                self.logger.debug("Restarted indicator: %s", indicator_name)
+
+            return indicator
+
+        # 不存在，需要创建
+        try:
+            indicator = indicator_class(**kwargs)
+            self.add_child(indicator)
+
+            # 立即启动
+            indicator.request_access()
+            asyncio.create_task(indicator.start())
+
+            self.logger.debug("Created indicator: %s", indicator_name)
+            return indicator
+
+        except Exception as e:
+            self.logger.exception("Failed to create indicator %s: %s", indicator_name, e)
+            return None
+
+    def has_indicator(self, indicator_class: Type["LazyIndicator"]) -> bool:
+        """检查是否有指标（不管是否运行）"""
+        return indicator_class.__name__ in self.children
+
+    def has_active_indicator(self, indicator_class: Type["LazyIndicator"]) -> bool:
+        """检查是否有活跃的指标（已创建且正在运行）"""
+        from ..core.listener import ListenerState
+
+        indicator_name = indicator_class.__name__
+        if indicator_name not in self.children:
+            return False
+        return self.children[indicator_name].state == ListenerState.RUNNING
+
+    # ===== 生命周期 =====
+
+    async def on_tick(self) -> bool:
+        """定期检查并停止空闲的数据源（不删除）"""
+        from ..core.listener import ListenerState
+
+        now = time.time()
+
+        # 检查每个数据源是否需要 stop
+        for data_type, last_time in list(self._last_query_time.items()):
+            child_name = self._get_child_name(data_type)
+            if child_name not in self.children:
+                continue
+
+            ds = self.children[child_name]
+
+            # 超时未访问且正在运行 -> stop
+            if now - last_time > self._auto_stop_timeout:
+                if ds.state == ListenerState.RUNNING:
+                    await ds.stop()
+                    self.logger.debug("Stopped idle datasource: %s/%s", self._symbol, data_type.value)
+
+        return False
+
+    @property
+    def log_state_dict(self) -> dict:
+        from ..core.listener import ListenerState
+        from ..indicator.lazy import LazyIndicator
+
+        active_datasources = []
+        active_indicators = []
+
+        for name, child in self.children.items():
+            if child.state != ListenerState.RUNNING:
+                continue
+            if isinstance(child, LazyIndicator):
+                active_indicators.append(name)
+            else:
+                active_datasources.append(name)
+
+        return {
+            "symbol": self._symbol,
+            "total_children": len(self.children),
+            "active_datasources": active_datasources,
+            "active_indicators": active_indicators,
+        }
+
+
+class DataSourceGroup(GroupListener):
+    """
+    数据源管理器 - 顶层
+
+    从 ExchangeGroup 的 load_markets() 同步所有交易对，
+    为每个 (exchange_class, symbol) 创建 TradingPairDataSource。
+
+    Features:
+    - TradingPairDataSource 持久存在，不会被删除
+    - 提供统一的 query 接口
+    - 自动同步新增/删除的交易对
+    """
+    __pickle_exclude__ = (*GroupListener.__pickle_exclude__,)
+
+    def __init__(self, auto_destroy_timeout: float = 300.0):
+        super().__init__("DataSourceGroup", interval=60.0)
+        self._auto_destroy_timeout = auto_destroy_timeout
+
+    # ===== 属性 =====
+
+    @property
+    def exchange_group(self) -> "ExchangeGroup":
+        """获取 ExchangeGroup（从 root 获取）"""
+        return self.root.exchange_group
+
+    # ===== GroupListener 接口 =====
+
+    def sync_children_params(self) -> dict[str, any]:
+        """
+        从 ExchangeGroup 获取所有 (exchange_class, symbol) 对
+
+        Returns:
+            {child_name: {"exchange": exchange, "symbol": symbol}}
+        """
+        params = {}
+        for exchange in self.exchange_group.children.values():
+            if not exchange.ready:
+                continue
+            for symbol in exchange.market_trading_pairs.keys():
+                child_name = f"{exchange.class_name}:{symbol}"
+                params[child_name] = {
+                    "exchange": exchange,
+                    "symbol": symbol,
+                }
+        return params
+
+    def create_dynamic_child(self, name: str, param: any) -> Listener:
+        """创建 TradingPairDataSource"""
+        return TradingPairDataSource(
+            exchange=param["exchange"],
+            symbol=param["symbol"],
+            auto_destroy_timeout=self._auto_destroy_timeout,
+        )
+
+    # ===== 查询接口 =====
+
+    def _get_trading_pair_source(
+        self,
+        exchange_class: str,
+        symbol: str
+    ) -> Optional[TradingPairDataSource]:
+        """获取 TradingPairDataSource"""
+        child_name = f"{exchange_class}:{symbol}"
+        return self.children.get(child_name)
 
     def query(
         self,
-        data_type: DataType,
-        class_name: str,
-        symbols: list[str],
-    ) -> dict[str, "BaseDataSource"]:
+        exchange_class: str,
+        symbol: str,
+        data_type: DataType
+    ) -> Optional["BaseDataSource"]:
         """
-        查询数据源（自动创建和激活）
+        查询数据源
 
         Args:
+            exchange_class: 交易所类名（如 "okx", "binance"）
+            symbol: 交易对（如 "BTC/USDT:USDT"）
             data_type: 数据类型
-            class_name: 交易所类型
+
+        Returns:
+            DataSource 实例，或 None（如果交易对不存在）
+        """
+        pair_source = self._get_trading_pair_source(exchange_class, symbol)
+        if pair_source is None:
+            self.logger.warning(
+                "Trading pair not found: %s:%s",
+                exchange_class, symbol
+            )
+            return None
+
+        return pair_source.query(data_type)
+
+    def query_many(
+        self,
+        exchange_class: str,
+        symbols: list[str],
+        data_type: DataType
+    ) -> dict[str, "BaseDataSource"]:
+        """
+        批量查询数据源
+
+        Args:
+            exchange_class: 交易所类名
             symbols: 交易对列表
+            data_type: 数据类型
 
         Returns:
             {symbol: DataSource} 字典
         """
         result = {}
         for symbol in symbols:
-            ds = self.get_datasource(data_type, class_name, symbol)
+            ds = self.query(exchange_class, symbol, data_type)
             if ds is not None:
                 result[symbol] = ds
         return result
 
-    def query_single(
+    def get_trading_pair(
         self,
-        data_type: DataType,
-        class_name: str,
-        symbol: str,
-    ) -> Optional["BaseDataSource"]:
-        """查询单个交易对的数据源"""
-        return self.get_datasource(data_type, class_name, symbol)
+        exchange_class: str,
+        symbol: str
+    ) -> Optional[TradingPairDataSource]:
+        """
+        获取 TradingPairDataSource（不创建数据源）
 
-    # ===== 清理 =====
+        用于访问交易对的元数据，不触发数据源创建。
+        """
+        return self._get_trading_pair_source(exchange_class, symbol)
 
-    async def _cleanup_stale_datasources(self) -> int:
-        """清理长时间未访问的 DataSource"""
-        now = time.time()
-        to_remove = []
+    def list_trading_pairs(self, exchange_class: Optional[str] = None) -> list[str]:
+        """
+        列出所有交易对
 
-        for key, last_time in list(self._last_access.items()):
-            if now - last_time > self._auto_cleanup_timeout:
-                to_remove.append(key)
+        Args:
+            exchange_class: 可选，过滤指定交易所
 
-        for key in to_remove:
-            data_type, class_name, symbol = key
-            await self._remove_datasource(key)
-            self.logger.info(
-                "Removed stale datasource: %s/%s/%s",
-                data_type.value, class_name, symbol
-            )
-
-        return len(to_remove)
-
-    async def _remove_datasource(self, key: tuple[DataType, str, str]) -> None:
-        """移除 DataSource"""
-        if key in self._datasources:
-            ds = self._datasources[key]
-            await ds.stop()
-            self.remove_child(ds.name)
-            del self._datasources[key]
-
-        if key in self._last_access:
-            del self._last_access[key]
+        Returns:
+            交易对列表（格式：exchange_class:symbol）
+        """
+        result = []
+        for name in self.children.keys():
+            if exchange_class is None or name.startswith(f"{exchange_class}:"):
+                result.append(name)
+        return result
 
     # ===== 生命周期 =====
 
     async def on_tick(self) -> bool:
-        """定期清理 stale DataSource"""
-        removed = await self._cleanup_stale_datasources()
-        if removed > 0:
-            self.logger.debug("Cleaned up %d stale datasources", removed)
+        """定期同步交易对"""
+        await self._sync_children()
         return False
-
-    async def on_stop(self) -> None:
-        """停止时清理所有 DataSource"""
-        for key in list(self._datasources.keys()):
-            await self._remove_datasource(key)
-        await super().on_stop()
-
-    # ===== 状态 =====
 
     @property
     def log_state_dict(self) -> dict:
+        # 统计各交易所的交易对数量
+        stats = defaultdict(int)
+        for name in self.children.keys():
+            exchange_class = name.split(":")[0]
+            stats[exchange_class] += 1
+
         return {
-            "datasources": len(self._datasources),
+            "trading_pairs": len(self.children),
+            "by_exchange": dict(stats),
         }
 
     def get_stats(self) -> dict:
-        """获取统计信息"""
-        stats = defaultdict(int)
-        for key in self._datasources:
-            data_type, class_name, _ = key
-            stats[f"{data_type.value}:{class_name}"] += 1
-        return dict(stats)
+        """获取详细统计信息"""
+        from ..indicator.lazy import LazyIndicator
+        from ..core.listener import ListenerState
+
+        stats = {
+            "total_pairs": len(self.children),
+            "by_exchange": defaultdict(int),
+            "active_datasources": defaultdict(int),
+            "active_indicators": defaultdict(int),
+        }
+
+        for name, pair_source in self.children.items():
+            exchange_class = name.split(":")[0]
+            stats["by_exchange"][exchange_class] += 1
+
+            for data_type in DataType:
+                if pair_source.has_active_datasource(data_type):
+                    stats["active_datasources"][data_type.value] += 1
+
+            # 统计活跃指标
+            for child_name, child in pair_source.children.items():
+                if isinstance(child, LazyIndicator) and child.state == ListenerState.RUNNING:
+                    stats["active_indicators"][child_name] += 1
+
+        stats["by_exchange"] = dict(stats["by_exchange"])
+        stats["active_datasources"] = dict(stats["active_datasources"])
+        stats["active_indicators"] = dict(stats["active_indicators"])
+        return stats

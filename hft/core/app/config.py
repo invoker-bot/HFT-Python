@@ -5,16 +5,35 @@
 - 从缓存恢复应用状态
 - 配置主循环、健康检查、日志、缓存的时间间隔
 - 策略列表配置
+- 可选持久化配置
 """
 from os import path
 import logging
 from typing import ClassVar, Type
-from pydantic import Field, ClickHouseDsn
+from pydantic import Field, ClickHouseDsn, BaseModel
 from ...config.base import BaseConfig
 from .base import AppCore
 from .listeners import CacheListener
 
 logger = logging.getLogger(__name__)
+
+
+class PersistConfig(BaseModel):
+    """
+    持久化配置
+
+    控制哪些数据类型需要保存到 ClickHouse。
+    默认全部启用，大数据量的 trades 和 orderbook 可以关闭。
+    """
+    order_bill: bool = Field(True, description="订单账单")
+    funding_rate_bill: bool = Field(True, description="资金费率账单")
+    balance_usd: bool = Field(True, description="账户余额快照")
+    positions: bool = Field(True, description="持仓快照")
+    balances: bool = Field(True, description="余额明细")
+    ohlcv: bool = Field(True, description="K线数据")
+    ticker: bool = Field(True, description="Ticker数据")
+    trades: bool = Field(False, description="成交记录（数据量大，默认关闭）")
+    order_book: bool = Field(False, description="订单簿（数据量大，默认关闭）")
 
 
 class AppConfig(BaseConfig[AppCore]):
@@ -65,6 +84,7 @@ class AppConfig(BaseConfig[AppCore]):
     cache_interval: float = Field(300.0, description="缓存保存间隔（秒）")
     strategies: list[str] = Field(description="策略配置路径列表")
     database_url: ClickHouseDsn | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
+    persist: PersistConfig = Field(default_factory=PersistConfig, description="持久化配置")
     exchanges: list[str] = Field(description="交易所配置路径列表")
 
     # Executor 配置路径

@@ -3,13 +3,14 @@ import asyncio
 from typing import TYPE_CHECKING
 from ccxt.base.errors import UnsubscribeError
 from ..core.listener import Listener, GroupListener
-from ..data.database import OrderBillController
-from ..data.listeners import DataListener
+from ..database.client import OrderBillController
+from ..database.listeners import DataListener
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
 
 
 class ExchangeOrderBillWatchListener(DataListener):
+    persist_key = "order_bill"
 
     def __init__(self, name: str, ccxt_instance_key: str, interval: float = 0.1):
         super().__init__(interval)
@@ -24,7 +25,7 @@ class ExchangeOrderBillWatchListener(DataListener):
         return self.parent.parent
 
     async def on_tick(self):
-        if self.exchange is None or not self.exchange.ready or not self.db_ready:
+        if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
             return
         try:
             order_lists = await asyncio.wait_for(self.exchange.watch_orders(self.ccxt_instance_key), timeout=900)
@@ -46,6 +47,8 @@ class ExchangeOrderBillWatchListener(DataListener):
 
 
 class ExchangeOrderBillFetchListener(DataListener):
+    persist_key = "order_bill"
+
     def __init__(self, name: str, interval: float = 60.0):
         super().__init__(interval)
         self.name = name  # 使用传入的 name，与 sync_children_params 的 key 一致
@@ -58,7 +61,7 @@ class ExchangeOrderBillFetchListener(DataListener):
         return self.parent.parent
 
     async def on_tick(self):
-        if self.exchange is None or not self.exchange.ready or not self.db_ready:
+        if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
             return
         controller = OrderBillController(self.db)
         for order_id, symbol in await controller.get_should_updated_orders(self.exchange):
@@ -79,6 +82,7 @@ class ExchangeOrderBillListener(GroupListener, DataListener):
 
     使用 GroupListener 自动管理动态子节点。
     """
+    persist_key = "order_bill"
 
     def sync_children_params(self) -> dict[str, any]:
         """根据 ccxt_instances 声明需要的 children"""
@@ -105,7 +109,7 @@ class ExchangeOrderBillListener(GroupListener, DataListener):
 
     async def on_order_created(self, resolved_order, order):
         exchange: 'BaseExchange' = self.parent
-        if self.db_ready:
+        if self.db_ready and self.persist_enabled:
             controller = OrderBillController(self.db)
             await controller.update(order, exchange)
 

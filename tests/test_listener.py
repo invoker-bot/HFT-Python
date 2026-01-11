@@ -17,32 +17,49 @@ from tests.conftest import MockListener
 
 
 class TestListenerLifecycle:
-    """Tests for Listener lifecycle management (start/stop/restart)."""
+    """Tests for Listener lifecycle management (start/stop/restart).
+
+    Lifecycle flow:
+    1. Create Listener -> state = STOPPED
+    2. start() -> state = STARTING (if was STOPPED)
+    3. tick() -> on_start() called, state = RUNNING
+    """
 
     @pytest.mark.asyncio
-    async def test_initial_state_is_starting(self, mock_listener):
-        """Listener should start in STARTING state."""
-        assert mock_listener.state == ListenerState.STARTING
+    async def test_initial_state_is_stopped(self, mock_listener):
+        """Listener should start in STOPPED state."""
+        assert mock_listener.state == ListenerState.STOPPED
         assert mock_listener.healthy is False
         assert mock_listener.enabled is True
 
     @pytest.mark.asyncio
-    async def test_start_transitions_to_running(self, mock_listener):
-        """start() should transition state from STARTING to RUNNING."""
-        assert mock_listener.state == ListenerState.STARTING
+    async def test_start_transitions_to_starting(self, mock_listener):
+        """start() should transition state from STOPPED to STARTING."""
+        assert mock_listener.state == ListenerState.STOPPED
 
         await mock_listener.start(recursive=False)
+
+        assert mock_listener.state == ListenerState.STARTING
+
+    @pytest.mark.asyncio
+    async def test_tick_transitions_to_running(self, mock_listener):
+        """tick() should transition from STARTING to RUNNING and call on_start."""
+        await mock_listener.start(recursive=False)
+        assert mock_listener.state == ListenerState.STARTING
+
+        await mock_listener.tick()
 
         assert mock_listener.state == ListenerState.RUNNING
         mock_listener._on_start_fn.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_start_is_called(self, mock_listener_factory):
-        """on_start should be called during start."""
+        """on_start should be called during tick after start."""
         on_start = AsyncMock()
         listener = mock_listener_factory(on_start_fn=on_start)
 
         await listener.start(recursive=False)
+        await listener.tick()
 
         on_start.assert_awaited_once()
 
@@ -50,6 +67,7 @@ class TestListenerLifecycle:
     async def test_stop_transitions_to_stopped(self, mock_listener):
         """stop() should transition state from RUNNING to STOPPED."""
         await mock_listener.start(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING
         assert mock_listener.state == ListenerState.RUNNING
 
         await mock_listener.stop(recursive=False)
@@ -64,6 +82,7 @@ class TestListenerLifecycle:
         listener = mock_listener_factory(on_stop_fn=on_stop)
 
         await listener.start(recursive=False)
+        await listener.tick()  # STARTING -> RUNNING
         await listener.stop(recursive=False)
 
         on_stop.assert_awaited_once()
@@ -72,8 +91,10 @@ class TestListenerLifecycle:
     async def test_restart_stops_and_starts(self, mock_listener):
         """restart() should stop then start the listener."""
         await mock_listener.start(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING
 
         await mock_listener.restart(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING again
 
         assert mock_listener.state == ListenerState.RUNNING
         mock_listener._on_stop_fn.assert_awaited_once()
@@ -82,15 +103,12 @@ class TestListenerLifecycle:
     @pytest.mark.asyncio
     async def test_ready_property(self, mock_listener):
         """ready should be True only when enabled, healthy, and running."""
-        # Initially not ready (STARTING state, not healthy)
+        # Initially not ready (STOPPED state, not healthy)
         assert mock_listener.ready is False
 
-        # Need to stop first, then start (because initial state is STARTING)
-        mock_listener._state = ListenerState.STOPPED
         await mock_listener.start(recursive=False)
-
-        # After start and tick, should be running and healthy
-        await mock_listener.tick()  # Execute on_tick to set healthy=True
+        await mock_listener.tick()  # STARTING -> RUNNING (calls on_start)
+        await mock_listener.tick()  # RUNNING, on_tick sets healthy=True
         assert mock_listener.ready is True
 
         mock_listener.enabled = False
@@ -109,6 +127,7 @@ class TestListenerLifecycle:
     async def test_uptime_increases_when_running(self, mock_listener):
         """uptime should increase while running."""
         await mock_listener.start(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING
 
         await asyncio.sleep(0.1)
 
@@ -248,7 +267,7 @@ class TestListenerParentChild:
 
     @pytest.mark.asyncio
     async def test_start_with_recursive_starts_all(self, mock_listener_factory):
-        """start(recursive=True) should start all children."""
+        """start(recursive=True) should start all children to STARTING state."""
         parent = mock_listener_factory(name="parent")
         child1 = mock_listener_factory(name="child1")
         child2 = mock_listener_factory(name="child2")
@@ -258,9 +277,10 @@ class TestListenerParentChild:
 
         await parent.start(recursive=True)
 
-        assert parent.state == ListenerState.RUNNING
-        assert child1.state == ListenerState.RUNNING
-        assert child2.state == ListenerState.RUNNING
+        # start() transitions to STARTING, tick() is needed for RUNNING
+        assert parent.state == ListenerState.STARTING
+        assert child1.state == ListenerState.STARTING
+        assert child2.state == ListenerState.STARTING
 
     @pytest.mark.asyncio
     async def test_stop_with_recursive_stops_all(self, mock_listener_factory):
@@ -318,38 +338,31 @@ class TestListenerBackgroundTask:
     """Tests for background task management."""
 
     @pytest.mark.asyncio
-    async def test_update_background_creates_task(self, mock_listener):
-        """update_background should create a background task."""
-        await mock_listener.start(recursive=False)
-
-        mock_listener.update_background()
-
-        assert mock_listener._background_task is not None
-
-        # Clean up
-        mock_listener.delete_background()
-
-    @pytest.mark.asyncio
-    async def test_delete_background_cancels_task(self, mock_listener):
-        """delete_background should cancel the background task."""
-        await mock_listener.start(recursive=False)
-        mock_listener.update_background()
-
-        assert mock_listener._background_task is not None
-
-        mock_listener.delete_background()
-
+    async def test_background_task_initially_none(self, mock_listener):
+        """Background task should be None initially."""
         assert mock_listener._background_task is None
 
     @pytest.mark.asyncio
-    async def test_start_creates_background_task(self, mock_listener):
-        """start() should create a background task."""
+    async def test_start_does_not_create_background_task(self, mock_listener):
+        """start() does not automatically create a background task.
+
+        Background task creation is handled externally by whoever runs the listener loop.
+        """
         await mock_listener.start(recursive=False)
 
-        assert mock_listener._background_task is not None
+        # start() only sets state to STARTING, doesn't create background task
+        assert mock_listener._background_task is None
 
-        # Clean up
-        mock_listener.delete_background()
+    @pytest.mark.asyncio
+    async def test_stop_clears_background_task(self, mock_listener):
+        """stop() should clear the background task if one exists."""
+        await mock_listener.start(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING
+
+        await mock_listener.stop(recursive=False)
+
+        # After stop, background task should be None
+        assert mock_listener._background_task is None
 
 
 class TestListenerLogStateDict:
@@ -367,12 +380,12 @@ class TestListenerLogStateDict:
     @pytest.mark.asyncio
     async def test_log_state_dict_reflects_current_state(self, mock_listener):
         """log_state_dict values should reflect current listener state."""
-        assert mock_listener.log_state_dict['state'] == ListenerState.STARTING
+        # Initial state is STOPPED
+        assert mock_listener.log_state_dict['state'] == ListenerState.STOPPED
         assert mock_listener.log_state_dict['ready'] is False
 
-        # Set to STOPPED first, then start
-        mock_listener._state = ListenerState.STOPPED
         await mock_listener.start(recursive=False)
+        await mock_listener.tick()  # STARTING -> RUNNING (calls on_start)
         await mock_listener.tick()  # Execute on_tick to set healthy=True
 
         assert mock_listener.log_state_dict['state'] == ListenerState.RUNNING
