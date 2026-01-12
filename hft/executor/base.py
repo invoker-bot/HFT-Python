@@ -147,6 +147,13 @@ class BaseExecutor(Listener):
         """获取 StrategyGroup"""
         return self.root.strategy_group
 
+    def _get_exchange_by_path(self, exchange_path: str) -> Optional["BaseExchange"]:
+        """根据配置路径获取交易所实例"""
+        for exchange in self.exchange_group.children.values():
+            if exchange.config.path == exchange_path:
+                return exchange
+        return None
+
     @property
     def executor_state(self) -> ExecutorState:
         return self._executor_state
@@ -520,27 +527,25 @@ class BaseExecutor(Listener):
         处理所有目标仓位
 
         Args:
-            targets: {exchange_class: {symbol: (target_usd, speed)}}
+            targets: {(exchange_path, symbol): (target_usd, speed)}
         """
-        for exchange_class, symbols in targets.items():
-            # 获取该类型的所有交易所
-            exchanges = self.exchange_group.get_exchanges_by_class(exchange_class)
+        for (exchange_path, symbol), (target_usd, speed) in targets.items():
+            # 根据 exchange_path 获取交易所
+            exchange = self._get_exchange_by_path(exchange_path)
 
-            if not exchanges:
-                self.logger.debug("No exchanges for class %s", exchange_class)
+            if not exchange:
+                self.logger.debug("Exchange not found for path %s", exchange_path)
                 continue
 
-            for symbol, (target_usd, speed) in symbols.items():
-                for exchange in exchanges:
-                    try:
-                        await self._process_single_target(
-                            exchange, symbol, target_usd, speed
-                        )
-                    except Exception as e:
-                        self.logger.warning(
-                            "[%s] Error processing %s: %s",
-                            exchange.name, symbol, e
-                        )
+            try:
+                await self._process_single_target(
+                    exchange, symbol, target_usd, speed
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "[%s] Error processing %s: %s",
+                    exchange.name, symbol, e
+                )
 
     async def _process_single_target(
         self,

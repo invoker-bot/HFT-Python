@@ -29,10 +29,12 @@ if TYPE_CHECKING:
     from .group import StrategyGroup
 
 
-# 目标仓位类型: {exchange_class: {symbol: (position_usd, speed)}}
+# 目标仓位类型: {(exchange_path, symbol): (position_usd, speed)}
+# exchange_path: 交易所配置路径，如 "okx/main"
+# symbol: 交易对，如 "BTC/USDT:USDT"
 # position_usd: 正数=多仓，负数=空仓，单位 USD
 # speed: 执行紧急度 [0.0, 1.0]，越高越急
-TargetPositions = dict[str, dict[str, tuple[float, float]]]
+TargetPositions = dict[tuple[str, str], tuple[float, float]]
 
 
 class BaseStrategy(Listener):

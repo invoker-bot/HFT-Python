@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 
 
 # 聚合后的目标仓位类型（与 TargetPositions 相同）
-AggregatedTargets = dict[str, dict[str, tuple[float, float]]]
+# {(exchange_path, symbol): (position_usd, speed)}
+AggregatedTargets = dict[tuple[str, str], tuple[float, float]]
 
 
 class StrategyGroup(Listener):
@@ -48,13 +49,13 @@ class StrategyGroup(Listener):
 
     Example:
         # Strategy A 返回
-        {"okx": {"BTC/USDT:USDT": (5000.0, 0.3)}}
+        {("okx/main", "BTC/USDT:USDT"): (5000.0, 0.3)}
 
         # Strategy B 返回
-        {"okx": {"BTC/USDT:USDT": (3000.0, 0.9)}}
+        {("okx/main", "BTC/USDT:USDT"): (3000.0, 0.9)}
 
         # 聚合结果
-        {"okx": {"BTC/USDT:USDT": (8000.0, 0.525)}}
+        {("okx/main", "BTC/USDT:USDT"): (8000.0, 0.525)}
         # position = 5000 + 3000 = 8000
         # speed = (5000*0.3 + 3000*0.9) / (5000+3000) = 0.525
     """
@@ -101,20 +102,17 @@ class StrategyGroup(Listener):
         - speed: 按仓位绝对值加权平均
 
         Returns:
-            {exchange_class: {symbol: (aggregated_position_usd, aggregated_speed)}}
+            {(exchange_path, symbol): (aggregated_position_usd, aggregated_speed)}
         """
-        # 临时存储: exchange_class -> symbol -> [(position, speed), ...]
-        temp: dict[str, dict[str, list[tuple[float, float]]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
+        # 临时存储: (exchange_path, symbol) -> [(position, speed), ...]
+        temp: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
 
         # 收集所有策略的目标
         for strategy in self.strategies:
             try:
                 targets = strategy.get_target_positions_usd()
-                for exchange_class, symbols in targets.items():
-                    for symbol, (position, speed) in symbols.items():
-                        temp[exchange_class][symbol].append((position, speed))
+                for key, (position, speed) in targets.items():
+                    temp[key].append((position, speed))
             except Exception as e:
                 self.logger.warning(
                     "Error getting targets from %s: %s", strategy.name, e
@@ -122,22 +120,20 @@ class StrategyGroup(Listener):
 
         # 聚合
         result: AggregatedTargets = {}
-        for exchange_class, symbols in temp.items():
-            result[exchange_class] = {}
-            for symbol, values in symbols.items():
-                # position: 直接求和
-                total_position = sum(pos for pos, _ in values)
+        for key, values in temp.items():
+            # position: 直接求和
+            total_position = sum(pos for pos, _ in values)
 
-                # speed: 按仓位绝对值加权平均
-                total_weight = sum(abs(pos) for pos, _ in values)
-                if total_weight > 0:
-                    weighted_speed = sum(
-                        abs(pos) * speed for pos, speed in values
-                    ) / total_weight
-                else:
-                    weighted_speed = 0.5  # 默认值
+            # speed: 按仓位绝对值加权平均
+            total_weight = sum(abs(pos) for pos, _ in values)
+            if total_weight > 0:
+                weighted_speed = sum(
+                    abs(pos) * speed for pos, speed in values
+                ) / total_weight
+            else:
+                weighted_speed = 0.5  # 默认值
 
-                result[exchange_class][symbol] = (total_position, weighted_speed)
+            result[key] = (total_position, weighted_speed)
 
         return result
 

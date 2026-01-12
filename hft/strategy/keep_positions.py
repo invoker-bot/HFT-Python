@@ -10,7 +10,7 @@ KeepPositionsStrategy - 保持目标仓位策略
 
 Example Config (conf/strategy/keep_positions/main.yaml):
     class_name: keep_positions
-    exchange_class: okx
+    exchange_path: okx/main
     exit_on_target: true
     tolerance: 0.05
     speed: 0.8
@@ -18,11 +18,16 @@ Example Config (conf/strategy/keep_positions/main.yaml):
       BTC/USDT:USDT: 1000   # 持有价值 1000 USD 的 BTC 多单
       ETH/USDT:USDT: -500   # 持有价值 500 USD 的 ETH 空单
 """
-from typing import ClassVar, Type
+from typing import ClassVar, Type, Optional, TYPE_CHECKING
 from functools import cached_property
 from pydantic import Field
+from rich.console import Console
+from rich.table import Table
 from .base import BaseStrategy, TargetPositions
 from .config import BaseStrategyConfig
+
+if TYPE_CHECKING:
+    from ..exchange.base import BaseExchange
 
 
 class KeepPositionsStrategyConfig(BaseStrategyConfig):
@@ -30,7 +35,7 @@ class KeepPositionsStrategyConfig(BaseStrategyConfig):
     保持仓位策略配置
 
     Attributes:
-        exchange_class: 交易所类型（okx, binance, bybit）
+        exchange_path: 交易所配置路径（如 'okx/main', 'binance/spot'）
         positions_usd: 目标仓位字典 {symbol: usd_value}
             - 正数表示多仓
             - 负数表示空仓
@@ -40,7 +45,7 @@ class KeepPositionsStrategyConfig(BaseStrategyConfig):
     """
     class_name: ClassVar[str] = "keep_positions"
 
-    exchange_class: str = Field("okx", description="Exchange class name")
+    exchange_path: str = Field(..., description="Exchange config path (e.g., 'okx/main')")
     positions_usd: dict[str, float] = Field(
         default_factory=dict,
         description="Target positions in USD {symbol: usd_value}"
@@ -97,42 +102,33 @@ class KeepPositionsStrategy(BaseStrategy):
         """获取交易所组"""
         return self.root.exchange_group
 
+    def _get_exchange(self) -> Optional["BaseExchange"]:
+        """根据配置路径获取交易所实例"""
+        for exchange in self.exchange_group.children.values():
+            if exchange.config.path == self.config.exchange_path:
+                return exchange
+        return None
+
     def get_target_positions_usd(self) -> TargetPositions:
         """
         返回配置的目标仓位
 
-        支持 exchange_class 通配符：
-        - "*": 匹配所有交易所类
-        - "okx": 精确匹配 okx 类
-        - "!okx": 排除 okx 类（暂不支持）
-
         Returns:
-            {exchange_class: {symbol: (position_usd, speed)}}
+            {(exchange_path, symbol): (position_usd, speed)}
         """
         if not self.config.positions_usd:
             return {}
 
-        symbols_dict = {
-            symbol: (usd, self.config.speed)
+        return {
+            (self.config.exchange_path, symbol): (usd, self.config.speed)
             for symbol, usd in self.config.positions_usd.items()
         }
-
-        # 通配符匹配
-        if self.config.exchange_class == "*":
-            # 获取所有交易所类
-            exchange_classes = self.exchange_group.get_exchange_classes()
-            return {
-                exchange_class: symbols_dict.copy()
-                for exchange_class in exchange_classes
-            }
-
-        return {self.config.exchange_class: symbols_dict}
 
     async def on_start(self):
         await super().on_start()
         self.logger.info(
             "KeepPositionsStrategy started: exchange=%s, positions=%s, exit=%s",
-            self.config.exchange_class,
+            self.config.exchange_path,
             self.config.positions_usd,
             self.config.exit_on_target
         )
@@ -152,7 +148,7 @@ class KeepPositionsStrategy(BaseStrategy):
             return False  # 不退出，持续运行
 
         # 获取交易所检查仓位
-        exchange = self.exchange_group.get_exchange_by_class(self.config.exchange_class)
+        exchange = self._get_exchange()
         if exchange is None:
             return False  # 交易所未就绪，继续等待
 
@@ -208,3 +204,78 @@ class KeepPositionsStrategy(BaseStrategy):
             "positions": len(self.config.positions_usd),
             "targets_reached": len(self._targets_reached),
         }
+
+    def _build_table(self) -> Table:
+        """构建仓位状态表格"""
+        table = Table(
+            title=f"Positions ({self.config.exchange_path})",
+            show_header=True,
+            header_style="bold cyan",
+        )
+
+        table.add_column("Symbol", width=18)
+        table.add_column("Target", width=12, justify="right")
+        table.add_column("Current", width=12, justify="right")
+        table.add_column("Diff", width=10, justify="right")
+        table.add_column("Status", width=10)
+
+        exchange = self._get_exchange()
+        has_data = exchange is not None and exchange.ready
+
+        for symbol, target_usd in self.config.positions_usd.items():
+            target_str = f"${target_usd:,.0f}"
+
+            if not has_data:
+                table.add_row(
+                    symbol,
+                    target_str,
+                    "[dim]--[/dim]",
+                    "[dim]--[/dim]",
+                    "[dim]⏳[/dim]"
+                )
+                continue
+
+            # 获取当前仓位
+            current_usd = 0.0
+            try:
+                positions = exchange._positions
+                current_amount = positions.get(symbol, 0.0)
+                ticker = exchange._tickers.get(symbol, {})
+                price = ticker.get('last', 0)
+                if price > 0:
+                    current_usd = current_amount * price
+            except Exception:
+                pass
+
+            current_str = f"${current_usd:,.0f}"
+            diff = current_usd - target_usd
+            diff_str = f"${diff:+,.0f}"
+
+            # 检查是否达标
+            if abs(target_usd) > 0:
+                diff_ratio = abs(diff) / abs(target_usd)
+            else:
+                diff_ratio = abs(current_usd) / 100 if current_usd != 0 else 0
+
+            on_target = diff_ratio <= self.config.tolerance
+
+            if on_target:
+                status = "[green]✓[/green]"
+                current_str = f"[green]{current_str}[/green]"
+            else:
+                status = "[yellow]...[/yellow]"
+                if diff > 0:
+                    diff_str = f"[red]{diff_str}[/red]"
+                else:
+                    diff_str = f"[yellow]{diff_str}[/yellow]"
+
+            table.add_row(symbol, target_str, current_str, diff_str, status)
+
+        return table
+
+    def log_state(self, console: Console, recursive: bool = True):
+        """输出状态到控制台"""
+        super().log_state(console, recursive)
+        if self.config.positions_usd:
+            table = self._build_table()
+            console.print(table)

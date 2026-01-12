@@ -20,9 +20,10 @@ KeepBalancesStrategy - 跨交易所余额平衡策略
       - name: binance/main
         min_amount: 500.0
 """
-import asyncio
 from typing import ClassVar, Type, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
+from rich.console import Console
+from rich.table import Table
 from .base import BaseStrategy, TargetPositions
 from .config import BaseStrategyConfig
 
@@ -260,3 +261,58 @@ class KeepBalancesStrategy(BaseStrategy):
             "balances": balances,
             "transfer_in_progress": self._transfer_in_progress,
         }
+
+    def _build_table(self) -> Table:
+        """构建余额状态表格"""
+        currency = self.config.currency
+        table = Table(
+            title=f"Balance Status ({currency})",
+            show_header=True,
+            header_style="bold cyan",
+        )
+
+        table.add_column("Exchange", width=15)
+        table.add_column("Balance", width=12, justify="right")
+        table.add_column("Min", width=12, justify="right")
+        table.add_column("Status", width=10)
+
+        for ex_config in self.config.exchanges:
+            exchange = self._get_exchange(ex_config.name)
+            if exchange is None or not exchange.ready:
+                table.add_row(
+                    ex_config.name,
+                    "[dim]--[/dim]",
+                    f"{ex_config.min_amount:,.2f}",
+                    "[dim]⏳[/dim]"
+                )
+                continue
+
+            balance = self._get_spot_balance(exchange, currency)
+            is_low = balance < ex_config.min_amount
+
+            balance_str = f"{balance:,.2f}"
+            if is_low:
+                balance_str = f"[red]{balance_str}[/red]"
+            else:
+                balance_str = f"[green]{balance_str}[/green]"
+
+            status = "[red]LOW[/red]" if is_low else "[green]OK[/green]"
+
+            table.add_row(
+                ex_config.name,
+                balance_str,
+                f"{ex_config.min_amount:,.2f}",
+                status
+            )
+
+        # 显示转账状态
+        if self._transfer_in_progress:
+            table.caption = "[yellow]⏳ Transfer in progress...[/yellow]"
+
+        return table
+
+    def log_state(self, console: Console, recursive: bool = True):
+        """输出状态到控制台"""
+        super().log_state(console, recursive)
+        table = self._build_table()
+        console.print(table)
