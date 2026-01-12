@@ -20,7 +20,7 @@ from functools import cached_property
 from typing import Optional, ClassVar, Type, TYPE_CHECKING
 from pydantic import Field
 from ..core.listener import Listener
-from .pairs import TradingPairs, TradingPairsTable, MarketType
+from .pairs_strategy import TradingPairs, TradingPairsTable, MarketType
 from .controller import InfiniteController
 from .config import BaseStrategyConfig
 
@@ -362,7 +362,7 @@ class SimpleStrategy(Listener):
             LimitOrderExecutor,
             MultipleLimitOrderExecutor,
         )
-        from ..executor.spread import FixedSpread, StdSpread, ASSpread
+        from ..executor.spread_executor import FixedSpread, StdSpread, ASSpread
 
         # 创建 Spread
         spread = None

@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from ..core.listener import Listener
-from ..strategy.pairs import TradingPairs
-from .spread import BaseSpread, FixedSpread, SpreadResult
+from ..strategy.pairs_strategy import TradingPairs
+from .spread_executor import BaseSpread, FixedSpread, SpreadResult
 
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange

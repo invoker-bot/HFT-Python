@@ -1,8 +1,18 @@
-import time
-import bisect
-import numpy as np
+"""
+数据队列模块（实验性代码，未完成）
 
+.. deprecated::
+    本模块为实验性代码，存在未修复的 bug，不建议使用。
+    请使用 hft.datasource.group.DataArray 替代。
 
+已知问题：
+- SampleArray.get_range() 引用了不存在的 self.history
+- SampleArray.get_interpolate() 引用了未定义的 timestamps
+- TickHistory 与 SampleArray 功能重复，违反 DRY 原则
+- shrink() 方法效率低下
+
+TODO: 如果需要时间序列数据结构，应使用 DataArray 或重新设计此模块
+"""
 import time
 import bisect
 from typing import Generic, TypeVar, List
@@ -13,6 +23,10 @@ T = TypeVar('T')
 
 
 class SampleArray(Generic[T]):
+    """
+    .. deprecated::
+        此类存在 bug，请使用 DataArray 替代。
+    """
 
     def __init__(self, max_seconds: float):
         self.max_seconds = max_seconds

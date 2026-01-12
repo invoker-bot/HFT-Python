@@ -13,8 +13,8 @@ from ..config.base import BaseConfig
 
 if TYPE_CHECKING:
     from .base import BaseExecutor
-    from .market import MarketExecutor
-    from .limit import LimitExecutor
+    from .market_executor import MarketExecutor
+    from .limit_executor import LimitExecutor
 
 
 class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
@@ -51,12 +51,12 @@ class MarketExecutorConfig(BaseExecutorConfig):
 
     @classmethod
     def get_class_type(cls) -> Type["MarketExecutor"]:
-        from .market import MarketExecutor
+        from .market_executor import MarketExecutor
         return MarketExecutor
 
     @cached_property
     def instance(self) -> "MarketExecutor":
-        from .market import MarketExecutor
+        from .market_executor import MarketExecutor
         return MarketExecutor(config=self)
 
 
@@ -111,12 +111,12 @@ class LimitExecutorConfig(BaseExecutorConfig):
 
     @classmethod
     def get_class_type(cls) -> Type["LimitExecutor"]:
-        from .limit import LimitExecutor
+        from .limit_executor import LimitExecutor
         return LimitExecutor
 
     @cached_property
     def instance(self) -> "LimitExecutor":
-        from .limit import LimitExecutor
+        from .limit_executor import LimitExecutor
         return LimitExecutor(config=self)
 
 
@@ -214,12 +214,12 @@ class AvellanedaStoikovExecutorConfig(BaseExecutorConfig):
 
     @classmethod
     def get_class_type(cls) -> Type["BaseExecutor"]:
-        from .avellaneda_stoikov import AvellanedaStoikovExecutor
+        from .avellaneda_stoikov_executor import AvellanedaStoikovExecutor
         return AvellanedaStoikovExecutor
 
     @cached_property
     def instance(self) -> "BaseExecutor":
-        from .avellaneda_stoikov import AvellanedaStoikovExecutor
+        from .avellaneda_stoikov_executor import AvellanedaStoikovExecutor
         return AvellanedaStoikovExecutor(config=self)
 
 
@@ -260,10 +260,10 @@ class PCAExecutorConfig(BaseExecutorConfig):
 
     @classmethod
     def get_class_type(cls) -> Type["BaseExecutor"]:
-        from .pca import PCAExecutor
+        from .pca_executor import PCAExecutor
         return PCAExecutor
 
     @cached_property
     def instance(self) -> "BaseExecutor":
-        from .pca import PCAExecutor
+        from .pca_executor import PCAExecutor
         return PCAExecutor(config=self)

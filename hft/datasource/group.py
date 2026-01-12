@@ -25,14 +25,14 @@ import asyncio
 from enum import Enum
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from typing import Optional, Generic, TypeVar, Type, TYPE_CHECKING
+from typing import Any, Optional, Generic, TypeVar, Type, TYPE_CHECKING
 from ..core.listener import Listener, GroupListener, ListenerState
 
 if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
     from ..exchange.base import BaseExchange
     from .base import BaseDataSource
-    from ..indicator.lazy import LazyIndicator
+    from ..indicator.lazy_indicator import LazyIndicator
 
 
 T = TypeVar('T')  # 数据元素类型
@@ -331,10 +331,10 @@ class TradingPairDataSource(GroupListener):
 
     def _get_datasource_class(self, data_type: DataType) -> Type["BaseDataSource"]:
         """获取 DataType 对应的 DataSource 类"""
-        from .ticker import TickerDataSource
-        from .trades import TradesDataSource
-        from .ohlcv import OHLCVDataSource
-        from .orderbook import OrderBookDataSource
+        from .ticker_datasource import TickerDataSource
+        from .trades_datasource import TradesDataSource
+        from .ohlcv_datasource import OHLCVDataSource
+        from .orderbook_datasource import OrderBookDataSource
 
         mapping = {
             DataType.TICKER: TickerDataSource,
@@ -354,7 +354,7 @@ class TradingPairDataSource(GroupListener):
 
     # ===== GroupListener 接口 =====
 
-    def sync_children_params(self) -> dict[str, any]:
+    def sync_children_params(self) -> dict[str, Any]:
         """
         返回所有已创建的 children（不删除，只管理 stop/start）
         """
@@ -363,7 +363,7 @@ class TradingPairDataSource(GroupListener):
             params[data_type.value] = {"data_type": data_type}
         return params
 
-    def create_dynamic_child(self, name: str, param: any) -> Listener:
+    def create_dynamic_child(self, name: str, param: Any) -> Listener:
         """创建数据源实例（lazy_start，初始为 STOPPED）"""
         data_type = param["data_type"]
         ds_class = self._get_datasource_class(data_type)
@@ -531,7 +531,7 @@ class TradingPairDataSource(GroupListener):
     @property
     def log_state_dict(self) -> dict:
         from ..core.listener import ListenerState
-        from ..indicator.lazy import LazyIndicator
+        from ..indicator.lazy_indicator import LazyIndicator
 
         active_datasources = []
         active_indicators = []
@@ -579,7 +579,7 @@ class DataSourceGroup(GroupListener):
 
     # ===== GroupListener 接口 =====
 
-    def sync_children_params(self) -> dict[str, any]:
+    def sync_children_params(self) -> dict[str, Any]:
         """
         从 ExchangeGroup 获取所有 (exchange_class, symbol) 对
 
@@ -598,7 +598,7 @@ class DataSourceGroup(GroupListener):
                 }
         return params
 
-    def create_dynamic_child(self, name: str, param: any) -> Listener:
+    def create_dynamic_child(self, name: str, param: Any) -> Listener:
         """创建 TradingPairDataSource"""
         return TradingPairDataSource(
             exchange=param["exchange"],
@@ -718,7 +718,7 @@ class DataSourceGroup(GroupListener):
 
     def get_stats(self) -> dict:
         """获取详细统计信息"""
-        from ..indicator.lazy import LazyIndicator
+        from ..indicator.lazy_indicator import LazyIndicator
         from ..core.listener import ListenerState
 
         stats = {

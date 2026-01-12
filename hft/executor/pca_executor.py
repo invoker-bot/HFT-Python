@@ -82,7 +82,7 @@ class PCAExecutor(BaseExecutor):
                 info.amount = current_amount
                 info.cost_price = current_price if current_amount != 0 else 0
                 info.addition_count = 0
-            elif abs(current_amount) > abs(info.amount) * 1.01:
+            elif abs(current_amount) > abs(info.amount) * 1.01:  # 1% 容差，避免微小波动误判
                 # 仓位增加（加仓成交）：更新成本价
                 old_value = abs(info.amount) * info.cost_price
                 added_amount = abs(current_amount) - abs(info.amount)
@@ -91,11 +91,11 @@ class PCAExecutor(BaseExecutor):
                 info.cost_price = new_value / abs(current_amount)
                 info.amount = current_amount
                 info.addition_count += 1
-            elif abs(current_amount) < abs(info.amount) * 0.99:
+            elif abs(current_amount) < abs(info.amount) * 0.99:  # 1% 容差，避免微小波动误判
                 # 仓位减少（平仓成交）：保持成本价，可能重置加仓次数
                 info.amount = current_amount
-                if abs(current_amount) < self.config.base_order_usd / current_price * 0.1:
-                    # 几乎清仓
+                if abs(current_amount) < self.config.base_order_usd / current_price * 0.1:  # 剩余不足 10%
+                    # 几乎清仓，重置加仓状态
                     info.addition_count = 0
                     info.cost_price = 0
             else:
@@ -225,6 +225,7 @@ class PCAExecutor(BaseExecutor):
 
         # === 平仓单 ===
         # 只有有仓位且方向相反时才挂平仓单
+        # 阈值为 base_order_usd 的 50%，避免对微小仓位产生平仓单
         has_long = position_usd > self.config.base_order_usd * 0.5
         has_short = position_usd < -self.config.base_order_usd * 0.5
 

@@ -1,5 +1,10 @@
 """
-交易对选品系统
+交易对选品系统（已弃用）
+
+.. deprecated::
+    本模块属于旧的 Controller/Command 架构，已被新的 Strategy/Executor 架构取代。
+    新架构直接使用 (exchange_class, symbol) 字符串对标识交易对。
+    请使用 hft.strategy.base.BaseStrategy 替代。
 
 TradingPairs: 最小交易单元
 TradingPairsRow: 一组相关交易对（如 BTC/USDC, BTC/USDT, BTC/USDT:USDT）

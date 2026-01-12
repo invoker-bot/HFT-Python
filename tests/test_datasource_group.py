@@ -449,7 +449,7 @@ class TestTradingPairDataSourceClass:
     def test_get_ticker_class(self):
         """Should return TickerDataSource for TICKER type."""
         from hft.datasource.group import TradingPairDataSource
-        from hft.datasource.ticker import TickerDataSource
+        from hft.datasource.ticker_datasource import TickerDataSource
         from unittest.mock import MagicMock
 
         mock_exchange = MagicMock()
@@ -462,7 +462,7 @@ class TestTradingPairDataSourceClass:
     def test_get_orderbook_class(self):
         """Should return OrderBookDataSource for ORDER_BOOK type."""
         from hft.datasource.group import TradingPairDataSource
-        from hft.datasource.orderbook import OrderBookDataSource
+        from hft.datasource.orderbook_datasource import OrderBookDataSource
         from unittest.mock import MagicMock
 
         mock_exchange = MagicMock()
@@ -475,7 +475,7 @@ class TestTradingPairDataSourceClass:
     def test_get_trades_class(self):
         """Should return TradesDataSource for TRADES type."""
         from hft.datasource.group import TradingPairDataSource
-        from hft.datasource.trades import TradesDataSource
+        from hft.datasource.trades_datasource import TradesDataSource
         from unittest.mock import MagicMock
 
         mock_exchange = MagicMock()
@@ -488,7 +488,7 @@ class TestTradingPairDataSourceClass:
     def test_get_ohlcv_class(self):
         """Should return OHLCVDataSource for OHLCV type."""
         from hft.datasource.group import TradingPairDataSource
-        from hft.datasource.ohlcv import OHLCVDataSource
+        from hft.datasource.ohlcv_datasource import OHLCVDataSource
         from unittest.mock import MagicMock
 
         mock_exchange = MagicMock()

@@ -1,6 +1,6 @@
 # Claude Code 项目指南
 
-> 详细文档见 `docs/`，规划见 `plan/`
+> 详细文档见 `docs/`，规划见 `features/`
 
 ## 核心架构
 
@@ -21,12 +21,23 @@
 | 单一职责 | 每个类只做一件事 |
 | 模板方法 | 基类定义骨架，子类实现细节 |
 | GroupListener | 动态子节点用 `sync_children_params()` + `create_dynamic_child()` |
+| lazy_start | 资源密集型组件初始为 STOPPED，首次访问时启动 |
+| HealthyData | 数据带新鲜度检查，`is_healthy()` 判断是否过期 |
 
 ## 编码约定
 
-**命名**：类 `PascalCase`，方法/变量 `snake_case`，私有 `_prefix`
+**命名**：类 `PascalCase`，方法/变量 `snake_case`，私有 `_prefix`，需要初始化后调用的方法用 `medal_` 前缀
 
-**类型注解**：使用完整注解，循环引用用 `TYPE_CHECKING`
+**文件命名**：模块文件名应包含类型后缀，与类名对应
+| 模块 | 文件命名 | 示例 |
+|------|----------|------|
+| executor | `*_executor.py` | `market_executor.py` → `MarketExecutor` |
+| strategy | `*_strategy.py` | `keep_positions.py` → `KeepPositionsStrategy` |
+| indicator | `*_indicator.py` | `lazy_indicator.py` → `LazyIndicator` |
+| datasource | `*_datasource.py` | `ticker_datasource.py` → `TickerDataSource` |
+| 基类/配置 | `base.py`, `config.py`, `group.py` | 保持不变 |
+
+**类型注解**：使用完整注解，循环引用用 `TYPE_CHECKING`，泛型参数用 `Any`（大写，非 `any`）
 
 **日志**：用 `self.logger`，格式用 `%s`（非 f-string）
 
@@ -44,6 +55,18 @@
 
 # 废弃代码
 # DEPRECATED: 原因，将在 vX.X 移除
+
+# 废弃模块（在模块级 docstring 中标注）
+"""
+模块说明
+
+.. deprecated::
+    原因，推荐使用 xxx 替代。
+
+已知问题：
+- 问题1
+- 问题2
+"""
 ```
 
 ## 单位约定
@@ -60,7 +83,8 @@
 1. **理解全局**：先读 `docs/architecture.md`，理解相关模块
 2. **修改代码**：遇到难懂代码加注释，废弃代码标 DEPRECATED，待做标 TODO
 3. **写测试**：功能完成后补充单元测试，`pytest tests/ -v`
-4. **更新文档**：重大变更同步更新 `docs/`，规划写入 `plan/`，全部完成后删除当前目录下的plan但写入git commit中。
+4. **更新文档**：重大变更同步更新 `docs/`，
+5. **新增功能**：全局规划写入 `features/`，全部完成后删除当前目录下的`features/`, 同时写入git commit中。
 
 ## 运行
 

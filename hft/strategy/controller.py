@@ -1,5 +1,10 @@
 """
-Controller 决策层
+Controller 决策层（已弃用）
+
+.. deprecated::
+    本模块属于旧的 Controller/Command 架构，已被新的 Strategy/Executor 架构取代。
+    新架构中 Strategy 直接返回目标仓位，Executor 轮询执行。
+    请使用 hft.strategy.base.BaseStrategy 替代。
 
 Controller: 宏观决策类，负责发出交易指令
 InfiniteController: 无限时间决策，一直执行
@@ -9,7 +14,7 @@ from abc import abstractmethod
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
 from ..core.listener import Listener
-from .pairs import TradingPairsTable, TradingPairs
+from .pairs_strategy import TradingPairsTable, TradingPairs
 from .command import Command, WatchCommand
 
 if TYPE_CHECKING:

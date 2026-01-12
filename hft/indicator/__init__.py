@@ -11,13 +11,13 @@ from .base import (
     SimpleIndicator,
     ChainedIndicator,
 )
-from .lazy import (
+from .lazy_indicator import (
     LazyIndicator,
     VWAPIndicator,
     SpreadIndicator,
     MidPriceIndicator,
 )
-from .intensity import (
+from .intensity_indicator import (
     IntensityResult,
     TradeIntensityCalculator,
     TradeIntensityIndicator,

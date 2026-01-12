@@ -11,7 +11,7 @@ Tests cover:
 import pytest
 import time
 
-from hft.strategy.signal import TradeSignal, SignalSide
+from hft.strategy.signal_strategy import TradeSignal, SignalSide
 
 
 class TestTradeSignalCreation:

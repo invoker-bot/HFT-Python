@@ -25,10 +25,10 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Any, TYPE_CHECKING
 from ..datasource.group import DataType
-from .lazy import LazyIndicator
+from .lazy_indicator import LazyIndicator
 
 if TYPE_CHECKING:
-    from ..datasource.trades import TradeData
+    from ..datasource.trades_datasource import TradeData
 
 
 def _get_trade_attr(trade: Any, attr: str, default: Any = 0) -> Any:

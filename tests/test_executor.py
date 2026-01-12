@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from dataclasses import dataclass
 
 from hft.executor.base import BaseExecutor, ExecutionResult, ExecutorState, OrderIntent, ActiveOrder
-from hft.executor.market import MarketExecutor
+from hft.executor.market_executor import MarketExecutor
 from hft.executor.config import BaseExecutorConfig, MarketExecutorConfig
 
 

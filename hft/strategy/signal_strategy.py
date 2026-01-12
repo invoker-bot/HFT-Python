@@ -1,28 +1,20 @@
 """
-交易信号模块
+交易信号模块（已弃用）
 
-定义了策略和执行器之间的通信协议。
+.. deprecated::
+    本模块设计为事件驱动的信号系统，但新架构改用轮询模式：
+    - 新架构：Strategy.get_trade_targets() 返回目标仓位字典
+    - 新架构：Executor.on_tick() 轮询获取目标并执行
+    TradeSignal 和 emit_signal() 机制未被实际采用。
 
-核心设计：
+原设计（未使用）：
 - TradeSignal 是策略输出的唯一形式
 - 使用 value + speed 双参数描述交易意图
 - value: 目标仓位比例，与具体金额解耦
 - speed: 执行紧急度，让执行器决定执行方式
 
-数据流：
+原数据流（未使用）：
     Strategy -> TradeSignal -> StrategyGroup.emit_signal() -> Executor.on_signal()
-
-Example:
-    # 策略发出做多信号
-    signal = TradeSignal(
-        exchange_class="okx",
-        symbol="BTC/USDT:USDT",
-        value=0.5,    # 50% 最大仓位做多
-        speed=0.8,    # 较紧急
-        source="momentum_strategy",
-        reason="RSI 超卖反弹"
-    )
-    strategy_group.emit_signal(signal)
 """
 import time
 from dataclasses import dataclass, field

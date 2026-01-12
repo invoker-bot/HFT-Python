@@ -1,5 +1,10 @@
 """
-交易指令系统
+交易指令系统（已弃用）
+
+.. deprecated::
+    本模块属于旧的 Controller/Command 架构，已被新的 Strategy/Executor 架构取代。
+    新架构中 Strategy 直接返回目标仓位，Executor 轮询执行。
+    请使用 hft.strategy.base.BaseStrategy 替代。
 
 Command: Controller 发出的交易指令
 """
@@ -7,7 +12,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime
-from .pairs import TradingPairs
+from .pairs_strategy import TradingPairs
 
 
 class OrderSide(Enum):
