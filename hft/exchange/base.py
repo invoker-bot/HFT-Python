@@ -891,10 +891,18 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
         import asyncio
 
+        # 获取通知服务（如果可用）
+        notify = getattr(self.root, 'notify', None)
+
         # 1. 检查现货余额
         spot_balance = self._balances.get('spot', {}).get(currency, {})
         available = spot_balance.get('free', 0.0)
         if available < amount:
+            # 发送余额不足通知
+            if notify:
+                await notify.notify_insufficient_balance(
+                    self.name, currency, available, amount
+                )
             raise ValueError(
                 f"Insufficient {currency} balance: available={available}, required={amount}"
             )
@@ -1000,12 +1008,20 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
         # 7. 等待到账
         start_time = asyncio.get_event_loop().time()
+        withdraw_id = withdraw_result.get('id', 'unknown')
+
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
             if elapsed > timeout:
+                # 发送超时通知
+                if notify:
+                    await notify.notify_deposit_timeout(
+                        self.name, to_exchange.name, currency,
+                        amount, withdraw_id, timeout
+                    )
                 raise TimeoutError(
                     f"Deposit not received after {timeout}s. "
-                    f"Withdraw ID: {withdraw_result.get('id')}"
+                    f"Withdraw ID: {withdraw_id}"
                 )
 
             await asyncio.sleep(check_interval)
@@ -1024,6 +1040,12 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     "Deposit received: %.6f %s (expected: %.6f)",
                     actual_received, currency, amount
                 )
+                # 发送成功通知
+                if notify:
+                    await notify.notify_deposit_success(
+                        self.name, to_exchange.name, currency,
+                        amount, actual_received
+                    )
                 withdraw_result['received_amount'] = actual_received
                 return withdraw_result
 

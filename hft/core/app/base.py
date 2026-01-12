@@ -33,6 +33,7 @@ from ...executor.config import BaseExecutorConfig
 from ...executor.base import BaseExecutor
 from ..listener import Listener
 from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
+from .notify import NotifyService
 
 if TYPE_CHECKING:
     from .config import AppConfig
@@ -66,7 +67,7 @@ class AppCore(Listener):
             -> 执行交易
     """
 
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify")
 
     def __init__(self, config: "AppConfig"):
         """
@@ -77,6 +78,9 @@ class AppCore(Listener):
         """
         super().__init__(interval=config.interval)
         self.config = config
+
+        # === 通知服务 ===
+        self.notify = NotifyService(self)
 
         # === 辅助监听器 ===
         self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
