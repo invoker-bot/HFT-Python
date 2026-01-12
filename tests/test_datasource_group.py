@@ -390,11 +390,12 @@ class TestDataTypeEnum:
         assert DataType.ORDER_BOOK.value == "order_book"
         assert DataType.TRADES.value == "trades"
         assert DataType.OHLCV.value == "ohlcv"
+        assert DataType.FUNDING_RATE.value == "funding_rate"
 
     def test_all_types_defined(self):
         """All expected DataTypes should be defined."""
         types = list(DataType)
-        assert len(types) == 4
+        assert len(types) == 5  # ticker, order_book, trades, ohlcv, funding_rate
 
 
 # ============================================================

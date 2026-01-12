@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
     from ..exchange.base import BaseExchange
     from .base import BaseDataSource
+    from .funding_rate_datasource import FundingRateDataSource
+    from .funding_rate_fetcher import GlobalFundingRateFetcher
     from ..indicator.lazy_indicator import LazyIndicator
 
 
@@ -47,11 +49,13 @@ class DataType(Enum):
     - ORDER_BOOK: 订单簿深度 -> OrderBookDataSource
     - TRADES: 成交记录 -> TradesDataSource
     - OHLCV: K线数据 -> OHLCVDataSource
+    - FUNDING_RATE: 资金费率 -> FundingRateDataSource（由全局 fetcher 填充）
     """
     TICKER = "ticker"
     ORDER_BOOK = "order_book"
     TRADES = "trades"
     OHLCV = "ohlcv"
+    FUNDING_RATE = "funding_rate"
 
 
 class UnhealthyDataError(Exception):
@@ -315,6 +319,9 @@ class TradingPairDataSource(GroupListener):
         # 各数据类型的最后访问时间
         self._last_query_time: dict[DataType, float] = {}
 
+        # 资金费率数据源（被动容器，由 GlobalFundingRateFetcher 填充）
+        self._funding_rate_datasource: Optional["FundingRateDataSource"] = None
+
     @property
     def exchange(self) -> "BaseExchange":
         return self._exchange
@@ -327,14 +334,53 @@ class TradingPairDataSource(GroupListener):
     def symbol(self) -> str:
         return self._symbol
 
+    # ===== 资金费率数据源 =====
+
+    @property
+    def funding_rate_datasource(self) -> Optional["FundingRateDataSource"]:
+        """
+        获取资金费率数据源
+
+        注意：这是一个被动容器，数据由 GlobalFundingRateFetcher 填充。
+        如果需要确保存在，使用 ensure_funding_rate_datasource()。
+        """
+        return self._funding_rate_datasource
+
+    def ensure_funding_rate_datasource(self) -> "FundingRateDataSource":
+        """
+        确保资金费率数据源存在
+
+        如果不存在则创建。由 GlobalFundingRateFetcher 调用。
+
+        Returns:
+            FundingRateDataSource 实例
+        """
+        if self._funding_rate_datasource is None:
+            from .funding_rate_datasource import FundingRateDataSource
+            self._funding_rate_datasource = FundingRateDataSource(
+                exchange_class=self._exchange_class,
+                symbol=self._symbol,
+            )
+        return self._funding_rate_datasource
+
     # ===== DataSource 类映射 =====
 
     def _get_datasource_class(self, data_type: DataType) -> Type["BaseDataSource"]:
-        """获取 DataType 对应的 DataSource 类"""
+        """
+        获取 DataType 对应的 DataSource 类
+
+        注意：FUNDING_RATE 不支持此方法，应使用 funding_rate_datasource 属性。
+        """
         from .ticker_datasource import TickerDataSource
         from .trades_datasource import TradesDataSource
         from .ohlcv_datasource import OHLCVDataSource
         from .orderbook_datasource import OrderBookDataSource
+
+        if data_type == DataType.FUNDING_RATE:
+            raise ValueError(
+                "FUNDING_RATE is not a regular DataSource. "
+                "Use trading_pair.funding_rate_datasource instead."
+            )
 
         mapping = {
             DataType.TICKER: TickerDataSource,
@@ -563,12 +609,19 @@ class DataSourceGroup(GroupListener):
     - TradingPairDataSource 持久存在，不会被删除
     - 提供统一的 query 接口
     - 自动同步新增/删除的交易对
+    - GlobalFundingRateFetcher 定时获取所有交易对的资金费率
     """
-    __pickle_exclude__ = (*GroupListener.__pickle_exclude__,)
+    __pickle_exclude__ = (*GroupListener.__pickle_exclude__, "_funding_rate_fetcher")
 
-    def __init__(self, auto_destroy_timeout: float = 300.0):
+    def __init__(
+        self,
+        auto_destroy_timeout: float = 300.0,
+        funding_rate_interval: float = 3.0,
+    ):
         super().__init__("DataSourceGroup", interval=60.0)
         self._auto_destroy_timeout = auto_destroy_timeout
+        self._funding_rate_interval = funding_rate_interval
+        self._funding_rate_fetcher: Optional["GlobalFundingRateFetcher"] = None
 
     # ===== 属性 =====
 
@@ -576,6 +629,23 @@ class DataSourceGroup(GroupListener):
     def exchange_group(self) -> "ExchangeGroup":
         """获取 ExchangeGroup（从 root 获取）"""
         return self.root.exchange_group
+
+    @property
+    def funding_rate_fetcher(self) -> Optional["GlobalFundingRateFetcher"]:
+        """获取资金费率获取器"""
+        return self._funding_rate_fetcher
+
+    # ===== 生命周期 =====
+
+    async def on_start(self) -> None:
+        """启动时创建 GlobalFundingRateFetcher"""
+        from .funding_rate_fetcher import GlobalFundingRateFetcher
+
+        # 创建并添加资金费率获取器
+        self._funding_rate_fetcher = GlobalFundingRateFetcher(
+            interval=self._funding_rate_interval
+        )
+        self.add_child(self._funding_rate_fetcher)
 
     # ===== GroupListener 接口 =====
 
