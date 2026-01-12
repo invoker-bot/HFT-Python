@@ -800,6 +800,238 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.exchanges[from_account]
         await exchange.transfer(currency, amount, from_account, to_account)
 
+    def get_currency_networks(self, currency: str) -> dict[str, dict]:
+        """
+        获取币种的所有充值/提币网络信息
+
+        Args:
+            currency: 币种代码（如 'USDT', 'BTC'）
+
+        Returns:
+            {network_id: {
+                "id": str,
+                "network": str,
+                "name": str,
+                "fee": float,
+                "active": bool,
+                "deposit": bool,   # 是否支持充值
+                "withdraw": bool,  # 是否支持提币
+            }}
+        """
+        currency_info = self._currencies.get(currency, {})
+        networks = currency_info.get("networks", {})
+
+        return {
+            k: {
+                "id": v.get("id"),
+                "network": v.get("network"),
+                "name": v.get("name"),
+                "fee": v.get("fee", 0.0),
+                "active": v.get("active", False),
+                "deposit": v.get("deposit", False),
+                "withdraw": v.get("withdraw", False),
+            }
+            for k, v in networks.items()
+        }
+
+    def get_withdraw_networks(self, currency: str) -> dict[str, dict]:
+        """
+        获取币种可提币的网络列表
+
+        Returns:
+            {network_id: network_info} 只包含 active=True 且 withdraw=True 的网络
+        """
+        networks = self.get_currency_networks(currency)
+        return {
+            k: v for k, v in networks.items()
+            if v.get("active") and v.get("withdraw")
+        }
+
+    def get_deposit_networks(self, currency: str) -> dict[str, dict]:
+        """
+        获取币种可充值的网络列表
+
+        Returns:
+            {network_id: network_info} 只包含 active=True 且 deposit=True 的网络
+        """
+        networks = self.get_currency_networks(currency)
+        return {
+            k: v for k, v in networks.items()
+            if v.get("active") and v.get("deposit")
+        }
+
+    async def medal_auto_deposit(
+        self,
+        to_exchange: "BaseExchange",
+        currency: str,
+        amount: float,
+        network: str = "auto",
+        timeout: float = 900.0,  # 15 minutes
+        check_interval: float = 10.0,
+    ) -> dict:
+        """
+        自动链上提币到目标交易所
+
+        自动选择最优网络（费用最低），发起提币，等待到账。
+
+        Args:
+            to_exchange: 目标交易所实例
+            currency: 币种代码（如 'USDT'）
+            amount: 提币数量
+            network: 网络（'auto' 自动选择费用最低的）
+            timeout: 等待到账超时时间（秒），默认 15 分钟
+            check_interval: 检查间隔（秒）
+
+        Returns:
+            提币结果 dict
+
+        Raises:
+            ValueError: 参数无效或条件不满足
+            TimeoutError: 等待到账超时
+        """
+        import asyncio
+
+        # 1. 检查现货余额
+        spot_balance = self._balances.get('spot', {}).get(currency, {})
+        available = spot_balance.get('free', 0.0)
+        if available < amount:
+            raise ValueError(
+                f"Insufficient {currency} balance: available={available}, required={amount}"
+            )
+
+        # 2. 获取可用网络
+        my_withdraw_networks = self.get_withdraw_networks(currency)
+        target_deposit_networks = to_exchange.get_deposit_networks(currency)
+
+        if not my_withdraw_networks:
+            raise ValueError(f"No withdraw networks available for {currency} on {self.name}")
+        if not target_deposit_networks:
+            raise ValueError(f"No deposit networks available for {currency} on {to_exchange.name}")
+
+        # 3. 获取目标交易所白名单地址
+        white_addresses = to_exchange.config.white_deposit_addresses
+        if not white_addresses:
+            raise ValueError(
+                f"No white_deposit_addresses configured for {to_exchange.name}. "
+                "Please configure deposit addresses in exchange config."
+            )
+
+        # 4. 选择网络
+        if network == "auto":
+            # 找出双方都支持且在白名单中的网络
+            candidates = []
+            for addr_config in white_addresses:
+                addr_network = addr_config.network
+                address = addr_config.address
+
+                # '*' 匹配所有网络
+                if addr_network == '*':
+                    # 找所有双方都支持的网络
+                    for net_id in my_withdraw_networks:
+                        if net_id in target_deposit_networks:
+                            fee = my_withdraw_networks[net_id].get("fee", float('inf'))
+                            candidates.append((net_id, address, fee))
+                else:
+                    # 检查特定网络是否双方都支持
+                    if addr_network in my_withdraw_networks and addr_network in target_deposit_networks:
+                        fee = my_withdraw_networks[addr_network].get("fee", float('inf'))
+                        candidates.append((addr_network, address, fee))
+
+            if not candidates:
+                raise ValueError(
+                    f"No common network available for {currency} between "
+                    f"{self.name} (withdraw) and {to_exchange.name} (deposit)"
+                )
+
+            # 选择费用最低的
+            candidates.sort(key=lambda x: x[2])
+            selected_network, deposit_address, fee = candidates[0]
+            self.logger.info(
+                "Auto-selected network %s for %s (fee=%.6f)",
+                selected_network, currency, fee
+            )
+        else:
+            # 使用指定网络
+            selected_network = network
+            if selected_network not in my_withdraw_networks:
+                raise ValueError(
+                    f"Network {selected_network} not available for withdraw on {self.name}"
+                )
+            if selected_network not in target_deposit_networks:
+                raise ValueError(
+                    f"Network {selected_network} not available for deposit on {to_exchange.name}"
+                )
+
+            # 查找白名单中的地址
+            deposit_address = None
+            for addr_config in white_addresses:
+                if addr_config.network == '*' or addr_config.network == selected_network:
+                    deposit_address = addr_config.address
+                    break
+
+            if not deposit_address:
+                raise ValueError(
+                    f"No whitelist address for network {selected_network} on {to_exchange.name}"
+                )
+
+        # 5. 记录目标交易所初始余额
+        target_spot_balance = to_exchange._balances.get('spot', {}).get(currency, {})
+        initial_balance = target_spot_balance.get('total', 0.0)
+
+        # 6. 发起提币
+        self.logger.info(
+            "Withdrawing %.6f %s to %s via %s (address: %s...)",
+            amount, currency, to_exchange.name, selected_network, deposit_address[:10]
+        )
+
+        spot_exchange = self.exchanges.get('spot')
+        if not spot_exchange:
+            raise ValueError(f"Spot exchange not available on {self.name}")
+
+        withdraw_result = await spot_exchange.withdraw(
+            currency,
+            amount,
+            deposit_address,
+            None,  # tag
+            {"network": selected_network}
+        )
+
+        self.logger.info("Withdraw initiated: %s", withdraw_result.get('id', 'unknown'))
+
+        # 7. 等待到账
+        start_time = asyncio.get_event_loop().time()
+        while True:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout:
+                raise TimeoutError(
+                    f"Deposit not received after {timeout}s. "
+                    f"Withdraw ID: {withdraw_result.get('id')}"
+                )
+
+            await asyncio.sleep(check_interval)
+
+            # 刷新目标交易所余额
+            await to_exchange.medal_fetch_balance('spot')
+
+            target_spot_balance = to_exchange._balances.get('spot', {}).get(currency, {})
+            current_balance = target_spot_balance.get('total', 0.0)
+
+            # 检查余额是否增加（考虑手续费，至少增加 50%）
+            expected_increase = amount * 0.5
+            if current_balance >= initial_balance + expected_increase:
+                actual_received = current_balance - initial_balance
+                self.logger.info(
+                    "Deposit received: %.6f %s (expected: %.6f)",
+                    actual_received, currency, amount
+                )
+                withdraw_result['received_amount'] = actual_received
+                return withdraw_result
+
+            self.logger.debug(
+                "Waiting for deposit... elapsed=%.0fs, balance=%.6f (initial=%.6f)",
+                elapsed, current_balance, initial_balance
+            )
+
     """
     获取地址
     currs = ex.fetch_currencies() if ex.has.get("fetchCurrencies") else ex.load_currencies()

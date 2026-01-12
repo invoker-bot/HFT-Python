@@ -3,10 +3,16 @@
 """
 from functools import cached_property
 from typing import Optional, ClassVar, Type, Union, Literal
-from pydantic import Field, AnyUrl, field_validator
+from pydantic import BaseModel, Field, AnyUrl, field_validator
 from ccxt.pro import Exchange as CCXTExchange
 from ..config.base import BaseConfig
 from .base import BaseExchange, TradeType
+
+
+class WhiteDepositAddress(BaseModel):
+    """白名单充值地址配置"""
+    network: str = Field(..., description="Network name (e.g., 'TRC20', 'ERC20', or '*' for all)")
+    address: str = Field(..., description="Deposit address")
 
 
 class BaseExchangeConfig(BaseConfig["BaseExchange"]):
@@ -41,6 +47,12 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     amount_refactor: float = Field(1.0, description="Refactor factor for order amounts")
     max_position_per_pair_usd: Optional[float] = Field(None, description="Maximum position size per trading pair in USD")
     max_position_per_order_usd: Optional[float] = Field(None, description="Maximum position size per order in USD")
+
+    # 充值地址白名单（用于自动提币）
+    white_deposit_addresses: list[WhiteDepositAddress] = Field(
+        default_factory=list,
+        description="Whitelist of deposit addresses for auto-deposit. Use network='*' to match all networks."
+    )
 
     @field_validator("support_types", mode="before")
     @classmethod
