@@ -205,14 +205,25 @@ class Listener(ABC):
         """取消后台任务的实际实现"""
         bt = self._background_task
         if bt is not None and bt.cancel():
+            # 记录调用方当前的取消计数，用于区分"框架主动取消"和"调用方被取消"
+            current_task = asyncio.current_task()
+            cancelling_before = current_task.cancelling() if current_task else 0
             try:
                 await bt  # 等待取消完成
             except asyncio.CancelledError:
-                pass  # 框架主动取消，正常结束
+                # 检查是否是调用方被取消（取消计数增加）
+                cancelling_after = current_task.cancelling() if current_task else 0
+                if cancelling_after > cancelling_before:
+                    # 调用方被取消，重新抛出
+                    raise
+                # 否则是框架主动取消后台任务，正常结束
             finally:
                 self._background_task = None
 
     async def __update_background_task_internal(self):
+        # lazy_start 且未启动的 Listener 不应创建后台任务，需显式调用 start()
+        if self.lazy_start and self._state == ListenerState.STOPPED:
+            return
         if self.enabled:
             await self.__create_background_task_internal()
         else:
