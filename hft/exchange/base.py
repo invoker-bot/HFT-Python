@@ -26,7 +26,7 @@ from ccxt.base.errors import InvalidOrder
 from ..core.listener import Listener
 from ..core.healthy import HealthyDataWithFallback
 from ..database.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
-from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener
+from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener, ExchangeCurrenciesListener
 from .utils import round_to_precision
 if TYPE_CHECKING:
     from .config import BaseExchangeConfig
@@ -192,6 +192,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         self.add_child(ExchangeOrderBillListener())
         self.add_child(ExchangePositionListener())
         self.add_child(ExchangeBalanceListener())
+        self.add_child(ExchangeCurrenciesListener())
 
     @property
     def positions(self) -> dict[str, float]:

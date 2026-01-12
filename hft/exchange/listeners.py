@@ -246,3 +246,25 @@ class ExchangeBalanceListener(GroupListener):
             return ExchangeBalanceFetchListener(name=name, ccxt_instance_key=param["key"])
 
 
+class ExchangeCurrenciesListener(Listener):
+    """
+    交易所货币信息监听器
+
+    定期从交易所获取货币信息（支持的网络、是否可提币/充币等）。
+    货币状态可能随时变化（如暂停提币），需要定期刷新。
+    """
+
+    def __init__(self, interval: float = 60.0):
+        super().__init__(self.__class__.__name__, interval)
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        return self.parent
+
+    async def on_tick(self) -> None:
+        """定期获取货币信息"""
+        if self.exchange is None or not self.exchange.ready:
+            return
+        await self.exchange.fetch_currencies()
+
+
