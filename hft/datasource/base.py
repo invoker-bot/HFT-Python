@@ -160,6 +160,18 @@ class BaseDataSource(Listener, Generic[T]):
         """
         return data
 
+    def _emit_plugin_hook(self, data: T) -> None:
+        """
+        触发 Plugin Hook（模板方法）
+
+        子类可覆盖以触发特定的 Plugin Hook。
+        在 _add_to_cache() 成功添加数据后调用。
+
+        Args:
+            data: 已处理的数据
+        """
+        pass
+
     # ========== 核心逻辑 ==========
 
     async def _watch_with_fallback(self) -> Optional[T]:
@@ -196,6 +208,10 @@ class BaseDataSource(Listener, Generic[T]):
 
         # 发出更新事件
         self.event.emit("update", processed)
+
+        # 触发 Plugin Hook
+        self._emit_plugin_hook(processed)
+
         return True
 
     async def on_tick(self) -> bool:

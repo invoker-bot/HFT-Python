@@ -15,6 +15,7 @@
 import logging
 import asyncio
 from typing import Optional, TYPE_CHECKING
+from ...plugin import pm
 
 if TYPE_CHECKING:
     from .base import AppCore
@@ -101,6 +102,10 @@ class NotifyService:
         Returns:
             是否发送成功
         """
+        # 插件钩子：发送通知
+        level = notify_type or 'info'
+        pm.hook.on_notify(level=level, title=title, message=body)
+
         if not self._ensure_initialized():
             return False
 

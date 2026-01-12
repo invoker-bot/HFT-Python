@@ -5,6 +5,8 @@ from ccxt.base.errors import UnsubscribeError
 from ..core.listener import Listener, GroupListener
 from ..database.client import OrderBillController
 from ..database.listeners import DataListener
+from ..plugin import pm
+
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
 
@@ -24,11 +26,22 @@ class ExchangeOrderBillWatchListener(DataListener):
             return None
         return self.parent.parent
 
+    @property
+    def order_bill_listener(self) -> 'ExchangeOrderBillListener | None':
+        """获取父节点 ExchangeOrderBillListener"""
+        return self.parent
+
     async def on_tick(self):
         if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
             return
         try:
             order_lists = await asyncio.wait_for(self.exchange.watch_orders(self.ccxt_instance_key), timeout=900)
+
+            # 检查订单成交并触发 Hook
+            if self.order_bill_listener:
+                for order in order_lists:
+                    self.order_bill_listener._emit_order_filled_hook(order)
+
             controller = OrderBillController(self.db)
             await controller.update(order_lists, self.exchange)
         except asyncio.TimeoutError:
@@ -60,6 +73,11 @@ class ExchangeOrderBillFetchListener(DataListener):
             return None
         return self.parent.parent
 
+    @property
+    def order_bill_listener(self) -> 'ExchangeOrderBillListener | None':
+        """获取父节点 ExchangeOrderBillListener"""
+        return self.parent
+
     async def on_tick(self):
         if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
             return
@@ -72,6 +90,11 @@ class ExchangeOrderBillFetchListener(DataListener):
                     if time.time() - order_timestamp > 600:
                         await self.exchange.cancel_order(order['id'], order['symbol'])
                         self.logger.info("Cancel old open %s order %s:%s", order['side'], order['symbol'], order['id'])
+
+            # 检查订单成交并触发 Hook
+            if self.order_bill_listener:
+                self.order_bill_listener._emit_order_filled_hook(order)
+
             await controller.update([order], self.exchange)
             await asyncio.sleep(1)  # 避免请求过快
 
@@ -81,8 +104,49 @@ class ExchangeOrderBillListener(GroupListener, DataListener):
     交易所订单账单监听器
 
     使用 GroupListener 自动管理动态子节点。
+    同时负责触发 on_order_filled 插件钩子。
     """
     persist_key = "order_bill"
+    # 已通知成交的订单 ID 集合（用于去重）
+    _notified_filled_orders: set[str]
+    # 最大记录数量（防止内存泄漏）
+    MAX_NOTIFIED_ORDERS = 10000
+
+    def __init__(self, name: str = None, interval: float = 60.0):
+        super().__init__(name or self.__class__.__name__, interval)
+        self._notified_filled_orders = set()
+
+    def _emit_order_filled_hook(self, order: dict) -> None:
+        """
+        检查订单是否成交并触发 on_order_filled Hook
+
+        去重逻辑：同一订单只通知一次
+        """
+        order_id = order.get('id')
+        status = order.get('status')
+        filled = order.get('filled', 0)
+
+        # 只处理已成交的订单（status=closed 且有成交量）
+        if status != 'closed' or not filled or filled <= 0:
+            return
+
+        # 去重检查
+        if order_id in self._notified_filled_orders:
+            return
+
+        # 记录已通知的订单
+        self._notified_filled_orders.add(order_id)
+
+        # 防止内存泄漏
+        if len(self._notified_filled_orders) > self.MAX_NOTIFIED_ORDERS:
+            # 清理一半旧数据
+            to_remove = list(self._notified_filled_orders)[:self.MAX_NOTIFIED_ORDERS // 2]
+            for oid in to_remove:
+                self._notified_filled_orders.discard(oid)
+
+        # 触发插件钩子
+        exchange: 'BaseExchange' = self.parent
+        pm.hook.on_order_filled(exchange=exchange, order=order)
 
     def sync_children_params(self) -> dict[str, any]:
         """根据 ccxt_instances 声明需要的 children"""

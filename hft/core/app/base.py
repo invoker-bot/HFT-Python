@@ -31,6 +31,7 @@ from ...datasource.group import DataSourceGroup
 from ...strategy.group import StrategyGroup
 from ...executor.config import BaseExecutorConfig
 from ...executor.base import BaseExecutor
+from ...plugin import pm
 from ..listener import Listener
 from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
 from .notify import NotifyService
@@ -177,6 +178,8 @@ class AppCore(Listener):
         for child in list(self.children.values()):
             if not child.lazy_start:
                 child.enabled = True
+        # 触发插件钩子
+        pm.hook.on_app_start(app=self)
 
     async def on_tick(self) -> bool:
         """
@@ -192,11 +195,19 @@ class AppCore(Listener):
         Returns:
             True 如果策略组已完成，程序应该退出
         """
+        # 触发插件钩子
+        pm.hook.on_app_tick(app=self)
+
         # 检查策略组是否已完成
         if self.strategy_group.is_finished:
             self.logger.info("StrategyGroup finished, AppCore exiting")
             return True
         return False
+
+    async def on_stop(self):
+        """停止回调，触发插件钩子"""
+        pm.hook.on_app_stop(app=self)
+        await super().on_stop()
 
     async def run_ticks(self, duration: float,
                         initialize: Optional[bool] = None,

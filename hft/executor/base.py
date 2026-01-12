@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from ..core.listener import Listener
+from ..plugin import pm
 
 if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
@@ -515,10 +516,16 @@ class BaseExecutor(Listener):
 
         self._executor_state = ExecutorState.EXECUTING
 
+        # 插件钩子：执行开始
+        pm.hook.on_execution_start(executor=self, targets=targets)
+
+        results = []
         try:
-            await self._process_targets(targets)
+            results = await self._process_targets(targets)
         finally:
             self._executor_state = ExecutorState.IDLE
+            # 插件钩子：执行完成
+            pm.hook.on_execution_complete(executor=self, results=results)
 
         return False
 

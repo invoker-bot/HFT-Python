@@ -544,6 +544,9 @@ class Listener(ABC):
         except Exception as e:
             self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
+            # 插件钩子：健康检查失败
+            from ..plugin import pm
+            pm.hook.on_health_check_failed(listener=self, error=e)
 
     @abstractmethod
     async def on_tick(self) -> bool:
@@ -637,6 +640,9 @@ class Listener(ABC):
     async def on_start(self):
         """启动回调，子类可覆盖实现初始化逻辑"""
         self.logger.info("listener started")
+        # 插件钩子：Listener 启动
+        from ..plugin import pm
+        pm.hook.on_listener_start(listener=self)
 
     # async def set_stop(self, recursive: bool = True):
     #     self.enabled = False
@@ -681,6 +687,9 @@ class Listener(ABC):
     async def on_stop(self):
         """停止回调，子类可覆盖实现清理逻辑"""
         self.logger.info("listener stopped")
+        # 插件钩子：Listener 停止
+        from ..plugin import pm
+        pm.hook.on_listener_stop(listener=self)
 
     async def restart(self, recursive: bool = True):
         """

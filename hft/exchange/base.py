@@ -25,6 +25,7 @@ from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Posit
 from ccxt.base.errors import InvalidOrder
 from ..core.listener import Listener
 from ..core.healthy import HealthyDataWithFallback
+from ..plugin import pm
 from ..database.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
 from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener, ExchangeCurrenciesListener
 from .utils import round_to_precision
@@ -472,6 +473,14 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             "price": price,
             "params": params,
         }
+
+        # 插件钩子：允许插件阻止订单
+        if pm.hook.on_order_creating(
+            exchange=self, symbol=symbol, side=side, amount=amount, price=price
+        ) is False:
+            self.logger.info("Order blocked by plugin: %s %s %s", symbol, side, amount)
+            return None
+
         resolved_order = self.__resolve_order(order_params)
         if resolved_order is None:
             return None
@@ -490,9 +499,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 else:
                     self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
                 self.event.emit("order_created", resolved_order, order)  # TODO: 可以记录order
+                # 插件钩子：订单创建成功
+                pm.hook.on_order_created(exchange=self, order=order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
                 return order
             except (InvalidOrder, KeyError) as e:
+                # 插件钩子：订单创建失败
+                pm.hook.on_order_error(exchange=self, error=e, order_params=order_params)
                 self.logger.exception("Failed to create order: %s", e)
                 return None
         else:
@@ -531,6 +544,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         order = await exchange.cancel_order(order_id, symbol)
         self.event.emit("order_canceled", order_id, symbol, order)
+        # 插件钩子：订单取消
+        pm.hook.on_order_cancelled(exchange=self, order=order)
         self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
         return order
 
@@ -606,6 +621,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     def medal_cache_balance(self, ccxt_instance_key: str, balance: dict):
         result = {asset: info for asset, info in balance.items() if asset.isupper()}
         self._balances[ccxt_instance_key] = result
+        # 插件钩子：余额更新
+        pm.hook.on_balance_update(exchange=self, balance=result)
         return result
 
     async def medal_fetch_balance(self, ccxt_instance_key: str) -> dict[str, float]:
@@ -662,6 +679,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """缓存持仓数据（供 watch/fetch 调用）"""
         result = self._transform_positions(positions)
         self._positions_data.set(result)
+        # 插件钩子：持仓更新
+        pm.hook.on_position_update(exchange=self, positions=result)
         return result
 
     async def medal_fetch_positions(self) -> dict[str, float]:

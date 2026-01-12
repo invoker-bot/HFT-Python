@@ -14,6 +14,7 @@ GlobalFundingRateFetcher - 全局资金费率获取器
 import asyncio
 from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
+from ..plugin import pm
 
 if TYPE_CHECKING:
     from .group import DataSourceGroup
@@ -117,6 +118,13 @@ class GlobalFundingRateFetcher(Listener):
             pair.ensure_funding_rate_datasource()
             pair.funding_rate_datasource.append(funding_rate)
             distributed_count += 1
+
+            # 插件钩子：资金费率更新
+            pm.hook.on_funding_rate_update(
+                exchange=exchange,
+                symbol=symbol,
+                funding_rate=funding_rate
+            )
 
         # 持久化到数据库
         persisted_count = 0

@@ -23,6 +23,7 @@ StrategyGroup 管理多个策略实例：
 from typing import TYPE_CHECKING
 from collections import defaultdict
 from ..core.listener import Listener, ListenerState
+from ..plugin import pm
 from .base import BaseStrategy, TargetPositions
 from .config import BaseStrategyConfig
 
@@ -111,6 +112,8 @@ class StrategyGroup(Listener):
         for strategy in self.strategies:
             try:
                 targets = strategy.get_target_positions_usd()
+                # 插件钩子：单个策略目标计算完成
+                pm.hook.on_strategy_targets_calculated(strategy=strategy, targets=targets)
                 for key, (position, speed) in targets.items():
                     temp[key].append((position, speed))
             except Exception as e:
@@ -134,6 +137,9 @@ class StrategyGroup(Listener):
                 weighted_speed = 0.5  # 默认值
 
             result[key] = (total_position, weighted_speed)
+
+        # 插件钩子：目标聚合完成
+        pm.hook.on_targets_aggregated(strategy_group=self, targets=result)
 
         return result
 

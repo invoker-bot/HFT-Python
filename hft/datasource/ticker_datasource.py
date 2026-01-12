@@ -80,3 +80,12 @@ class TickerDataSource(BaseDataSource[TickerData]):
     def _process_data(self, data: TickerData) -> Optional[TickerData]:
         """直接返回"""
         return data
+
+    def _emit_plugin_hook(self, data: TickerData) -> None:
+        """触发 on_ticker_update Hook"""
+        from ..plugin import pm
+        pm.hook.on_ticker_update(
+            exchange=self._exchange,
+            symbol=self._symbol,
+            ticker=data
+        )
