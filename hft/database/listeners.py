@@ -6,12 +6,13 @@
 监听器类型：
 - ExchangeFundingRateBillListener: 资金费率账单采集
 - ExchangeBalanceUsdListener: 账户余额快照采集
+- FundingRatePersistListener: 资金费率快照持久化（挂载到 GlobalFundingRateFetcher）
 """
 from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
-from .client import ClickHouseDatabase, FundingRateBillController, BalanceUSDController
+from .client import ClickHouseDatabase, FundingRateBillController, FundingRateController, BalanceUSDController
 if TYPE_CHECKING:
-    from ..exchange.base import BaseExchange
+    from ..exchange.base import BaseExchange, FundingRate
 
 
 class DataListener(Listener):
@@ -128,3 +129,72 @@ class ExchangeBalanceUsdListener(DataListener):
         position_usd = sum(abs(pos) for pos in positions.values())
         controller = BalanceUSDController(self.db)
         await controller.update(position_usd, balance_usd, parent)
+
+
+class FundingRatePersistListener(DataListener):
+    """
+    资金费率持久化监听器
+
+    挂载到 GlobalFundingRateFetcher 下，将获取的资金费率数据持久化到 ClickHouse。
+    不独立运行 tick，而是由 GlobalFundingRateFetcher 调用 persist() 方法。
+
+    表结构:
+        - timestamp: 时间戳
+        - exchange_name: 交易所类名
+        - trading_pair: 交易对
+        - index_price: 指数价格
+        - mark_price: 标记价格
+        - funding_rate: 当前资金费率
+        - daily_funding_rate: 日化资金费率
+    """
+    persist_key = "funding_rate"
+    lazy_start = True  # 不独立 tick，由父节点调用
+
+    def __init__(self):
+        super().__init__(interval=0)  # interval=0 表示不独立运行
+
+    async def on_tick(self):
+        """不独立运行，由父节点调用 persist() 方法"""
+        pass
+
+    async def persist(
+        self,
+        exchange_class: str,
+        funding_rates: dict[str, "FundingRate"]
+    ) -> int:
+        """
+        持久化资金费率数据
+
+        由 GlobalFundingRateFetcher 在获取数据后调用。
+
+        Args:
+            exchange_class: 交易所类名（如 "okx"）
+            funding_rates: {symbol: FundingRate} 字典
+
+        Returns:
+            成功写入的记录数
+        """
+        if not self.db_ready or not self.persist_enabled:
+            return 0
+
+        controller = FundingRateController(self.db)
+        count = 0
+
+        for symbol, fr in funding_rates.items():
+            try:
+                await controller.update(
+                    exchange_name=exchange_class,
+                    trading_pair=symbol,
+                    index_price=fr.index_price,
+                    mark_price=fr.mark_price,
+                    funding_rate=fr.base_funding_rate,
+                    daily_funding_rate=fr.daily_funding_rate,
+                )
+                count += 1
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to persist funding rate for %s:%s: %s",
+                    exchange_class, symbol, e
+                )
+
+        return count

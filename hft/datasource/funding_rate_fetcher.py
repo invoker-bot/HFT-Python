@@ -4,6 +4,7 @@ GlobalFundingRateFetcher - 全局资金费率获取器
 挂载在 DataSourceGroup 上，定时获取所有交易对的资金费率：
 - 每个 exchange_class 只调用一次 medal_fetch_funding_rates()
 - 将结果分发到各个 TradingPairDataSource 的 FundingRateDataSource
+- 同时持久化到 ClickHouse 数据库（通过 FundingRatePersistListener 子节点）
 
 设计理念：
 - 资金费率 API 一次返回所有交易对数据，避免重复调用
@@ -11,12 +12,13 @@ GlobalFundingRateFetcher - 全局资金费率获取器
 - 作为 DataSourceGroup 的子节点，享受统一生命周期管理
 """
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
 
 if TYPE_CHECKING:
     from .group import DataSourceGroup
     from ..exchange.base import BaseExchange
+    from ..database.listeners import FundingRatePersistListener
 
 
 class GlobalFundingRateFetcher(Listener):
@@ -40,9 +42,19 @@ class GlobalFundingRateFetcher(Listener):
         funding = pair.funding_rate_datasource.get_current()
     """
 
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_persist_listener")
+
     def __init__(self, interval: float = 3.0):
         super().__init__(name="GlobalFundingRateFetcher", interval=interval)
         self._processed_classes: set[str] = set()  # 每个 tick 周期内已处理的 exchange_class
+        self._persist_listener: Optional["FundingRatePersistListener"] = None
+
+    async def on_start(self) -> None:
+        """启动时创建持久化子 Listener"""
+        from ..database.listeners import FundingRatePersistListener
+
+        self._persist_listener = FundingRatePersistListener()
+        self.add_child(self._persist_listener)
 
     @property
     def datasource_group(self) -> "DataSourceGroup":
@@ -106,9 +118,16 @@ class GlobalFundingRateFetcher(Listener):
             pair.funding_rate_datasource.append(funding_rate)
             distributed_count += 1
 
+        # 持久化到数据库
+        persisted_count = 0
+        if self._persist_listener is not None:
+            persisted_count = await self._persist_listener.persist(
+                exchange_class, funding_rates
+            )
+
         self.logger.debug(
-            "Fetched %d funding rates for %s, distributed to %d pairs",
-            len(funding_rates), exchange_class, distributed_count
+            "Fetched %d funding rates for %s, distributed to %d pairs, persisted %d",
+            len(funding_rates), exchange_class, distributed_count, persisted_count
         )
 
     @property

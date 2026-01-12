@@ -4,10 +4,12 @@ Unit tests for DataArray and DataSourceGroup.
 Tests cover:
 - DataArray: data operations, health checking, cleanup
 - DataSourceGroup: datasource creation, query, cleanup (with mocks)
+- FundingRatePersistListener: database persistence (with mocks)
 """
 import pytest
 import time
 from dataclasses import dataclass
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from hft.datasource.group import DataArray, DataType, UnhealthyDataError
@@ -546,3 +548,149 @@ class TestDataArrayEdgeCases:
         result = arr.get_latest(100)
         assert len(result) == 100
         assert result[0].timestamp == 9900.0
+
+
+# ============================================================
+# FundingRatePersistListener Tests
+# ============================================================
+
+@dataclass
+class MockFundingRate:
+    """Mock FundingRate for testing."""
+    exchange: str
+    symbol: str
+    timestamp: float
+    expiry: Optional[float]
+    base_funding_rate: float
+    next_funding_rate: float
+    next_funding_timestamp: float
+    funding_interval_hours: int
+    mark_price: float
+    mark_price_timestamp: float
+    index_price: float
+    index_price_timestamp: float
+    minimum_funding_rate: float = -0.03
+    maximum_funding_rate: float = 0.03
+
+    @property
+    def daily_funding_rate(self) -> float:
+        return self.base_funding_rate * 24 / self.funding_interval_hours
+
+
+class TestFundingRatePersistListener:
+    """Tests for FundingRatePersistListener."""
+
+    def test_can_import(self):
+        """FundingRatePersistListener should be importable."""
+        from hft.database.listeners import FundingRatePersistListener
+        assert FundingRatePersistListener is not None
+
+    def test_initialization(self):
+        """FundingRatePersistListener should initialize correctly."""
+        from hft.database.listeners import FundingRatePersistListener
+
+        listener = FundingRatePersistListener()
+
+        assert listener.name == "FundingRatePersistListener"
+        assert listener.persist_key == "funding_rate"
+        assert listener.lazy_start is True
+
+    @pytest.mark.asyncio
+    async def test_persist_without_db_returns_zero(self):
+        """persist() should return 0 when db is not ready."""
+        from hft.database.listeners import FundingRatePersistListener
+
+        listener = FundingRatePersistListener()
+        # db is None by default
+
+        funding_rates = {
+            "BTC/USDT:USDT": MockFundingRate(
+                exchange="okx",
+                symbol="BTC/USDT:USDT",
+                timestamp=time.time(),
+                expiry=None,
+                base_funding_rate=0.0001,
+                next_funding_rate=0.00012,
+                next_funding_timestamp=time.time() + 3600,
+                funding_interval_hours=8,
+                mark_price=50000.0,
+                mark_price_timestamp=time.time(),
+                index_price=50001.0,
+                index_price_timestamp=time.time(),
+            )
+        }
+
+        result = await listener.persist("okx", funding_rates)
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_persist_with_mocked_db(self):
+        """persist() should call db controller when db is ready."""
+        from hft.database.listeners import FundingRatePersistListener
+
+        listener = FundingRatePersistListener()
+
+        # Mock database
+        mock_db = MagicMock()
+        mock_db.client = MagicMock()  # Make db_ready return True
+        listener.db = mock_db
+
+        # Mock controller and persist_enabled
+        mock_controller = AsyncMock()
+        with patch('hft.database.listeners.FundingRateController', return_value=mock_controller), \
+             patch.object(FundingRatePersistListener, 'persist_enabled', new_callable=lambda: property(lambda self: True)):
+            funding_rates = {
+                "BTC/USDT:USDT": MockFundingRate(
+                    exchange="okx",
+                    symbol="BTC/USDT:USDT",
+                    timestamp=time.time(),
+                    expiry=None,
+                    base_funding_rate=0.0001,
+                    next_funding_rate=0.00012,
+                    next_funding_timestamp=time.time() + 3600,
+                    funding_interval_hours=8,
+                    mark_price=50000.0,
+                    mark_price_timestamp=time.time(),
+                    index_price=50001.0,
+                    index_price_timestamp=time.time(),
+                )
+            }
+
+            result = await listener.persist("okx", funding_rates)
+
+            assert result == 1
+            mock_controller.update.assert_called_once()
+
+
+class TestGlobalFundingRateFetcherWithPersist:
+    """Tests for GlobalFundingRateFetcher with FundingRatePersistListener."""
+
+    def test_can_import(self):
+        """GlobalFundingRateFetcher should be importable."""
+        from hft.datasource.funding_rate_fetcher import GlobalFundingRateFetcher
+        assert GlobalFundingRateFetcher is not None
+
+    def test_initialization(self):
+        """GlobalFundingRateFetcher should initialize correctly."""
+        from hft.datasource.funding_rate_fetcher import GlobalFundingRateFetcher
+
+        fetcher = GlobalFundingRateFetcher(interval=5.0)
+
+        assert fetcher.name == "GlobalFundingRateFetcher"
+        assert fetcher.interval == 5.0
+        assert fetcher._persist_listener is None  # Created in on_start
+
+    @pytest.mark.asyncio
+    async def test_on_start_creates_persist_listener(self):
+        """on_start() should create FundingRatePersistListener."""
+        from hft.datasource.funding_rate_fetcher import GlobalFundingRateFetcher
+        from hft.database.listeners import FundingRatePersistListener
+
+        fetcher = GlobalFundingRateFetcher()
+
+        await fetcher.on_start()
+
+        assert fetcher._persist_listener is not None
+        assert isinstance(fetcher._persist_listener, FundingRatePersistListener)
+        assert "FundingRatePersistListener" in fetcher.children
