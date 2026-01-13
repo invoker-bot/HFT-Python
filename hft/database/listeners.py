@@ -38,6 +38,9 @@ class DataListener(Listener):
     @property
     def db_ready(self) -> bool:
         """检查数据库是否就绪（已配置且已初始化）"""
+        # 惰性获取 DB：支持 lazy_start 的 Listener 在 on_start 未调用时也能访问 DB
+        if self.db is None:
+            self.db = getattr(self.root, 'database', None)
         return self.db is not None and self.db.client is not None
 
     @property
