@@ -20,6 +20,7 @@ Example:
     >>> # 5 秒后...
     >>> ticker.get()  # 抛出 UnhealthyDataError
 """
+import asyncio
 import time
 from typing import TypeVar, Generic, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
@@ -186,13 +187,18 @@ class HealthyDataWithFallback(HealthyData[T]):
     注意：
         - fetch_func 必须是异步函数
         - 如果 fetch 失败，会抛出 UnhealthyDataError
+        - get_or_fetch 使用锁防止并发重复 fetch
     """
     # 异步获取数据的函数，当数据不健康时自动调用
     fetch_func: Optional[Callable[[], Awaitable[T]]] = field(default=None, repr=False)
+    # 防止并发 fetch 的锁（运行期资源，不参与 pickle）
+    _fetch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     async def get_or_fetch(self) -> T:
         """
         获取数据，不健康时自动 fetch
+
+        使用双重检查锁定模式防止并发 fetch，避免重复 API 调用。
 
         Returns:
             数据
@@ -200,18 +206,25 @@ class HealthyDataWithFallback(HealthyData[T]):
         Raises:
             UnhealthyDataError: fetch 后仍然不健康
         """
+        # 快速路径：数据健康时直接返回
         if self.is_healthy:
             return self._data
 
-        if self.fetch_func is not None:
-            try:
-                data = await self.fetch_func()
-                self.set(data)
-                return data
-            except Exception as e:
-                raise UnhealthyDataError(f"Fetch failed: {e}") from e
+        # 慢速路径：需要 fetch，加锁保护
+        async with self._fetch_lock:
+            # 双重检查：锁内再次检查，可能其他协程已经 fetch 完成
+            if self.is_healthy:
+                return self._data
 
-        raise UnhealthyDataError("Data unhealthy and no fetch_func provided")
+            if self.fetch_func is not None:
+                try:
+                    data = await self.fetch_func()
+                    self.set(data)
+                    return data
+                except Exception as e:
+                    raise UnhealthyDataError(f"Fetch failed: {e}") from e
+
+            raise UnhealthyDataError("Data unhealthy and no fetch_func provided")
 
     async def ensure_healthy(self) -> bool:
         """
@@ -223,12 +236,16 @@ class HealthyDataWithFallback(HealthyData[T]):
         if self.is_healthy:
             return True
 
-        if self.fetch_func is not None:
-            try:
-                data = await self.fetch_func()
-                self.set(data)
+        async with self._fetch_lock:
+            if self.is_healthy:
                 return True
-            except Exception:
-                return False
 
-        return False
+            if self.fetch_func is not None:
+                try:
+                    data = await self.fetch_func()
+                    self.set(data)
+                    return True
+                except Exception:
+                    return False
+
+            return False

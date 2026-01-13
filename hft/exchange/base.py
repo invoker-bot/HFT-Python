@@ -517,27 +517,29 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         order_params = list(filter(None,  map(self.__resolve_order, order_params)))
         if len(order_params) == 0:
             return []
-        # only support swap for now
-        if not self.config.debug:
-            try:
-                results = await self.exchanges['swap'].create_orders(order_params)
-                for order_param, order in zip(order_params, results):
-                    place_str = self.__get_place_str(order)
-                    if order_param['type'] != "market":  # TODO: 记录限价订单
-                        pass
-                    else:
-                        self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
-                    self.event.emit("order_created", order_param, order)  # TODO: 可以记录order
-                    self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
-                return results
-            except (InvalidOrder, KeyError) as e:
-                self.logger.exception("Failed to create orders: %s", e)
-        else:
+
+        # Debug 模式：仅日志，不实际下单
+        if self.config.debug:
             for order_param in order_params:
                 place_str = self.__get_place_str(order_param)
                 self.logger.info("Debug: %s", place_str)
             return []
-        return results
+
+        # only support swap for now
+        try:
+            results = await self.exchanges['swap'].create_orders(order_params)
+            for order_param, order in zip(order_params, results):
+                place_str = self.__get_place_str(order)
+                if order_param['type'] != "market":  # TODO: 记录限价订单
+                    pass
+                else:
+                    self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
+                self.event.emit("order_created", order_param, order)  # TODO: 可以记录order
+                self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
+            return results
+        except (InvalidOrder, KeyError) as e:
+            self.logger.exception("Failed to create orders: %s", e)
+            return []
 
     async def cancel_order(self, order_id: str, symbol: str) -> Order:
         """撤销订单"""
