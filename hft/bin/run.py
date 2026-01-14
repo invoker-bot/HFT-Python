@@ -323,9 +323,14 @@ def _render_balance_table(balance: dict, prices: dict, title: str = "Balance") -
     rows.sort(key=lambda x: x[2], reverse=True)
 
     for currency, amount, usd_value in rows:
+        # 格式化数量：最多5位小数，去除末尾0
+        if amount >= 1:
+            amount_str = f"{amount:,.5f}".rstrip('0').rstrip('.')
+        else:
+            amount_str = f"{amount:.5g}"  # 小数用科学计数法或有效数字
         table.add_row(
             currency,
-            f"{amount:,.8f}".rstrip('0').rstrip('.'),
+            amount_str,
             f"{usd_value:,.2f}"
         )
 
