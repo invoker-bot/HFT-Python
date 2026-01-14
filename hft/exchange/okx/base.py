@@ -21,6 +21,7 @@ class OKXExchange(BaseExchange):
     - 健康检查
     """
     class_name: ClassVar[str] = "okx"
+    unified_account: ClassVar[bool] = True  # OKX 使用统一账户模式
 
     # API 端点
     REST_URL = "https://www.okx.com"

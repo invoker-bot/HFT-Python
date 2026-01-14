@@ -174,6 +174,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     class_name: ClassVar[str] = "base_exchange"
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_positions_data")
 
+    # 是否为统一账户模式（现货和合约共用账户）
+    # OKX 等交易所为 True，Binance 等为 False（默认）
+    unified_account: ClassVar[bool] = False
+
     def __init__(self, config: "BaseExchangeConfig"):
         super().__init__(name=config.path)
         self.config = config
