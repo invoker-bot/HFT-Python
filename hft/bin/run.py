@@ -207,31 +207,29 @@ async def _fetch_prices(exchange, balances: dict) -> dict[str, float]:
     if not currencies:
         return {}
 
-    # 构造交易对并批量查询
     prices = {}
-    try:
-        # 尝试获取 swap 市场的 tickers
-        symbols = [f"{c}/USDT:USDT" for c in currencies]
-        tickers = await exchange.exchanges.get('swap', exchange.config.ccxt_instance).fetch_tickers(symbols)
-        for symbol, ticker in tickers.items():
-            currency = symbol.split('/')[0]
-            if ticker.get('last'):
-                prices[currency] = ticker['last']
-    except Exception:
-        pass
+    ccxt_instance = exchange.exchanges.get('swap', exchange.config.ccxt_instance)
 
-    # 尝试获取现货市场的 tickers（补充未获取到的）
-    try:
-        missing = [c for c in currencies if c not in prices]
-        if missing and 'spot' in exchange.exchanges:
-            symbols = [f"{c}/USDT" for c in missing]
-            tickers = await exchange.exchanges['spot'].fetch_tickers(symbols)
-            for symbol, ticker in tickers.items():
-                currency = symbol.split('/')[0]
-                if ticker.get('last'):
-                    prices[currency] = ticker['last']
-    except Exception:
-        pass
+    # 逐个获取价格（更可靠，避免批量请求失败）
+    for currency in currencies:
+        try:
+            # 优先尝试 swap 市场
+            symbol = f"{currency}/USDT:USDT"
+            ticker = await ccxt_instance.fetch_ticker(symbol)
+            if ticker and ticker.get('last'):
+                prices[currency] = ticker['last']
+                continue
+        except Exception:
+            pass
+
+        try:
+            # 回退到现货市场
+            symbol = f"{currency}/USDT"
+            ticker = await ccxt_instance.fetch_ticker(symbol)
+            if ticker and ticker.get('last'):
+                prices[currency] = ticker['last']
+        except Exception:
+            pass
 
     return prices
 
