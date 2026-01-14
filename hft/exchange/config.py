@@ -54,6 +54,13 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
         description="Whitelist of deposit addresses for auto-deposit. Use network='*' to match all networks."
     )
 
+    # SmartExecutor 路由：按交易对指定执行器（覆盖自动选择）
+    # key: symbol (e.g., "BTC/USDT:USDT"), value: executor key (e.g., "pca", "limit")
+    executor_map: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-symbol executor override for SmartExecutor routing"
+    )
+
     @field_validator("support_types", mode="before")
     @classmethod
     def parse_support_types(cls, v):

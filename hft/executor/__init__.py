@@ -21,6 +21,7 @@ from .base import (
     BaseExecutor,
 )
 from .market_executor import MarketExecutor
+from .smart_executor import SmartExecutor
 from .spread_executor import (
     SpreadResult,
     BaseSpread,
@@ -38,6 +39,8 @@ __all__ = [
     "BaseExecutor",
     # market
     "MarketExecutor",
+    # smart
+    "SmartExecutor",
     # spread
     "SpreadResult",
     "BaseSpread",
