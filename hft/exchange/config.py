@@ -1,6 +1,7 @@
 """
 交易所配置
 """
+import os
 from functools import cached_property
 from typing import Optional, ClassVar, Type, Union, Literal
 from pydantic import BaseModel, Field, AnyUrl, field_validator
@@ -30,6 +31,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
 
     # 基本配置
     proxy: Optional[AnyUrl] = Field(None, description="Proxy URL for exchange API requests")
+    proxy_env: Optional[str] = Field(None, description="Environment variable name for proxy URL")
     testnet: bool = Field(False, description="Use testnet or not")
     debug: bool = Field(False, description="Enable debug mode (no real orders)")
 
@@ -119,10 +121,16 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
 
     def ccxt_proxy_dict(self) -> dict:
         """生成代理配置"""
-        if self.proxy is None:
-            proxy = ""
+        proxy_env = self.proxy_env
+        if proxy_env is not None:
+            proxy = os.getenv(str(proxy_env))
         else:
-            proxy = str(self.proxy)
+            proxy = None
+        if proxy is None:
+            if self.proxy is None:
+                proxy = ""
+            else:
+                proxy = str(self.proxy)
         if not proxy:
             return {}
         return {

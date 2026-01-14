@@ -22,11 +22,12 @@ Example config (conf/executor/market/default.yaml):
     interval: 1.0
 """
 from typing import TYPE_CHECKING
-from .base import BaseExecutor, ExecutionResult
-from .config import MarketExecutorConfig
+
+from ..base import BaseExecutor, ExecutionResult
 
 if TYPE_CHECKING:
-    from ..exchange.base import BaseExchange
+    from ...exchange.base import BaseExchange
+    from .config import MarketExecutorConfig
 
 
 class MarketExecutor(BaseExecutor):
@@ -51,9 +52,9 @@ class MarketExecutor(BaseExecutor):
         - 适合流动性好的交易对
     """
 
-    config: MarketExecutorConfig
+    config: "MarketExecutorConfig"
 
-    def __init__(self, config: MarketExecutorConfig):
+    def __init__(self, config: "MarketExecutorConfig"):
         """
         初始化市价单执行器
 

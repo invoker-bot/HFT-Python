@@ -166,7 +166,7 @@ async def exchange_status_async(path: str):
 
     except FileNotFoundError:
         console.print(f"[red]Exchange config not found: {path}[/red]")
-        console.print("[yellow]Make sure conf/exchange/{path}.yaml exists[/yellow]")
+        console.print(f"[yellow]Make sure conf/exchange/{path}.yaml exists[/yellow]")
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")
         console.print(traceback.format_exc())
@@ -208,28 +208,35 @@ async def _fetch_prices(exchange, balances: dict) -> dict[str, float]:
         return {}
 
     prices = {}
-    ccxt_instance = exchange.exchanges.get('swap', exchange.config.ccxt_instance)
+
+    # 获取可用的交易所实例
+    swap_instance = exchange.exchanges.get('swap')
+    spot_instance = exchange.exchanges.get('spot')
+    default_instance = exchange.config.ccxt_instance
 
     # 逐个获取价格（更可靠，避免批量请求失败）
     for currency in currencies:
-        try:
-            # 优先尝试 swap 市场
-            symbol = f"{currency}/USDT:USDT"
-            ticker = await ccxt_instance.fetch_ticker(symbol)
-            if ticker and ticker.get('last'):
-                prices[currency] = ticker['last']
-                continue
-        except Exception:
-            pass
+        # 优先尝试 swap 市场（如果有 swap 实例）
+        if swap_instance:
+            try:
+                symbol = f"{currency}/USDT:USDT"
+                ticker = await swap_instance.fetch_ticker(symbol)
+                if ticker and ticker.get('last'):
+                    prices[currency] = ticker['last']
+                    continue
+            except Exception:
+                pass
 
-        try:
-            # 回退到现货市场
-            symbol = f"{currency}/USDT"
-            ticker = await ccxt_instance.fetch_ticker(symbol)
-            if ticker and ticker.get('last'):
-                prices[currency] = ticker['last']
-        except Exception:
-            pass
+        # 回退到现货市场（优先用 spot 实例，其次用默认实例）
+        spot_ccxt = spot_instance or default_instance
+        if spot_ccxt:
+            try:
+                symbol = f"{currency}/USDT"
+                ticker = await spot_ccxt.fetch_ticker(symbol)
+                if ticker and ticker.get('last'):
+                    prices[currency] = ticker['last']
+            except Exception:
+                pass
 
     return prices
 

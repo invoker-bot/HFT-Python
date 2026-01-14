@@ -529,30 +529,39 @@ class BaseExecutor(Listener):
 
         return False
 
-    async def _process_targets(self, targets: "AggregatedTargets") -> None:
+    async def _process_targets(self, targets: "AggregatedTargets") -> list[Optional[ExecutionResult]]:
         """
-        处理所有目标仓位
+        处理所有目标仓位，返回每个目标的执行结果列表
 
         Args:
             targets: {(exchange_path, symbol): (target_usd, speed)}
+
+        Returns:
+            执行结果列表，每个目标对应一个结果（失败/跳过时为 None）
         """
+        results = []
         for (exchange_path, symbol), (target_usd, speed) in targets.items():
             # 根据 exchange_path 获取交易所
             exchange = self._get_exchange_by_path(exchange_path)
 
             if not exchange:
                 self.logger.debug("Exchange not found for path %s", exchange_path)
+                results.append(None)  # 记录失败
                 continue
 
             try:
-                await self._process_single_target(
+                result = await self._process_single_target(
                     exchange, symbol, target_usd, speed
                 )
+                results.append(result)
             except Exception as e:
                 self.logger.warning(
                     "[%s] Error processing %s: %s",
                     exchange.name, symbol, e
                 )
+                results.append(None)  # 记录异常
+
+        return results
 
     async def _process_single_target(
         self,
