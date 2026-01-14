@@ -174,7 +174,7 @@ async def exchange_status_async(path: str):
 
         # 5. 总价值
         console.print()
-        console.print(f"[bold green]📈 Total Value: ${total_usd:,.2f}[/bold green]")
+        console.print(f"[bold green]Total Value: ${total_usd:,.2f}[/bold green]")
         console.print()
 
     except FileNotFoundError:
@@ -193,8 +193,9 @@ async def _fetch_balances(exchange) -> dict[str, dict]:
     result = {}
 
     if exchange.unified_account:
-        # 统一账户：只查一次
-        balance = await exchange.fetch_balance()
+        # 统一账户：只查一次（使用任意一个 ccxt 实例）
+        ccxt_instance = exchange.config.ccxt_instance
+        balance = await ccxt_instance.fetch_balance()
         result['unified'] = balance
     else:
         # 分离账户：分别查询
@@ -254,10 +255,10 @@ def _render_positions_table(positions: list, title: str = "Positions") -> None:
     active_positions = [p for p in positions if float(p.get('contracts', 0)) != 0]
 
     if not active_positions:
-        console.print(f"[dim]📊 {title}: No open positions[/dim]")
+        console.print(f"[dim]{title}: No open positions[/dim]")
         return
 
-    table = Table(title=f"📊 {title}", show_header=True, header_style="bold magenta")
+    table = Table(title=title, show_header=True, header_style="bold magenta")
     table.add_column("Symbol", style="cyan", no_wrap=True)
     table.add_column("Side", style="bold", justify="center")
     table.add_column("Amount", justify="right")
@@ -302,7 +303,7 @@ def _render_positions_table(positions: list, title: str = "Positions") -> None:
 
 def _render_balance_table(balance: dict, prices: dict, title: str = "Balance") -> float:
     """渲染余额表格，返回小计"""
-    table = Table(title=f"💰 {title}", show_header=True, header_style="bold magenta")
+    table = Table(title=title, show_header=True, header_style="bold magenta")
     table.add_column("Currency", style="cyan", no_wrap=True)
     table.add_column("Amount", justify="right")
     table.add_column("Value (USD)", justify="right")
@@ -350,7 +351,7 @@ def _render_balance_table(balance: dict, prices: dict, title: str = "Balance") -
         )
         console.print(table)
     else:
-        console.print(f"[dim]💰 {title}: No significant balance[/dim]")
+        console.print(f"[dim]{title}: No significant balance[/dim]")
 
     return subtotal
 
@@ -366,7 +367,7 @@ def _render_separate_accounts(positions: list, balances: dict, prices: dict) -> 
     """渲染分离账户"""
     # Swap 账户
     if 'swap' in balances:
-        console.print("[bold blue]📊 Swap Account[/bold blue]")
+        console.print("[bold blue]== Swap Account ==[/bold blue]")
         console.print()
         _render_positions_table(positions, "Positions")
         console.print()
@@ -376,7 +377,7 @@ def _render_separate_accounts(positions: list, balances: dict, prices: dict) -> 
 
     # Spot 账户
     if 'spot' in balances:
-        console.print("[bold blue]💰 Spot Account[/bold blue]")
+        console.print("[bold blue]== Spot Account ==[/bold blue]")
         console.print()
         subtotal = _render_balance_table(balances['spot'], prices, "Balance")
         console.print(f"[dim]Subtotal: ${subtotal:,.2f}[/dim]")

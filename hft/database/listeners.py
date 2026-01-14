@@ -25,14 +25,15 @@ class DataListener(Listener):
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "db")
     persist_key: str = ""  # 子类覆盖，对应 PersistConfig 中的字段名
 
-    def __init__(self, interval: float = 300.0):
+    def __init__(self, name: str = None, interval: float = 300.0):
         """
         初始化数据监听器
 
         Args:
+            name: 监听器名称，默认使用类名
             interval: 采集间隔（秒），默认 5 分钟
         """
-        super().__init__(self.__class__.__name__, interval)
+        super().__init__(name or self.__class__.__name__, interval)
         self.db: Optional[ClickHouseDatabase] = None  # type: ignore
 
     @property
