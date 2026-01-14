@@ -12,7 +12,7 @@ import pytest
 import time
 from unittest.mock import AsyncMock, patch
 
-from hft.core.healthy import HealthyData, HealthyDataWithFallback, UnhealthyDataError
+from hft.core.healthy_data import HealthyData, HealthyDataWithFallback, UnhealthyDataError
 
 
 class TestHealthyDataBasic:

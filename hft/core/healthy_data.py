@@ -36,7 +36,6 @@ class UnhealthyDataError(Exception):
     当数据过期或不存在时抛出。
     调用方应捕获此异常并触发数据刷新。
     """
-    pass
 
 
 @dataclass

@@ -46,7 +46,7 @@ hft/database/
 用于缓存单个数据对象（如 positions, balance）。
 
 ```python
-from hft.core.healthy import HealthyData, HealthyDataWithFallback
+from hft.core.healthy_data import HealthyData, HealthyDataWithFallback
 
 # 基础用法
 ticker = HealthyData[dict](max_age=5.0)

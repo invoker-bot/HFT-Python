@@ -24,7 +24,7 @@ from ccxt.pro import Exchange as CCXTExchange
 from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Position
 from ccxt.base.errors import InvalidOrder
 from ..core.listener import Listener
-from ..core.healthy import HealthyDataWithFallback
+from ..core.healthy_data import HealthyDataWithFallback
 from ..plugin import pm
 from ..database.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
 from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener, ExchangeCurrenciesListener
