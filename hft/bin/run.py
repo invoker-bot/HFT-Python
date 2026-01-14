@@ -2,8 +2,6 @@ import asyncio
 import traceback
 import typer
 from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 from .config import console
 from ..core.app.config import AppConfig
 from ..exchange import BaseExchangeConfig
@@ -142,11 +140,8 @@ async def exchange_status_async(path: str):
         # 显示标题
         account_type = "Unified Account" if exchange.unified_account else "Separate Accounts"
         console.print()
-        console.print(Panel(
-            f"[bold cyan]{path}[/bold cyan] ({account_type})",
-            title="Exchange Status",
-            border_style="blue"
-        ))
+        console.print(f"[bold blue]Exchange:[/bold blue] [cyan]{path}[/cyan] ({account_type})")
+        console.print("[dim]" + "-" * 50 + "[/dim]")
 
         # 2. 加载市场数据
         await exchange.load_markets()
