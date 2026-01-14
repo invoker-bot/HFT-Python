@@ -149,20 +149,12 @@ async def exchange_status_async(path: str):
         ))
 
         # 2. 加载市场数据
-        console.print("[dim]Loading markets...[/dim]")
         await exchange.load_markets()
 
         # 3. 查询数据
-        console.print("[dim]Fetching positions...[/dim]")
         positions = await exchange.fetch_positions()
-
-        console.print("[dim]Fetching balances...[/dim]")
         balances = await _fetch_balances(exchange)
-
-        console.print("[dim]Fetching prices...[/dim]")
         prices = await _fetch_prices(exchange, balances)
-
-        console.print("[dim]Fetching total balance...[/dim]")
         total_usd = await exchange.medal_fetch_total_balance_usd()
 
         # 4. 渲染输出
