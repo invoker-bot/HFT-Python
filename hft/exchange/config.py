@@ -32,7 +32,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     # 基本配置
     proxy: Optional[AnyUrl] = Field(None, description="Proxy URL for exchange API requests")
     proxy_env: Optional[str] = Field(None, description="Environment variable name for proxy URL")
-    testnet: bool = Field(False, description="Use testnet or not")
+    test: bool = Field(False, description="Use test/demo trading mode")
     debug: bool = Field(False, description="Enable debug mode (no real orders)")
 
     # fee config
@@ -106,7 +106,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
         result = {}
         for support_type in self.support_types:
             config = {
-                'sandbox': self.testnet,
+                'sandbox': self.test,
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': support_type,
@@ -145,3 +145,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     def ccxt_config_dict_overrides(self, exchange_type: Literal["spot", "swap"]) -> dict:
         """生成 ccxt 配置覆盖项，子类可覆盖以添加更多配置"""
         return {}
+
+    def post_init_ccxt_instance(self, instance: CCXTExchange) -> None:
+        """ccxt 实例创建后的后处理钩子，子类可覆盖以进行额外配置（如 Demo Trading）"""
+        pass

@@ -19,7 +19,7 @@ TEST_SYMBOLS = [
 ]
 
 
-async def test_exchange_async(path: str) -> None:
+async def test_exchange_async(path: str, allow_orders: bool = False) -> None:
     """
     Test exchange connectivity and API latency.
 
@@ -124,6 +124,11 @@ async def test_exchange_async(path: str) -> None:
                     results, "fetch_funding_rate", symbol,
                     lambda s=symbol: exchange.fetch_funding_rate(s)
                 )
+
+        # ========== Order Tests (optional) ==========
+        if allow_orders:
+            console.print("\n[bold red]Order Tests (ALLOW ORDERS)[/bold red]")
+            await _test_orders(results, exchange, markets, test_pairs)
 
         # ========== WebSocket Tests ==========
         console.print("\n[bold]WebSocket Tests[/bold]")
@@ -291,3 +296,95 @@ def _print_test_report(exchange_name: str, results: list) -> None:
         summary.add_row("Rating", rating)
 
         console.print(summary)
+
+
+async def _test_orders(results: list, exchange, markets: dict, test_pairs: list[str]) -> None:
+    """
+    Optional order tests: place small market orders on spot and swap.
+
+    Spot: market buy 0.01 ETH, then market sell 0.01 ETH.
+    Swap: market buy 0.01 ETH (base amount), then market sell 0.01 ETH to close.
+
+    Note: swap amount is expressed in base amount (contracts * contractSize). Internally it is
+    converted to ccxt contract amount by dividing by contractSize.
+    """
+    if getattr(exchange.config, "debug", False):
+        console.print("[yellow]Skip order tests: exchange config debug=true[/yellow]")
+        results.append({"api": "order_tests", "symbol": "-", "status": "SKIP: debug=true", "latency": None})
+        return
+
+    spot_symbol = "ETH/USDT"
+    swap_symbol = "ETH/USDT:USDT"
+    base_amount = 0.01
+
+    # --- Spot orders ---
+    await _test_spot_orders(results, exchange, markets, spot_symbol, base_amount)
+
+    # --- Swap orders ---
+    await _test_swap_orders(results, exchange, markets, swap_symbol, base_amount)
+
+
+async def _test_spot_orders(results: list, exchange, markets: dict, symbol: str, amount: float) -> None:
+    """Place a spot buy then sell using a spot ccxt instance if needed."""
+    spot_ccxt = exchange.exchanges.get("spot")
+    created_temp = False
+
+    if symbol in markets:
+        # If spot market was loaded into BaseExchange markets, use the unified wrapper.
+        await _test_api(results, "spot_market_buy", symbol, lambda: exchange.create_order(symbol, "market", "buy", amount))
+        await _test_api(results, "spot_market_sell", symbol, lambda: exchange.create_order(symbol, "market", "sell", amount))
+        return
+
+    # Otherwise build a temporary spot ccxt instance for this test.
+    if spot_ccxt is None:
+        created_temp = True
+        config = exchange.config
+        cfg = {
+            'sandbox': config.test,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+                'recvWindow': 60000,
+            },
+        }
+        cfg.update(config.ccxt_proxy_dict())
+        cfg.update(config.ccxt_config_dict_overrides("spot"))
+        spot_ccxt = config.ccxt_exchange_class(cfg)
+        # 调用配置的后处理钩子（处理 Demo Trading 等）
+        config.post_init_ccxt_instance(spot_ccxt)
+
+    try:
+        await spot_ccxt.load_markets()
+        await _test_api(results, "spot_market_buy", symbol, lambda: spot_ccxt.create_order(symbol, "market", "buy", amount))
+        await _test_api(results, "spot_market_sell", symbol, lambda: spot_ccxt.create_order(symbol, "market", "sell", amount))
+    finally:
+        if created_temp:
+            try:
+                await spot_ccxt.close()
+            except Exception:
+                pass
+
+
+async def _test_swap_orders(results: list, exchange, markets: dict, symbol: str, base_amount: float) -> None:
+    """Place a swap buy then reduce-only sell (close), using base amount independent of contractSize."""
+    if symbol not in markets:
+        console.print(f"[yellow]Skip swap order tests: symbol not in markets: {symbol}[/yellow]")
+        results.append({"api": "swap_orders", "symbol": symbol, "status": "SKIP: symbol not found", "latency": None})
+        return
+
+    contract_size = exchange.get_contract_size(symbol)
+    if contract_size <= 0:
+        console.print(f"[yellow]Skip swap order tests: invalid contractSize for {symbol}[/yellow]")
+        results.append({"api": "swap_orders", "symbol": symbol, "status": "SKIP: invalid contractSize", "latency": None})
+        return
+
+    contract_amount = base_amount / contract_size
+
+    await _test_api(results, "swap_market_buy", symbol, lambda: exchange.create_order(symbol, "market", "buy", contract_amount))
+    await _test_api(
+        results,
+        "swap_market_sell_close",
+        symbol,
+        lambda: exchange.create_order(symbol, "market", "sell", contract_amount, params={"reduceOnly": True}),
+    )
