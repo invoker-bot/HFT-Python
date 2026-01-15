@@ -13,6 +13,7 @@ cachetools>=5.5.2
 cachetools-async>=0.0.5
 humanfriendly>=10.0
 tenacity>=8.2.2
+simpleeval>=0.9.13  # 安全的表达式求值器，用于 SmartExecutor 路由条件
 
 # Database
 clickhouse-connect>=0.8.0  # 官方异步驱动，使用 HTTP 协议
@@ -37,5 +38,6 @@ hurst>=0.0.5
 # Development dependencies (optional)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0
+# pytest-integration>=0.2.0  # 集成测试标记支持，安装后可用 --integration/--integration-cover
 # black>=23.0.0
 # ruff>=0.1.0
