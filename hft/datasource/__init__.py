@@ -1,8 +1,11 @@
 """
 DataSource 数据源模块
+
+.. deprecated::
+    DataSourceGroup, TradingPairDataSource, DataType, DataArray 已废弃。
+    请使用 hft.indicator 模块中的 IndicatorGroup 和 BaseIndicator。
 """
 from .base import BaseDataSource, DataSourceState
-from .group import DataSourceGroup, TradingPairDataSource, DataType, DataArray, UnhealthyDataError
 from .ticker_datasource import TickerDataSource
 from .trades_datasource import TradesDataSource
 from .ohlcv_datasource import OHLCVDataSource
@@ -14,12 +17,6 @@ __all__ = [
     # Base
     "BaseDataSource",
     "DataSourceState",
-    # Group
-    "DataSourceGroup",
-    "TradingPairDataSource",
-    "DataType",
-    "DataArray",
-    "UnhealthyDataError",
     # DataSources
     "TickerDataSource",
     "TradesDataSource",

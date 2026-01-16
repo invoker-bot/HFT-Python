@@ -17,8 +17,8 @@ from ..base import BaseExecutor, ExecutionResult, OrderIntent
 from ..intensity import TradeIntensityCalculator, IntensityResult
 
 if TYPE_CHECKING:
-    from ...datasource.group import DataSourceGroup
     from ...exchange.base import BaseExchange
+    from ...indicator.group import IndicatorGroup
     from .config import AvellanedaStoikovExecutorConfig
 
 
@@ -92,8 +92,11 @@ class AvellanedaStoikovExecutor(BaseExecutor):
         return 100.0
 
     @property
-    def datasource_group(self) -> "DataSourceGroup":
-        return self.root.datasource_group
+    def indicator_group(self) -> Optional["IndicatorGroup"]:
+        """获取 IndicatorGroup（如果可用）"""
+        if hasattr(self.root, 'indicator_group'):
+            return self.root.indicator_group
+        return None
 
     def _get_calculator(self, exchange_class: str, symbol: str) -> TradeIntensityCalculator:
         key = (exchange_class, symbol)
@@ -107,6 +110,17 @@ class AvellanedaStoikovExecutor(BaseExecutor):
                 min_trades=self.config.intensity_min_trades,
             )
         return self._calculators[key]
+
+    def _get_datasource(self, data_type: str, exchange_class: str, symbol: str):
+        """
+        获取数据源，使用 IndicatorGroup
+        """
+        ig = self.indicator_group
+        if ig is not None:
+            indicator = ig.get_indicator(data_type, exchange_class, symbol)
+            if indicator is not None:
+                return indicator
+        return None
 
     def _get_remaining_time(self) -> float:
         elapsed = time.time() - self._period_start
@@ -178,25 +192,20 @@ class AvellanedaStoikovExecutor(BaseExecutor):
             await exchange.medal_initialize_symbol(symbol)
 
             # 1. 获取成交数据，更新强度计算器
-            from ...datasource.group import DataType
-            trades_ds = self.datasource_group.query_single(
-                DataType.TRADES, exchange.class_name, symbol
-            )
+            trades_ds = self._get_datasource("trades", exchange.class_name, symbol)
 
             intensity_result = None
             if trades_ds:
-                trades = trades_ds.get_all()
+                trades = trades_ds.get_all() if hasattr(trades_ds, 'get_all') else list(trades_ds._data)
                 calculator = self._get_calculator(exchange.class_name, symbol)
                 intensity_result = calculator.update(trades)
 
             # 2. 获取订单簿
-            orderbook_ds = self.datasource_group.query_single(
-                DataType.ORDER_BOOK, exchange.class_name, symbol
-            )
+            orderbook_ds = self._get_datasource("order_book", exchange.class_name, symbol)
             order_book = None
             mid_deviation = 0.0
             if orderbook_ds:
-                order_book = orderbook_ds.get_latest()
+                order_book = orderbook_ds.get_latest() if hasattr(orderbook_ds, 'get_latest') else orderbook_ds._data.latest
                 if order_book:
                     mid_deviation = calculate_weighted_mid_deviation(
                         order_book,

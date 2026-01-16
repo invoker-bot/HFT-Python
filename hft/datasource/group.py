@@ -6,6 +6,11 @@ DataSourceGroup - 数据源管理器
 - TradingPairDataSource: 中间层，代表 (exchange_class, symbol) 对，持久存在
 - BaseDataSource: 底层数据源（ticker, orderbook 等），按需创建，自动销毁
 
+.. deprecated::
+    此模块已被 hft.indicator.group.IndicatorGroup 替代。
+    新代码请使用 hft.indicator.group 下的类。
+    将在 Phase 3 清理时移除。
+
 设计理念：
 - TradingPairDataSource 持久存在，可存储元数据
 - 底层 DataSource 按需创建（query 时），无访问时自动 unwatch 并销毁
@@ -44,6 +49,10 @@ class DataType(Enum):
     """
     数据类型枚举
 
+    .. deprecated::
+        此枚举已废弃。新代码请直接使用字符串 ID（如 "ticker", "trades"）。
+        通过 IndicatorGroup.get_indicator(indicator_id, exchange_class, symbol) 获取数据源。
+
     定义支持的市场数据类型，每种类型对应一个 BaseDataSource 子类：
     - TICKER: 最新价格信息 -> TickerDataSource
     - ORDER_BOOK: 订单簿深度 -> OrderBookDataSource
@@ -74,6 +83,10 @@ class UnhealthyDataError(Exception):
 class DataArray(Generic[T]):
     """
     时序数据数组，支持自动过期清理和健康检查
+
+    .. deprecated::
+        此类已被 hft.core.healthy_data.HealthyDataArray 替代。
+        新代码请使用 HealthyDataArray。
 
     这是一个增强版的 deque，专为时序市场数据设计：
     - 固定容量：超出自动淘汰最旧数据（FIFO）

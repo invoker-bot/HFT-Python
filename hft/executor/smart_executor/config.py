@@ -24,10 +24,25 @@ class RouteConfig(BaseModel):
         priority: 规则优先级（数字越小优先级越高，默认 0）
 
     条件表达式可用变量:
-        speed: float - 执行紧急度，范围 [0, 1]
-        trades: list - 最近的成交记录列表
-        edge: float - Taker 优势（相对值），如 0.01 表示 1%
-        notional: float - 该方向的成交额（USD）
+        内置变量:
+            direction: int - 交易方向（1=买，-1=卖）
+            buy: bool - 是否为买入方向
+            sell: bool - 是否为卖出方向
+            speed: float - 执行紧急度，范围 [0, 1]
+
+        SmartExecutor 特有变量:
+            notional: float - 该方向的成交额（USD），等同于 trades_notional
+            target_notional: float - 目标仓位差额的 USD 绝对值
+            trades: list - 最近的成交记录列表
+            edge: float - Taker 优势（相对值），如 0.01 表示 1%
+            trades_notional: float - 该方向的成交额（USD）
+
+        Indicator 注入变量（需在 requires 中声明）:
+            mid_price: float - 中间价（来自 MidPriceIndicator）
+            medal_edge: float - Taker 优势（来自 MedalEdgeIndicator）
+            volume: float - 成交量（来自 VolumeIndicator）
+            rsi: float - RSI 指标（来自 RSIIndicator）
+            其他自定义 Indicator 提供的变量...
 
     条件表达式可用函数:
         len(), abs(), min(), max(), sum(), round()
@@ -35,6 +50,7 @@ class RouteConfig(BaseModel):
     Examples:
         >>> RouteConfig(condition="speed > 0.9", executor="market", priority=1)
         >>> RouteConfig(condition="len(trades) > 50", executor="as", priority=2)
+        >>> RouteConfig(condition="medal_edge > 0.001", executor="market", priority=3)
         >>> RouteConfig(condition=None, executor="limit", priority=999)  # 默认规则
         >>> RouteConfig(condition="speed < 0.1", executor=None, priority=10)  # 不执行
     """

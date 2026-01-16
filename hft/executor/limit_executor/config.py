@@ -1,7 +1,9 @@
 """
 LimitExecutor 配置模块
+
+Feature 0005: 支持动态参数（表达式或字面量）
 """
-from typing import TYPE_CHECKING, ClassVar, Type
+from typing import TYPE_CHECKING, ClassVar, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -15,21 +17,23 @@ class LimitOrderLevel(BaseModel):
     """
     单层限价单配置
 
+    Feature 0005: 支持动态参数
+    - 字符串类型参数会作为表达式求值
+    - 数值类型参数直接使用
+
     Attributes:
         reverse: 是否反向订单（用于对冲）
-        spread: 距离当前价格的百分比（如 0.01 = 1%）
-        refresh_tolerance: 刷新容忍度，超过此值才更新订单价格
-            - 计算: |new_price - old_price| > refresh_tolerance * spread * old_price
-            - 值为 1.0 时类似网格交易
-        timeout: 订单超时时间（秒），超时后取消订单
+        spread: 距离当前价格的绝对价差或表达式
+        refresh_tolerance: 刷新容忍度
+        timeout: 订单超时时间（秒）
         per_order_usd: 该层订单的 USD 价值
     """
 
-    reverse: bool = Field(False, description="是否反向订单")
-    spread: float = Field(description="与当前价格的距离比")
-    refresh_tolerance: float = Field(0.5, description="刷新容忍度")
-    timeout: float = Field(60.0, description="订单超时（秒）")
-    per_order_usd: float = Field(100.0, description="单笔订单 USD")
+    reverse: Union[bool, str] = Field(False, description="是否反向订单")
+    spread: Union[float, str] = Field(description="绝对价差或表达式")
+    refresh_tolerance: Union[float, str] = Field(0.5, description="刷新容忍度")
+    timeout: Union[float, str] = Field(60.0, description="订单超时（秒）")
+    per_order_usd: Union[float, str] = Field(100.0, description="单笔订单 USD")
 
 
 class LimitExecutorConfig(BaseExecutorConfig):

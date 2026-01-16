@@ -90,6 +90,12 @@ class AppConfig(BaseConfig[AppCore]):
     # Executor 配置路径
     executor: str = Field(description="执行器配置路径（如 market/default）")
 
+    # Indicator 配置（Feature 0006）
+    indicators: dict[str, dict] = Field(
+        default_factory=dict,
+        description="指标配置，格式: {indicator_id: {class: 类名, params: {...}}}"
+    )
+
     # 调试和测试
     debug: bool = Field(False, description="调试模式，验证流程而不实际下单")
     max_duration: float | None = Field(None, description="最大运行时长（秒），None 表示无限运行直到策略退出")

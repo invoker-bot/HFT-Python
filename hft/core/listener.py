@@ -75,18 +75,18 @@ class Listener(ABC):
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
 
-    def __init__(self, name: Optional[str] = None, interval: float = 1.0):
+    def __init__(self, name: Optional[str] = None, interval: Optional[float] = 1.0):
         """
         初始化监听器
 
         Args:
             name: 监听器名称，默认使用类名
-            interval: tick 间隔（秒）
+            interval: tick 间隔（秒），None 表示不创建 tick task（事件驱动）
         """
         if name is None:
             name = f"{self.__class__.__name__}"
         self.name = name
-        self.interval = interval  # may update from config
+        self.interval: Optional[float] = interval  # None = 事件驱动，不创建 tick task
 
         # Internal state
         self._enabled = True
@@ -194,6 +194,9 @@ class Listener(ABC):
                 break
 
     async def __create_background_task_internal(self):
+        # interval=None 表示事件驱动，不创建 tick task
+        if self.interval is None:
+            return
         bt = self._background_task
         if bt is None or bt.done():  # 没有任务或已完成
             self._background_task = asyncio.create_task(
@@ -641,10 +644,10 @@ class Listener(ABC):
             self.enabled = True
             if self.state == ListenerState.STOPPED:
                 self.state = ListenerState.STARTING
-            # else:
-            #     self.logger.warning("Start called but listener not stopped")
-            # await self.__tick_internal()
-            # await self.__update_background_task_internal()
+            # interval=None 的 Listener 不创建 tick task，需要手动触发一次 tick
+            # 来完成 STARTING -> RUNNING 的状态转换（调用 on_start）
+            if self.interval is None:
+                await self.__tick_internal()
         if recursive:
             for child in list(self.children.values()):
                 # 跳过 lazy_start 的子节点，它们需要显式调用 start()

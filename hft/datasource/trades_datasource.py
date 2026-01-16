@@ -1,5 +1,10 @@
 """
 Trades 成交数据源
+
+.. deprecated::
+    此模块已被 hft.indicator.datasource.trades_datasource 替代。
+    新代码请使用 hft.indicator.datasource.TradesDataSource。
+    将在 Phase 3 清理时移除。
 """
 from typing import Optional, Any, TYPE_CHECKING
 from dataclasses import dataclass

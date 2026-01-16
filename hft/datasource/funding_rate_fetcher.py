@@ -19,7 +19,7 @@ from ..plugin import pm
 if TYPE_CHECKING:
     from .group import DataSourceGroup
     from ..exchange.base import BaseExchange
-    from ..database.listeners import FundingRatePersistListener
+    from ..indicator.persist import FundingRatePersistListener
 
 
 class GlobalFundingRateFetcher(Listener):
@@ -52,7 +52,7 @@ class GlobalFundingRateFetcher(Listener):
 
     async def on_start(self) -> None:
         """启动时创建持久化子 Listener"""
-        from ..database.listeners import FundingRatePersistListener
+        from ..indicator.persist import FundingRatePersistListener
 
         self._persist_listener = FundingRatePersistListener()
         self.add_child(self._persist_listener)

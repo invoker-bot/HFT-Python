@@ -24,7 +24,6 @@ import time
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Any, TYPE_CHECKING
-from ..datasource.group import DataType
 from .lazy_indicator import LazyIndicator
 
 if TYPE_CHECKING:
@@ -418,7 +417,7 @@ class TradeIntensityIndicator(LazyIndicator[IntensityResult]):
             if result and result.is_valid:
                 inv_adj, arr_adj = intensity.get_optimal_spread("buy", gamma=0.1)
     """
-    depends_on = [DataType.TRADES, DataType.ORDER_BOOK]
+    depends_on = ["trades", "order_book"]
 
     def __init__(
         self,
@@ -469,8 +468,8 @@ class TradeIntensityIndicator(LazyIndicator[IntensityResult]):
 
     async def _update_value(self) -> None:
         """更新指标值"""
-        trades_ds = self.get_datasource(DataType.TRADES)
-        ob_ds = self.get_datasource(DataType.ORDER_BOOK)
+        trades_ds = self.get_datasource("trades")
+        ob_ds = self.get_datasource("order_book")
 
         if trades_ds is None:
             return

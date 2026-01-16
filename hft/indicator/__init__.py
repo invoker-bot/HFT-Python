@@ -1,35 +1,106 @@
 """
 Indicator 指标模块
 
-两种指标模式：
-1. 事件驱动 (base.py): 监听 DataSource 的 update 事件
-2. Lazy Start (lazy.py): 挂载到 TradingPairDataSource，轮询计算
+Feature 0006: Indicator 与 DataSource 统一架构
+Feature 0005: Executor 动态条件与变量注入机制
+
+核心类：
+- BaseIndicator: 所有指标的基类
+- GlobalIndicator: 全局唯一的指标
+- BaseDataSource: 从 exchange 获取数据的特殊 Indicator
+
+数据源类（Feature 0006）：
+- TickerDataSource, TradesDataSource, OrderBookDataSource, OHLCVDataSource
+
+计算类指标（Feature 0005）：
+- MidPriceIndicator, MedalEdgeIndicator, VolumeIndicator, RSIIndicator
+
+持久化类：
+- DataListener: 数据采集监听器基类
+- ExchangeFundingRateBillListener: 资金费率账单采集
+- ExchangeBalanceUsdListener: 账户余额快照采集
+- FundingRatePersistListener: 资金费率快照持久化
+
+兼容类（待迁移）：
+- LazyIndicator: 挂载到 TradingPairDataSource，轮询计算
 """
 from .base import (
-    IndicatorResult,
     BaseIndicator,
-    SimpleIndicator,
-    ChainedIndicator,
+    GlobalIndicator,
+    BaseDataSource,
+    DEFAULT_EXPIRE_SECONDS,
+    GLOBAL_EXPIRE_SECONDS,
 )
+from .group import (
+    IndicatorGroup,
+    TradingPairIndicators,
+    GlobalIndicators,
+)
+# Feature 0006: DataSource classes
+from .datasource import (
+    TickerDataSource,
+    TickerData,
+    TradesDataSource,
+    TradeData,
+    OrderBookDataSource,
+    OrderBookData,
+    OrderBookLevel,
+    OHLCVDataSource,
+    CandleData,
+)
+# Feature 0005: Computed indicators
+from .computed import (
+    MidPriceIndicator as ComputedMidPriceIndicator,
+    MedalEdgeIndicator,
+    VolumeIndicator,
+    RSIIndicator,
+)
+# Legacy lazy indicators
 from .lazy_indicator import (
     LazyIndicator,
     VWAPIndicator,
     SpreadIndicator,
-    MidPriceIndicator,
+    MidPriceIndicator,  # Legacy version
 )
 from .intensity_indicator import (
     IntensityResult,
     TradeIntensityCalculator,
     TradeIntensityIndicator,
 )
+from .persist import (
+    DataListener,
+    ExchangeFundingRateBillListener,
+    ExchangeBalanceUsdListener,
+    FundingRatePersistListener,
+)
 
 __all__ = [
-    # Event-driven indicators
-    "IndicatorResult",
+    # Feature 0006 core classes
     "BaseIndicator",
-    "SimpleIndicator",
-    "ChainedIndicator",
-    # Lazy start indicators
+    "GlobalIndicator",
+    "BaseDataSource",
+    "DEFAULT_EXPIRE_SECONDS",
+    "GLOBAL_EXPIRE_SECONDS",
+    # Indicator management
+    "IndicatorGroup",
+    "TradingPairIndicators",
+    "GlobalIndicators",
+    # Feature 0006: DataSource classes
+    "TickerDataSource",
+    "TickerData",
+    "TradesDataSource",
+    "TradeData",
+    "OrderBookDataSource",
+    "OrderBookData",
+    "OrderBookLevel",
+    "OHLCVDataSource",
+    "CandleData",
+    # Feature 0005: Computed indicators
+    "ComputedMidPriceIndicator",
+    "MedalEdgeIndicator",
+    "VolumeIndicator",
+    "RSIIndicator",
+    # Lazy start indicators (legacy)
     "LazyIndicator",
     "VWAPIndicator",
     "SpreadIndicator",
@@ -38,4 +109,9 @@ __all__ = [
     "IntensityResult",
     "TradeIntensityCalculator",
     "TradeIntensityIndicator",
+    # Data persistence
+    "DataListener",
+    "ExchangeFundingRateBillListener",
+    "ExchangeBalanceUsdListener",
+    "FundingRatePersistListener",
 ]

@@ -4,12 +4,49 @@
 
 执行器（Executor）负责将策略的目标仓位转换为实际交易订单。
 
+### 数据驱动设计
+
+本项目采用**数据驱动**的执行架构：
+
+1. **Indicator 统一架构**：所有数据源（DataSource）都是特殊的 Indicator，统一通过 `IndicatorGroup` 管理
+2. **变量注入机制**：Indicator 通过 `calculate_vars(direction)` 提供变量，Executor 通过 `requires` 声明依赖
+3. **条件表达式**：执行逻辑由数据驱动，通过 `condition` 表达式动态决策
+4. **动态参数**：spread、timeout 等参数支持表达式，根据市场状态实时计算
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    数据驱动执行流程                          │
+├─────────────────────────────────────────────────────────────┤
+│  IndicatorGroup                                             │
+│  ├── DataSource (ticker, trades, order_book, ...)          │
+│  └── Computed Indicator (rsi, medal_edge, ...)             │
+│           │                                                 │
+│           ▼ calculate_vars(direction)                       │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Context Variables                                   │   │
+│  │  {direction, buy, sell, speed, notional, mid_price,  │   │
+│  │   rsi, medal_edge, volume, ...}                      │   │
+│  └─────────────────────────────────────────────────────┘   │
+│           │                                                 │
+│           ▼ evaluate_condition / evaluate_param             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Executor Decision                                   │   │
+│  │  - condition: "rsi < 30 and buy"                     │   │
+│  │  - spread: "mid_price * 0.001"                       │   │
+│  │  - timeout: "30 if speed > 0.5 else 60"              │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Feature 0005**: 支持动态条件和变量注入机制，允许通过表达式控制执行逻辑。
+
 ## 类层次
 
 ```
 BaseExecutor (抽象基类)
 ├── MarketExecutor      # 市价单执行
 ├── LimitExecutor       # 限价单执行（做市）
+├── SmartExecutor       # 智能路由执行器
 └── PCAExecutor         # Position Cost Averaging（马丁格尔）
 ```
 
@@ -23,6 +60,8 @@ BaseExecutor (抽象基类)
 | `paused` | bool | 是否暂停 |
 | `_active_orders` | dict | 活跃订单追踪 |
 | `_stats` | dict | 执行统计 |
+| `requires` | list[str] | 依赖的 indicator ID 列表（Feature 0005） |
+| `condition` | str \| None | 执行条件表达式（Feature 0005） |
 
 ### 核心方法
 
@@ -53,6 +92,37 @@ async def manage_limit_orders(
     current_price: float,
 ) -> tuple[int, int, int]:
     """管理限价订单：创建/取消/复用"""
+    pass
+
+# Feature 0005: 动态条件与变量注入
+def collect_context_vars(
+    self,
+    exchange_class: str,
+    symbol: str,
+    direction: int,
+    speed: float,
+    notional: float,
+) -> dict[str, Any]:
+    """收集条件求值所需的所有变量"""
+    pass
+
+def evaluate_condition(self, context: dict[str, Any]) -> bool:
+    """求值 condition 表达式，返回 True 执行，False 跳过"""
+    pass
+
+def evaluate_param(self, param: Any, context: dict[str, Any]) -> Any:
+    """求值参数（支持表达式或字面量）"""
+    pass
+
+def get_dynamic_per_order_usd(
+    self,
+    exchange_class: str,
+    symbol: str,
+    direction: int,
+    speed: float,
+    notional: float,
+) -> float:
+    """获取动态 per_order_usd（支持表达式），子类可覆盖"""
     pass
 ```
 
@@ -109,24 +179,27 @@ async def execute_delta(self, exchange, symbol, delta_usd, speed, current_price)
 
 ### 配置
 
+> **重要**：`spread` 参数为**绝对价差**（单位为计价货币，如 USDT）。
+> 如需按比例设置，请使用表达式：`"mid_price * 0.001"` 表示 0.1%。
+
 ```yaml
 # conf/executor/limit/maker.yaml
 class_name: limit
 interval: 0.5
 
 orders:
-  - spread: 0.001           # 距离当前价格 0.1%
-    refresh_tolerance: 0.5  # 价格偏离 50% 时刷新
-    timeout: 30             # 30秒后超时取消
+  - spread: "mid_price * 0.001"   # 表达式：0.1% 价差
+    refresh_tolerance: 0.5        # 价格偏离 50% 时刷新
+    timeout: 30                   # 30秒后超时取消
     per_order_usd: 50
 
-  - spread: 0.003
+  - spread: "mid_price * 0.003"   # 表达式：0.3% 价差
     refresh_tolerance: 0.5
     timeout: 60
     per_order_usd: 100
 
-  - spread: 0.005
-    reverse: true           # 反向订单（对冲）
+  - spread: 50.0                  # 字面量：绝对价差 50 USDT
+    reverse: true                 # 反向订单（对冲）
     refresh_tolerance: 0.8
     timeout: 120
     per_order_usd: 200
@@ -163,19 +236,22 @@ Position Cost Averaging 执行器，马丁格尔风格。
 
 ### 配置
 
+> **重要**：`spread_open` 和 `spread_close` 参数为**绝对价差**（单位为计价货币，如 USDT）。
+> 如需按比例设置，请使用表达式：`"mid_price * 0.01"` 表示 1%。
+
 ```yaml
 # conf/executor/pca/default.yaml
 class_name: pca
 interval: 5.0
 
-base_order_usd: 100.0       # 基础订单金额
-amount_multiplier: 1.5      # 加仓金额倍数
-spread_open: 0.01           # 开仓距离（1%）
-spread_close: 0.02          # 平仓距离（2%）
-spread_multiplier: 1.2      # 加仓距离倍数
-max_additions: 5            # 最大加仓次数
-timeout: 3600               # 订单超时（1小时）
-refresh_tolerance: 0.3      # 刷新容忍度
+base_order_usd: 100.0                # 基础订单金额
+amount_multiplier: 1.5               # 加仓金额倍数
+spread_open: "mid_price * 0.01"      # 开仓距离（1%）
+spread_close: "mid_price * 0.02"     # 平仓距离（2%）
+spread_multiplier: 1.2               # 加仓距离倍数
+max_additions: 5                     # 最大加仓次数
+timeout: 3600                        # 订单超时（1小时）
+refresh_tolerance: 0.3               # 刷新容忍度
 ```
 
 ### 加仓计算
@@ -279,9 +355,55 @@ class ExecutionResult:
 ```yaml
 # 高频交易：短 interval，小 spread
 interval: 0.1
-spread: 0.0005
+spread: "mid_price * 0.0005"
 
 # 低频交易：长 interval，大 spread
 interval: 5.0
-spread: 0.01
+spread: "mid_price * 0.01"
 ```
+
+## Feature 0005: 动态条件与变量注入
+
+### 内置变量
+
+以下变量始终可用，由系统自动注入：
+
+| 变量名 | 类型 | 说明 |
+|--------|------|------|
+| `direction` | `int` | 交易方向：1（多）或 -1（空） |
+| `buy` | `bool` | `direction == 1` |
+| `sell` | `bool` | `direction == -1` |
+| `speed` | `float` | 目标仓位的紧急程度 |
+| `notional` | `float` | 目标仓位的 USD 价值（绝对值） |
+| `mid_price` | `float` | 当前价格（LimitExecutor 注入） |
+
+### requires 与 condition
+
+```yaml
+# conf/executor/demo/market_rsi.yaml
+class_name: market
+requires:
+  - rsi
+condition: "(buy and rsi < 30) or (sell and rsi > 70)"
+per_order_usd: 100
+```
+
+- `requires`：声明依赖的 indicator ID，系统会注入其变量
+- `condition`：表达式为 True 时执行，False 时跳过
+
+### 动态参数
+
+LimitExecutor 支持表达式参数：
+
+```yaml
+orders:
+  - spread: "mid_price * 0.001"           # 表达式：0.1% 价差
+    timeout: "30 if speed > 0.5 else 60"  # 条件表达式
+    per_order_usd: "notional * 0.1"       # 动态金额
+    refresh_tolerance: 0.5                 # 字面量
+    reverse: "sell"                        # 动态反向
+```
+
+### 安全函数白名单
+
+表达式仅支持以下函数：`len`、`abs`、`min`、`max`、`sum`、`round`

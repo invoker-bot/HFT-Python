@@ -20,7 +20,7 @@ from abc import abstractmethod
 from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any
 from ..core.listener import Listener
 from ..plugin import pm
 
@@ -177,6 +177,32 @@ class BaseExecutor(Listener):
     @property
     def active_orders_count(self) -> int:
         return len(self._active_orders)
+
+    def get_dynamic_per_order_usd(
+        self,
+        exchange_class: str,
+        symbol: str,
+        direction: int,
+        speed: float,
+        notional: float,
+    ) -> float:
+        """
+        获取动态 per_order_usd（支持表达式）
+
+        子类可覆盖此方法以支持动态参数。
+        默认实现返回静态 per_order_usd 属性值。
+
+        Args:
+            exchange_class: 交易所类名
+            symbol: 交易对
+            direction: 交易方向（1=买，-1=卖）
+            speed: 执行紧急度
+            notional: 目标仓位的 USD 价值（绝对值）
+
+        Returns:
+            单笔订单大小（USD）
+        """
+        return self.per_order_usd
 
     # ===== 工具方法 =====
 
@@ -469,6 +495,249 @@ class BaseExecutor(Listener):
         self._active_orders.clear()
         return total_cancelled
 
+    async def cancel_orders_for_symbol(
+        self,
+        exchange_name: str,
+        symbol: str,
+    ) -> int:
+        """
+        取消特定 (exchange, symbol) 的所有活跃订单
+
+        用于 SmartExecutor 切换执行器时的订单清理。
+
+        Args:
+            exchange_name: 交易所名称
+            symbol: 交易对
+
+        Returns:
+            取消的订单数量
+        """
+        if not self._active_orders:
+            return 0
+
+        # 收集匹配的订单
+        orders_to_cancel = []
+        keys_to_remove = []
+
+        for key, order in self._active_orders.items():
+            if order.exchange_name == exchange_name and order.symbol == symbol:
+                orders_to_cancel.append(order)
+                keys_to_remove.append(key)
+
+        if not orders_to_cancel:
+            return 0
+
+        # 尝试取消订单
+        try:
+            exchange = self.exchange_group.children.get(exchange_name)
+            if not exchange:
+                self.logger.warning("Exchange %s not found", exchange_name)
+                return 0
+
+            cancel_ids = [o.order_id for o in orders_to_cancel]
+            await exchange.cancel_orders(cancel_ids, symbol)
+
+            # 从活跃订单中移除
+            for key in keys_to_remove:
+                self._active_orders.pop(key, None)
+
+            self.logger.info(
+                "[%s] Cancelled %d orders for %s",
+                exchange_name, len(orders_to_cancel), symbol
+            )
+            return len(orders_to_cancel)
+
+        except Exception as e:
+            self.logger.warning(
+                "[%s] Failed to cancel orders for %s: %s",
+                exchange_name, symbol, e
+            )
+            return 0
+
+    # ===== 条件求值与变量注入（Feature 0005）=====
+
+    @property
+    def requires(self) -> list[str]:
+        """依赖的 indicator ID 列表"""
+        return getattr(self.config, 'requires', None) or []
+
+    @property
+    def condition(self) -> Optional[str]:
+        """执行条件表达式，None 表示始终执行"""
+        return getattr(self.config, 'condition', None)
+
+    def _get_indicator(self, indicator_id: str, exchange_class: str, symbol: str):
+        """
+        获取 indicator 实例并标记为 required
+
+        通过 AppCore.query_indicator 获取，并自动标记为被依赖。
+
+        Args:
+            indicator_id: indicator ID
+            exchange_class: 交易所类名
+            symbol: 交易对
+
+        Returns:
+            Indicator 实例，如果不存在返回 None
+        """
+        if self.root is None:
+            return None
+        indicator_group = getattr(self.root, 'indicator_group', None)
+        if indicator_group is None:
+            return None
+
+        indicator = indicator_group.query_indicator(indicator_id, exchange_class, symbol)
+
+        # 标记为被 requires 依赖（Feature 0005）
+        if indicator is not None and hasattr(indicator, 'set_requires_flag'):
+            indicator.set_requires_flag(True)
+
+        return indicator
+
+    def check_requires_ready(self, exchange_class: str, symbol: str) -> bool:
+        """
+        检查所有 requires 中的 indicator 是否都 ready
+
+        当任一 requires indicator 未 ready 时，返回 False。
+        这是 Feature 0005 的 ready gate 机制。
+
+        Args:
+            exchange_class: 交易所类名
+            symbol: 交易对
+
+        Returns:
+            True: 所有 requires indicator 都 ready
+            False: 至少有一个 indicator 未 ready
+        """
+        if not self.requires:
+            return True  # 无依赖，直接通过
+
+        for indicator_id in self.requires:
+            indicator = self._get_indicator(indicator_id, exchange_class, symbol)
+            if indicator is None or not indicator.is_ready():
+                self.logger.debug(
+                    "Indicator %s not ready for %s:%s, skipping execution",
+                    indicator_id, exchange_class, symbol
+                )
+                return False
+
+        return True
+
+    def collect_context_vars(
+        self,
+        exchange_class: str,
+        symbol: str,
+        direction: int,
+        speed: float,
+        notional: float,
+    ) -> dict[str, Any]:
+        """
+        收集条件求值所需的所有变量
+
+        包括：
+        1. 内置变量（direction, buy, sell, speed, notional）
+        2. requires 中声明的 indicator 提供的变量
+
+        Args:
+            exchange_class: 交易所类名
+            symbol: 交易对
+            direction: 交易方向（1=买，-1=卖）
+            speed: 执行紧急度
+            notional: 目标仓位的 USD 价值（绝对值）
+
+        Returns:
+            变量字典
+        """
+        # 内置变量
+        context: dict[str, Any] = {
+            "direction": direction,
+            "buy": direction == 1,
+            "sell": direction == -1,
+            "speed": speed,
+            "notional": notional,
+        }
+
+        # 从 indicator 收集变量
+        for indicator_id in self.requires:
+            indicator = self._get_indicator(indicator_id, exchange_class, symbol)
+            if indicator and indicator.is_ready():
+                try:
+                    vars_dict = indicator.calculate_vars(direction)
+                    context.update(vars_dict)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to get vars from indicator %s: %s",
+                        indicator_id, e
+                    )
+
+        return context
+
+    def evaluate_condition(self, context: dict[str, Any]) -> bool:
+        """
+        求值 condition 表达式
+
+        Args:
+            context: 变量上下文
+
+        Returns:
+            True: 执行
+            False: 跳过（静默等待下次 tick）
+        """
+        if self.condition is None:
+            return True
+
+        return self._safe_eval_bool(self.condition, context)
+
+    def evaluate_param(
+        self,
+        param: Any,
+        context: dict[str, Any],
+    ) -> Any:
+        """
+        求值参数（支持表达式或字面量）
+
+        Args:
+            param: 参数值（str 为表达式，其他为字面量）
+            context: 变量上下文
+
+        Returns:
+            求值结果
+        """
+        if isinstance(param, str):
+            return self._safe_eval(param, context)
+        return param
+
+    def _safe_eval(self, expr: str, context: dict[str, Any]) -> Any:
+        """安全求值表达式"""
+        from simpleeval import EvalWithCompoundTypes, DEFAULT_OPERATORS
+
+        # 安全函数白名单
+        safe_functions = {
+            'len': len,
+            'abs': abs,
+            'min': min,
+            'max': max,
+            'sum': sum,
+            'round': round,
+        }
+
+        evaluator = EvalWithCompoundTypes(
+            names=context,
+            functions=safe_functions,
+            operators=DEFAULT_OPERATORS,
+        )
+
+        try:
+            return evaluator.eval(expr)
+        except Exception as e:
+            self.logger.warning("Expression eval failed: %s - %s", expr, e)
+            return None
+
+    def _safe_eval_bool(self, expr: str, context: dict[str, Any]) -> bool:
+        """安全求值布尔表达式"""
+        result = self._safe_eval(expr, context)
+        return bool(result) if result is not None else False
+
     # ===== 抽象方法 =====
 
     @abstractmethod
@@ -603,26 +872,60 @@ class BaseExecutor(Listener):
 
         # 3. 计算差值
         delta_usd = target_usd - current_usd
+        direction = 1 if delta_usd > 0 else -1
 
-        # 4. 检查是否需要执行
+        # 4. 检查 requires ready gate（Feature 0005）
+        # 任一 requires indicator 未 ready 时，跳过执行
+        if not self.check_requires_ready(exchange.class_name, symbol):
+            return None
+
+        # 5. 收集上下文变量（Feature 0005）
+        # 无论 condition 是否为 None，都要收集变量（供 condition 和动态参数使用）
+        context = self.collect_context_vars(
+            exchange_class=exchange.class_name,
+            symbol=symbol,
+            direction=direction,
+            speed=speed,
+            notional=abs(delta_usd),
+        )
+        # 注入 mid_price 供表达式使用
+        context["mid_price"] = price
+
+        # 6. 检查 condition（Feature 0005）
+        # condition=None 视为 True（无条件执行）
+        # condition 为 False 时静默跳过，等待下次 tick
+        if not self.evaluate_condition(context):
+            return None  # condition 不满足，跳过
+
+        # 7. 获取动态 per_order_usd（Feature 0005）
+        # 可能使用 context 中的变量
+        dynamic_per_order_usd = self.get_dynamic_per_order_usd(
+            exchange_class=exchange.class_name,
+            symbol=symbol,
+            direction=direction,
+            speed=speed,
+            notional=abs(delta_usd),
+        )
+
+        # 8. 检查是否需要执行
         # always=True 时跳过阈值检查（market making 模式）
-        if not self.config.always and abs(delta_usd) < self.per_order_usd:
+        if not self.config.always and abs(delta_usd) < dynamic_per_order_usd:
             return None  # 差值太小，不执行
 
         self._stats["executions"] += 1
 
-        # 5. 执行交易（限制单笔大小）
+        # 9. 执行交易（限制单笔大小）
         # 如果 delta 很大，分多次执行，每次最多 per_order_usd
         execute_usd = delta_usd
-        if abs(execute_usd) > self.per_order_usd:
-            execute_usd = self.per_order_usd if delta_usd > 0 else -self.per_order_usd
+        if abs(execute_usd) > dynamic_per_order_usd:
+            execute_usd = dynamic_per_order_usd if delta_usd > 0 else -dynamic_per_order_usd
 
         self.logger.info(
             "[%s] %s: target=%.2f, current=%.2f, delta=%.2f, execute=%.2f USD",
             exchange.name, symbol, target_usd, current_usd, delta_usd, execute_usd
         )
 
-        # 6. 调用子类实现的执行方法
+        # 10. 调用子类实现的执行方法
         result = await self.execute_delta(
             exchange=exchange,
             symbol=symbol,

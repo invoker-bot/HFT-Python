@@ -2,222 +2,228 @@
 
 ## 概述
 
-数据源模块采用三层架构，实现市场数据的高效订阅和管理：
+> **重要**：本项目采用 **Indicator 统一架构**（Feature 0006）。
+> DataSource 是特殊的 Indicator，统一通过 `IndicatorGroup` 管理。
+
+数据源（DataSource）负责从交易所获取市场数据，是数据驱动执行架构的基础。
 
 ```
-DataSourceGroup (顶层管理器)
-│   - 从 ExchangeGroup 的 load_markets() 同步所有交易对
-│   - TradingPairDataSource 持久存在，不会被删除
+┌─────────────────────────────────────────────────────────────┐
+│                    Indicator 统一架构                        │
+├─────────────────────────────────────────────────────────────┤
+│  IndicatorGroup (顶层管理器)                                 │
+│  ├── GlobalIndicators (全局指标)                            │
+│  │   └── GlobalFundingRateDataSource                       │
+│  │                                                          │
+│  └── LocalIndicators (交易对级指标)                         │
+│      └── TradingPairIndicators: "okx:BTC/USDT:USDT"        │
+│          ├── DataSource (数据源类 Indicator)                │
+│          │   ├── TickerDataSource                          │
+│          │   ├── OrderBookDataSource                       │
+│          │   ├── TradesDataSource                          │
+│          │   └── OHLCVDataSource                           │
+│          │                                                  │
+│          └── Computed Indicator (计算类 Indicator)          │
+│              ├── MidPriceIndicator                         │
+│              ├── MedalEdgeIndicator                        │
+│              ├── VolumeIndicator                           │
+│              └── RSIIndicator                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 设计理念
+
+### DataSource 是特殊的 Indicator
+
+| 类型 | 数据来源 | 基类 | 示例 |
+|------|----------|------|------|
+| DataSource | 从 Exchange 获取 | `BaseDataSource` | TickerDataSource, TradesDataSource |
+| Computed | 从其他 Indicator 计算 | `BaseIndicator` | RSIIndicator, MedalEdgeIndicator |
+
+两者都：
+- 实现 `calculate_vars(direction)` 方法，向 Executor 提供变量
+- 通过 `IndicatorGroup.query_indicator()` 统一访问
+- 支持 `is_ready()` 检查数据健康状态
+
+### 数据驱动执行
+
+```
+DataSource.on_tick()
+    │
+    ▼ 获取市场数据
+HealthyDataArray._data
+    │
+    ▼ calculate_vars(direction)
+Context Variables
+    │
+    ▼ Executor.evaluate_condition()
+执行决策
+```
+
+## 模块结构
+
+```
+hft/indicator/
+├── base.py              # BaseIndicator, BaseDataSource
+├── group.py             # IndicatorGroup, TradingPairIndicators
+├── factory.py           # IndicatorFactory 注册表
 │
-├── TradingPairDataSource: "okx:BTC/USDT:USDT" (中间层)
-│   │   - 代表一个 (exchange_class, symbol) 对
-│   │   - lazy_start: 初始为 STOPPED，首次 query 时启动
-│   │   - 持久存在，可存储元数据
-│   │
-│   ├── 数据层 (lazy_start=True, auto-stop)
-│   │   ├── TickerDataSource    → 5分钟无query → stop()（保留缓存）
-│   │   ├── OrderBookDataSource → stop()（保留缓存）
-│   │   ├── TradesDataSource    → stop()（保留缓存）
-│   │   └── OHLCVDataSource     → stop()（保留缓存）
-│   │
-│   └── 指标层 (LazyIndicator, 依赖数据层)
-│       ├── VWAPIndicator       → 依赖 TradesDataSource
-│       ├── SpreadIndicator     → 依赖 OrderBookDataSource
-│       └── TradeIntensityIndicator → 依赖 TRADES + ORDER_BOOK
+├── datasource/          # 数据源类 Indicator
+│   ├── ticker_datasource.py
+│   ├── orderbook_datasource.py
+│   ├── trades_datasource.py
+│   ├── ohlcv_datasource.py
+│   └── funding_rate_datasource.py
 │
-└── TradingPairDataSource: "binance:ETH/USDT:USDT"
-    └── (空，等待 query)
+└── computed/            # 计算类 Indicator
+    ├── mid_price_indicator.py
+    ├── medal_edge_indicator.py
+    ├── volume_indicator.py
+    └── rsi_indicator.py
 ```
 
-## 设计原则
+## 数据源类型
 
-1. **按需创建**：底层 DataSource 只在 query 时才创建
-2. **stop() 而非销毁**：无人查询超时后自动 stop()，保留缓存数据
-3. **lazy_start**：数据源初始为 STOPPED 状态，不跟随父节点自动启动
-4. **持久中间层**：TradingPairDataSource 持久存在，可存储元数据
-5. **资源优化**：watch 操作是资源消耗的主要来源，只管理 watch 层生命周期
-
-## lazy_start 生命周期
-
-```python
-# Listener 基类新增 lazy_start 属性
-class Listener:
-    lazy_start: bool = False  # 默认跟随父节点启动
-
-class BaseDataSource(Listener):
-    lazy_start: bool = True   # 数据源不跟随父节点启动
-
-class TradingPairDataSource(GroupListener):
-    lazy_start: bool = True   # 交易对容器也不跟随父节点启动
-```
-
-生命周期流程：
-1. **初始化**：DataSource 创建后保持 STOPPED 状态
-2. **首次 query**：调用 `start()`，开始 watch 数据
-3. **超时无访问**：调用 `stop()`，停止 watch 但保留缓存
-4. **再次 query**：调用 `start()`，快速恢复
+| 类 | 数据类型 | 说明 |
+|----|----------|------|
+| `TickerDataSource` | Ticker | 最新价格、买卖价 |
+| `OrderBookDataSource` | OrderBook | 订单簿深度 |
+| `TradesDataSource` | Trade | 成交记录 |
+| `OHLCVDataSource` | Candle | K线数据 |
+| `FundingRateDataSource` | FundingRate | 资金费率 |
 
 ## 使用示例
 
-### 数据源查询
+### 通过 IndicatorGroup 查询
 
 ```python
-# 获取 ticker 数据
-ticker_ds = datasource_group.query("okx", "BTC/USDT:USDT", DataType.TICKER)
-if ticker_ds:
-    data = ticker_ds.get_latest()
+# 获取 IndicatorGroup
+indicator_group = app.indicator_group
 
-# 批量获取多个交易对
-sources = datasource_group.query_many(
-    "okx",
-    ["BTC/USDT:USDT", "ETH/USDT:USDT"],
-    DataType.TICKER
-)
+# 查询数据源（首次调用会创建并启动）
+ticker = indicator_group.query_indicator("ticker", "okx", "BTC/USDT:USDT")
+trades = indicator_group.query_indicator("trades", "okx", "BTC/USDT:USDT")
 
-# 获取 TradingPairDataSource（不创建数据源）
-pair = datasource_group.get_trading_pair("okx", "BTC/USDT:USDT")
-
-# 列出所有交易对
-all_pairs = datasource_group.list_trading_pairs()
-okx_pairs = datasource_group.list_trading_pairs("okx")
+# 检查数据是否就绪
+if ticker and ticker.is_ready():
+    # 获取变量（用于 Executor 条件求值）
+    vars = ticker.calculate_vars(direction=1)
+    print(f"Last: {vars['last']}, Mid: {vars['mid']}")
 ```
 
-### 指标查询
+### 在 Executor 中使用
 
-```python
-from hft.indicator import VWAPIndicator, SpreadIndicator, TradeIntensityIndicator
-
-# 获取 TradingPairDataSource
-pair = datasource_group.get_trading_pair("okx", "BTC/USDT:USDT")
-
-# 查询指标（首次调用会创建并启动）
-vwap = pair.query_indicator(VWAPIndicator, window=200)
-spread = pair.query_indicator(SpreadIndicator)
-intensity = pair.query_indicator(TradeIntensityIndicator)
-
-# 获取指标值
-if vwap:
-    vwap_value = vwap.get_value()
-
-if intensity and intensity.is_ready:
-    result = intensity.get_value()
-    print(f"buy_k: {result.buy_k}, sell_k: {result.sell_k}")
+```yaml
+# conf/executor/demo/market_with_ticker.yaml
+class_name: market
+requires:
+  - ticker
+condition: "spread < 0.001"  # 价差小于 0.1% 时执行
+per_order_usd: 100
 ```
 
-## 数据类型
+## calculate_vars 接口
+
+所有 DataSource 必须实现 `calculate_vars` 方法：
+
+### TickerDataSource
 
 ```python
-class DataType(Enum):
-    TICKER = "ticker"           # 最新价格
-    ORDER_BOOK = "order_book"   # 订单簿
-    TRADES = "trades"           # 成交记录
-    OHLCV = "ohlcv"             # K线数据
+def calculate_vars(self, direction: int) -> dict[str, Any]:
+    ticker = self._data.latest
+    if ticker is None:
+        return {"ticker": None, "last": None}
+    return {
+        "ticker": ticker,
+        "last": ticker.last,
+        "bid": ticker.bid,
+        "ask": ticker.ask,
+        "mid": (ticker.bid + ticker.ask) / 2,
+        "spread": (ticker.ask - ticker.bid) / ticker.bid,
+    }
 ```
 
-## 类层级
-
-### DataSourceGroup
-
-顶层管理器，继承 `GroupListener`。
+### TradesDataSource
 
 ```python
-class DataSourceGroup(GroupListener):
-    def sync_children_params(self):
-        # 从 ExchangeGroup 获取所有 (exchange_class, symbol) 对
-        params = {}
-        for exchange in self.exchange_group.children.values():
-            for symbol in exchange.market_trading_pairs.keys():
-                params[f"{exchange.class_name}:{symbol}"] = {...}
-        return params
-
-    def query(self, exchange_class, symbol, data_type) -> BaseDataSource:
-        # 委托给 TradingPairDataSource
-        pair = self._get_trading_pair_source(exchange_class, symbol)
-        return pair.query(data_type)
+def calculate_vars(self, direction: int) -> dict[str, Any]:
+    return {
+        "trades": list(self._data),
+        "trade_count": len(self._data),
+        "last_trade_price": self._data.latest.price if self._data.latest else None,
+    }
 ```
 
-### TradingPairDataSource
-
-中间层，代表一个交易对，继承 `GroupListener`。
+### OrderBookDataSource
 
 ```python
-class TradingPairDataSource(GroupListener):
-    lazy_start: bool = True
-    DEFAULT_AUTO_STOP_TIMEOUT: float = 300.0  # 5分钟
-
-    def query(self, data_type: DataType) -> BaseDataSource:
-        """获取数据源，如果已 stop 会重新 start"""
-        self._last_query_time[data_type] = time.time()
-
-        if child_name in self.children:
-            ds = self.children[child_name]
-            ds.request_watch()
-            if ds.state == ListenerState.STOPPED:
-                asyncio.create_task(ds.start())
-            return ds
-
-        # 创建新的数据源
-        ds = self.create_dynamic_child(...)
-        ds.request_watch()
-        asyncio.create_task(ds.start())
-        return ds
-
-    def query_indicator(self, indicator_class, **kwargs) -> LazyIndicator:
-        """获取指标，如果已 stop 会重新 start"""
-        ...
-
-    async def on_tick(self) -> bool:
-        """检查并停止空闲的数据源（不删除）"""
-        for data_type, last_time in self._last_query_time.items():
-            if now - last_time > self._auto_stop_timeout:
-                if ds.state == ListenerState.RUNNING:
-                    await ds.stop()  # 只停止，不销毁
-        return False
+def calculate_vars(self, direction: int) -> dict[str, Any]:
+    ob = self._data.latest
+    if ob is None:
+        return {"order_book": None, "best_bid": None, "best_ask": None}
+    return {
+        "order_book": ob,
+        "best_bid": ob.bids[0].price if ob.bids else None,
+        "best_ask": ob.asks[0].price if ob.asks else None,
+        "bid_depth": sum(b.amount for b in ob.bids),
+        "ask_depth": sum(a.amount for a in ob.asks),
+    }
 ```
 
-### BaseDataSource
+## HealthyDataArray
 
-底层数据源，提供 watch + fetch 双通道数据获取。
+DataSource 使用 `HealthyDataArray` 存储数据，提供健康检查：
 
 ```python
-class BaseDataSource(Listener):
-    lazy_start: bool = True  # 不跟随父节点启动
+class HealthyDataArray(Generic[T]):
+    """带健康检查的数据数组"""
 
-    async def _watch(self) -> T:
-        """WebSocket 订阅"""
-        ...
+    @property
+    def latest(self) -> Optional[T]:
+        """获取最新数据"""
 
-    async def _fetch(self) -> T:
-        """REST API fallback"""
-        ...
+    def is_healthy(self) -> bool:
+        """检查数据是否健康"""
 
-    def request_watch(self):
-        """刷新 auto-unwatch 计时器"""
-        self._last_watch_request = time.time()
+    @property
+    def timeout(self) -> float:
+        """数据超时时间（秒）"""
+
+    @property
+    def cv(self) -> float:
+        """采样间隔变异系数"""
+
+    @property
+    def range(self) -> float:
+        """实际覆盖时间 / 期望窗口时间"""
+```
+
+### ready_condition
+
+可通过 `ready_condition` 配置数据就绪条件：
+
+```yaml
+# conf/app/demo/main.yaml
+indicators:
+  trades:
+    class: TradesDataSource
+    params:
+      window: 300.0
+    ready_condition: "timeout < 60 and cv < 0.8 and range > 0.6"
 ```
 
 ## 生命周期
 
-1. **启动时**：DataSourceGroup 从 load_markets() 创建所有 TradingPairDataSource（STOPPED 状态）
-2. **首次 query**：按需创建具体的 DataSource 并 start()
-3. **后续 query**：刷新访问时间，返回现有实例（如已 stop 则重新 start）
-4. **超时未访问**：on_tick() 检测并 stop() 空闲的 DataSource（保留缓存）
-5. **停止时**：所有 DataSource 停止 watch
-
-## 统计信息
-
-```python
-# 获取统计
-stats = datasource_group.get_stats()
-# {
-#     "total_pairs": 1000,
-#     "by_exchange": {"okx": 500, "binance": 500},
-#     "active_datasources": {"ticker": 10, "order_book": 5},
-#     "active_indicators": {"VWAPIndicator": 3, "SpreadIndicator": 2}
-# }
+```
+1. 初始化: DataSource 创建后保持 STOPPED 状态
+2. 首次 query_indicator(): 调用 start()，开始获取数据
+3. 每次 on_tick(): 从 Exchange 获取数据，更新 HealthyDataArray
+4. 超时无访问: 自动 stop()（保留缓存数据）
+5. 再次 query_indicator(): 重新 start()
 ```
 
 ## 相关文档
 
 - [indicator.md](indicator.md) - 指标模块文档
-- [listener.md](listener.md) - Listener 基类和 lazy_start
+- [executor.md](executor.md) - 执行器与数据驱动设计
+- [listener.md](listener.md) - Listener 基类和生命周期

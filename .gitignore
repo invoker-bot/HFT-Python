@@ -20,7 +20,6 @@ parts/
 sdist/
 var/
 wheels/
-examples/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -88,8 +87,8 @@ logs/
 
 # Local data
 /data/
-conf/
-
+/conf/
+/local/
 # Credentials and secrets
 *.pem
 *.key

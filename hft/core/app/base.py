@@ -8,7 +8,7 @@ AppCore 是整个 HFT 系统的入口，负责：
 
 核心组件（按初始化顺序）：
 1. ExchangeGroup - 交易所连接管理
-2. DataSourceGroup - 市场数据源管理
+2. IndicatorGroup - 指标管理（Feature 0006/0007）
 3. StrategyGroup - 策略管理
 4. Executor - 交易执行器
 
@@ -27,7 +27,8 @@ from functools import cached_property
 from typing import Optional, TYPE_CHECKING
 from ...database.client import ClickHouseDatabase
 from ...exchange.group import ExchangeGroup
-from ...datasource.group import DataSourceGroup
+from ...indicator.group import IndicatorGroup
+from ...indicator.base import BaseIndicator
 from ...strategy.group import StrategyGroup
 from ...executor.config import BaseExecutorConfig
 from ...executor.base import BaseExecutor
@@ -53,8 +54,8 @@ class AppCore(Listener):
         ├── CacheListener             # 状态持久化
         ├── ExchangeGroup            # 交易所连接
         │   └── [各交易所实例...]
-        ├── DataSourceGroup           # 市场数据源
-        │   └── [各数据源实例...]
+        ├── IndicatorGroup           # 指标管理（Feature 0006/0007）
+        │   └── [各指标实例...]
         ├── StrategyGroup             # 策略组
         │   └── [各策略实例...]
         └── Executor                  # 交易执行器
@@ -93,9 +94,11 @@ class AppCore(Listener):
         self.exchange_group = ExchangeGroup()
         self.add_child(self.exchange_group)
 
-        # 2. 市场数据源管理
-        self.datasource_group = DataSourceGroup()
-        self.add_child(self.datasource_group)
+        # 2. 指标管理（Feature 0006/0007）
+        self.indicator_group = IndicatorGroup()
+        self.add_child(self.indicator_group)
+        # 注册配置中的 indicator factory
+        self._register_indicator_factories()
 
         # 3. 策略组
         self.strategy_group = StrategyGroup()
@@ -203,6 +206,81 @@ class AppCore(Listener):
             self.logger.info("StrategyGroup finished, AppCore exiting")
             return True
         return False
+
+    # ============================================================
+    # Indicator 查询接口（Feature 0006）
+    # ============================================================
+
+    def get_indicator(
+        self,
+        indicator_id: str,
+        exchange_class: Optional[str],
+        symbol: Optional[str],
+    ) -> Optional[BaseIndicator]:
+        """
+        获取 indicator 实例（不管 ready 与否）
+
+        行为：lazy 创建、自动启动、touch 更新。
+        用途：订阅 update/ready 事件、访问 _data、调试/观测。
+
+        Args:
+            indicator_id: 指标 ID
+            exchange_class: 交易所类名，GlobalIndicator 传 None
+            symbol: 交易对，GlobalIndicator 传 None
+
+        Returns:
+            BaseIndicator 实例，如果无法创建则返回 None
+        """
+        return self.indicator_group.get_indicator(
+            indicator_id, exchange_class, symbol
+        )
+
+    def query_indicator(
+        self,
+        indicator_id: str,
+        exchange_class: Optional[str],
+        symbol: Optional[str],
+    ) -> Optional[BaseIndicator]:
+        """
+        查询 indicator，支持 lazy 创建和自动启动
+
+        Args:
+            indicator_id: 指标 ID
+            exchange_class: 交易所类名，GlobalIndicator 传 None
+            symbol: 交易对，GlobalIndicator 传 None
+
+        Returns:
+            - BaseIndicator 实例：indicator ready
+            - None：indicator 未 ready
+        """
+        return self.indicator_group.query_indicator(
+            indicator_id, exchange_class, symbol
+        )
+
+    def _register_indicator_factories(self) -> None:
+        """
+        从配置注册 indicator factory
+
+        配置格式（Feature 0005 更新）:
+            indicators:
+              ticker:
+                class: TickerDataSource
+                ready_condition: "timeout < 10"  # 单独字段（可选）
+                params:
+                  # 构造参数（不包括 ready_condition）
+                  window: 300.0
+
+        ready_condition 通过 set_ready_condition() 单独注入，不放入 params。
+        """
+        from ...indicator.factory import IndicatorFactory
+
+        for indicator_id, config in self.config.indicators.items():
+            class_name = config.get("class")
+            params = config.get("params", {})
+            ready_condition = config.get("ready_condition")  # 单独字段
+
+            factory = IndicatorFactory(class_name, params, ready_condition=ready_condition)
+            self.indicator_group.register_factory(indicator_id, factory)
 
     async def on_stop(self):
         """停止回调，触发插件钩子"""

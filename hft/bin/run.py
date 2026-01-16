@@ -106,14 +106,21 @@ async def balance_async(app_name: str):
 # ========== Test Commands ==========
 
 @test_group.command(name="exchange")
-def test_exchange(path: str):
+def test_exchange(
+    path: str,
+    allow_orders: bool = typer.Option(
+        False,
+        "--allow-orders",
+        help="Allow placing test market orders (spot and swap). Use with caution.",
+    ),
+):
     """
     Test exchange API connectivity and latency.
 
     Args:
         path: Exchange config path (e.g., 'binance/main')
     """
-    asyncio.run(test_exchange_async(path))
+    asyncio.run(test_exchange_async(path, allow_orders=allow_orders))
 
 
 # ========== Exchange Status Command ==========

@@ -52,6 +52,7 @@ def create_mock_app_config(**kwargs):
         "debug": True,
         "max_duration": None,
         "path": "test/app",
+        "indicators": {},  # Feature 0006: indicator 配置
     }
     defaults.update(kwargs)
 

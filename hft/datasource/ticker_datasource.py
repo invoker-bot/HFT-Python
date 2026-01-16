@@ -1,5 +1,10 @@
 """
 Ticker 数据源
+
+.. deprecated::
+    此模块已被 hft.indicator.datasource.ticker_datasource 替代。
+    新代码请使用 hft.indicator.datasource.TickerDataSource。
+    将在 Phase 3 清理时移除。
 """
 from typing import Optional, Any, TYPE_CHECKING
 from .base import BaseDataSource

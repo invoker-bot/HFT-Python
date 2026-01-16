@@ -2,6 +2,11 @@
 DataSource 基类
 
 自动开启/关闭的数据源，支持 watch + fallback fetch 模式
+
+.. deprecated::
+    此模块已被 hft.indicator.base.BaseDataSource 替代。
+    新代码请使用 hft.indicator.datasource 下的类。
+    将在 Phase 3 清理时移除。
 """
 import asyncio
 import time

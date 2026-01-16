@@ -26,7 +26,7 @@ from ccxt.base.errors import InvalidOrder
 from ..core.listener import Listener
 from ..core.healthy_data import HealthyDataWithFallback
 from ..plugin import pm
-from ..database.listeners import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
+from ..indicator.persist import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
 from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener, ExchangeCurrenciesListener
 from .utils import round_to_precision
 if TYPE_CHECKING:
@@ -604,6 +604,15 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     # ========== 账户方法 position/balance ==========
     stable_coins = {'USDT', 'USDG', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USD',
                     'FDUSD', 'LDUSDT', 'BFUSD', 'RWUSD', 'USD1'}
+
+    async def fetch_balance(self) -> dict:
+        """
+        获取账户余额（兼容接口）
+
+        用于 `hft run test exchange ...` 等通用测试命令，保持与 ccxt 的 `fetch_balance` 命名一致。
+        默认调用配置中的主 ccxt 实例；如需多账户（spot/swap）可在上层并行调用。
+        """
+        return await self.config.ccxt_instance.fetch_balance()
 
     def medal_balance_usd(self, data: dict) -> float:
         usd = 0.0

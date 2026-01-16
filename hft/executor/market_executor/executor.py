@@ -1,25 +1,12 @@
 """
 MarketExecutor - 市价单执行器
 
-最简单的执行器实现，适合以下场景：
-- 快速原型开发和测试
-- 对执行价格不敏感的策略
-- 流动性充足的主流交易对
+Feature 0005: 支持动态参数（表达式或字面量）
 
 执行流程：
 1. BaseExecutor 调用 execute_delta() 传入差值（USD）
 2. 将 USD 差值转换为交易数量
 3. 执行市价单
-
-注意事项：
-- 大额订单可能产生较大滑点
-- 不支持分批执行，不适合大仓位
-- 所有账户同步执行，适合个人多账户管理
-
-Example config (conf/executor/market/default.yaml):
-    class_name: market
-    per_order_usd: 100.0
-    interval: 1.0
 """
 from typing import TYPE_CHECKING
 
@@ -34,39 +21,49 @@ class MarketExecutor(BaseExecutor):
     """
     市价单执行器
 
-    继承自 BaseExecutor，实现最简单的市价单执行逻辑。
-
-    执行逻辑：
-    1. 从 BaseExecutor 接收 delta_usd（需要调整的仓位价值）
-    2. 初始化交易对（设置杠杆等）
-    3. 将 USD 价值转换为交易数量
-    4. 执行市价单
-
-    配置参数（MarketExecutorConfig）：
-        per_order_usd: 单笔订单大小 / 执行阈值（USD）
-        interval: tick 间隔（秒）
-
-    特点：
-        - 简单直接，无拆单逻辑
-        - 所有账户并行执行
-        - 适合流动性好的交易对
+    Feature 0005: 支持 condition 和动态 per_order_usd
     """
 
     config: "MarketExecutorConfig"
 
     def __init__(self, config: "MarketExecutorConfig"):
-        """
-        初始化市价单执行器
-
-        Args:
-            config: 市价单执行器配置
-        """
         super().__init__(config)
 
     @property
     def per_order_usd(self) -> float:
-        """从配置获取单笔订单大小"""
-        return self.config.per_order_usd
+        """从配置获取单笔订单大小（静态值）"""
+        val = self.config.per_order_usd
+        if isinstance(val, (int, float)):
+            return float(val)
+        return 100.0  # 默认值
+
+    def get_dynamic_per_order_usd(
+        self,
+        exchange_class: str,
+        symbol: str,
+        direction: int,
+        speed: float,
+        notional: float,
+    ) -> float:
+        """
+        获取动态 per_order_usd（支持表达式）
+
+        覆盖 BaseExecutor 的默认实现，支持表达式求值。
+        """
+        val = self.config.per_order_usd
+        if isinstance(val, (int, float)):
+            return float(val)
+
+        # 表达式求值
+        context = self.collect_context_vars(
+            exchange_class=exchange_class,
+            symbol=symbol,
+            direction=direction,
+            speed=speed,
+            notional=notional,
+        )
+        result = self.evaluate_param(val, context)
+        return float(result) if result is not None else 100.0
 
     async def execute_delta(
         self,

@@ -4,7 +4,7 @@ FundingRateDataSource - 资金费率数据源
 这是一个被动数据容器，不主动获取数据：
 - 永远保持 STOPPED 状态，不执行 tick
 - 数据由 GlobalFundingRateFetcher 填充
-- 只提供 DataArray 存储和查询功能
+- 只提供 HealthyDataArray 存储和查询功能
 
 设计理念：
 - 资金费率 API 返回所有交易对数据，一次调用获取全部
@@ -12,7 +12,7 @@ FundingRateDataSource - 资金费率数据源
 - GlobalFundingRateFetcher 负责定时获取并分发数据
 """
 from typing import Optional, TYPE_CHECKING
-from .group import DataArray
+from ..core.healthy_data import HealthyDataArray
 
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange, FundingRate
@@ -36,14 +36,14 @@ class FundingRateDataSource:
         self,
         exchange_class: str,
         symbol: str,
-        maxlen: int = 1000,
+        max_seconds: float = 3600.0,  # 保留 1 小时数据
         freshness_threshold: float = 60.0,  # 资金费率更新较慢，60秒阈值
     ):
         self._exchange_class = exchange_class
         self._symbol = symbol
-        self._data: DataArray["FundingRate"] = DataArray(
-            maxlen=maxlen,
-            freshness_threshold=freshness_threshold,
+        self._freshness_threshold = freshness_threshold
+        self._data: HealthyDataArray["FundingRate"] = HealthyDataArray(
+            max_seconds=max_seconds,
         )
 
     @property
@@ -55,26 +55,28 @@ class FundingRateDataSource:
         return self._symbol
 
     @property
-    def data(self) -> DataArray["FundingRate"]:
-        """获取底层 DataArray"""
+    def data(self) -> HealthyDataArray["FundingRate"]:
+        """获取底层 HealthyDataArray"""
         return self._data
 
     def append(self, funding_rate: "FundingRate") -> None:
         """添加资金费率数据（由 GlobalFundingRateFetcher 调用）"""
-        self._data.append(funding_rate)
+        self._data.append(funding_rate.timestamp, funding_rate)
 
     def get_latest(self, n: int = 1) -> list["FundingRate"]:
         """获取最近 n 条数据"""
-        return self._data.get_latest(n)
+        all_data = list(self._data)
+        if n >= len(all_data):
+            return all_data
+        return all_data[-n:]
 
     def get_current(self) -> Optional["FundingRate"]:
         """获取当前资金费率"""
-        latest = self._data.get_latest(1)
-        return latest[0] if latest else None
+        return self._data.latest
 
     def is_fresh(self) -> bool:
         """检查数据是否新鲜"""
-        return self._data.is_fresh
+        return self._data.timeout <= self._freshness_threshold
 
     def __len__(self) -> int:
         return len(self._data)

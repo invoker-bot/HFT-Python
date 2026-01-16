@@ -21,9 +21,12 @@ Example:
     >>> ticker.get()  # 抛出 UnhealthyDataError
 """
 import asyncio
+import bisect
 import time
-from typing import TypeVar, Generic, Optional, Callable, Awaitable
+from typing import TypeVar, Generic, Optional, Callable, Awaitable, Any
 from dataclasses import dataclass, field
+
+import numpy as np
 
 
 T = TypeVar('T')  # 泛型类型参数，表示存储的数据类型
@@ -248,3 +251,276 @@ class HealthyDataWithFallback(HealthyData[T]):
                     return False
 
             return False
+
+
+def _default_is_duplicate(x: Any, y: Any) -> bool:
+    """默认去重函数：同时间戳视为重复（可 pickle）"""
+    return True
+
+
+def _never_duplicate(x: Any, y: Any) -> bool:
+    """永不去重函数：用于事件类数据如 Trades（可 pickle）"""
+    return False
+
+
+class HealthyDataArray(Generic[T]):
+    """
+    带时间戳的健康数据数组
+
+    存储格式: [(timestamp, value), ...]
+    按时间戳升序排序，支持中间插入，自动去重，基于时间窗口自动清理
+
+    健康判断基于三个指标：
+    - timeout: 当前时间与最新数据的时间差（越小越好）
+    - cv: 采样间隔的变异系数（越小表示采样越均匀）
+    - range: 实际覆盖时间 / 期望窗口时间（越大表示覆盖越完整）
+    """
+
+    def __init__(
+        self,
+        max_seconds: float,
+        duplicate_tolerance: float = 1e-6,
+        is_duplicate_fn: Callable[[T, T], bool] | None = None,
+    ):
+        """
+        Args:
+            max_seconds: 最大保留时间窗口（秒），超出时自动清理旧数据
+            duplicate_tolerance: 时间戳去重容差（秒）
+            is_duplicate_fn: 判断两个值是否重复的函数，默认同时间戳视为重复
+        """
+        self._max_seconds = max_seconds
+        self._duplicate_tolerance = duplicate_tolerance
+        self._is_duplicate_fn = is_duplicate_fn if is_duplicate_fn is not None else _default_is_duplicate
+        self._data: list[tuple[float, T]] = []
+
+    def append(self, timestamp: float, value: T) -> None:
+        """
+        添加数据，按时间戳排序插入，自动去重和清理
+
+        去重行为：当 timestamp 在容差范围内且 is_duplicate_fn 返回 True 时，
+        用新值覆盖旧值（适用于 snapshot 类数据如 Ticker/OrderBook）。
+
+        Args:
+            timestamp: 时间戳
+            value: 数据值
+        """
+        # 从后往前找插入位置，同时检查重复
+        pos = len(self._data)
+        for i in range(len(self._data) - 1, -1, -1):
+            if abs(self._data[i][0] - timestamp) < self._duplicate_tolerance:
+                if self._is_duplicate_fn(self._data[i][1], value):
+                    # 覆盖旧值（而非丢弃新值）
+                    self._data[i] = (timestamp, value)
+                    return
+            elif self._data[i][0] > timestamp:
+                pos = i  # 保持升序
+            else:
+                break
+
+        self._data.insert(pos, (timestamp, value))
+        # 使用数组中最新的时间戳来清理，而不是插入的时间戳
+        # 这样即使插入历史数据，也能正确清理超窗的旧数据
+        if self._data:
+            latest_ts = self._data[-1][0]
+            self._shrink(latest_ts - self._max_seconds)
+
+    def _shrink(self, before_timestamp: float) -> None:
+        """清理指定时间戳之前的数据"""
+        start = bisect.bisect_left(self._data, before_timestamp, key=lambda x: x[0])
+        if start > 0:
+            self._data = self._data[start:]
+
+    def assign(self, points: list[tuple[float, T]]) -> None:
+        """
+        批量替换数据（权威快照优化）
+
+        将内部数据直接替换为该快照，适用于上游一次性返回完整权威数据的场景
+        （如 OHLCV fetch 返回最近 N 根 candle）。
+
+        处理流程：
+        1. 按 timestamp 排序
+        2. 同 timestamp（duplicate_tolerance 内）按 is_duplicate_fn 做 replace 归并
+        3. 按 max_seconds 做 shrink（仅保留窗口内数据）
+
+        使用约束：
+        - 仅用于"权威快照"：该批数据必须覆盖当前窗口内的全部有效点
+        - 与 watch 并行时需避免竞态：要么串行化写入，要么 assign 后立即用最新点 upsert
+
+        Args:
+            points: [(timestamp, value), ...] 数据点列表
+        """
+        if not points:
+            self._data = []
+            return
+
+        # 1. 按 timestamp 排序
+        sorted_points = sorted(points, key=lambda x: x[0])
+
+        # 2. 去重归并（同 timestamp 保留最后一个或按 is_duplicate_fn 合并）
+        merged: list[tuple[float, T]] = []
+        for ts, val in sorted_points:
+            if merged and abs(merged[-1][0] - ts) < self._duplicate_tolerance:
+                if self._is_duplicate_fn(merged[-1][1], val):
+                    # 覆盖旧值
+                    merged[-1] = (ts, val)
+                else:
+                    merged.append((ts, val))
+            else:
+                merged.append((ts, val))
+
+        # 3. 替换内部数据
+        self._data = merged
+
+        # 4. 按 max_seconds 做 shrink
+        if self._data:
+            latest_ts = self._data[-1][0]
+            self._shrink(latest_ts - self._max_seconds)
+
+    @property
+    def latest(self) -> Optional[T]:
+        """最新值"""
+        return self._data[-1][1] if self._data else None
+
+    @property
+    def latest_timestamp(self) -> float:
+        """最新时间戳，无数据返回 0.0"""
+        return self._data[-1][0] if self._data else 0.0
+
+    @property
+    def timeout(self) -> float:
+        """数据超时时间（秒）：当前时间与最新数据的时间差"""
+        if not self._data:
+            return float('inf')
+        # 使用 max(0.0, ...) 防止交易所时间超前本机导致负值
+        return max(0.0, time.time() - self._data[-1][0])
+
+    def get_cv(
+        self,
+        start_timestamp: float,
+        end_timestamp: float,
+        min_points: int = 3,
+    ) -> float:
+        """
+        计算指定时间范围内的采样间隔变异系数
+
+        Args:
+            start_timestamp: 起始时间戳
+            end_timestamp: 结束时间戳
+            min_points: 最少数据点数（需要 min_points 个点来计算 min_points-1 个间隔）
+
+        Returns:
+            变异系数，数据不足返回 100.0（极不健康）
+        """
+        start_pos = bisect.bisect_left(self._data, start_timestamp, key=lambda x: x[0])
+        end_pos = bisect.bisect_right(self._data, end_timestamp, key=lambda x: x[0])
+
+        # 需要至少 min_points 个点
+        if len(self._data) == 0 or end_pos - start_pos < min_points:
+            return 100.0
+
+        times = np.array(
+            [self._data[i][0] for i in range(start_pos, end_pos)],
+            dtype=float,
+        )
+        dtimes = np.diff(times)
+
+        if len(dtimes) < 2:
+            return 100.0
+
+        m = abs(dtimes.mean())
+        if m < 1e-8:
+            return 100.0
+
+        return float(dtimes.std() / m)
+
+    def get_range(
+        self,
+        start_timestamp: float,
+        end_timestamp: float,
+        min_points: int = 3,
+    ) -> float:
+        """
+        计算指定时间范围内的数据覆盖比例
+
+        Args:
+            start_timestamp: 起始时间戳
+            end_timestamp: 结束时间戳
+            min_points: 最少数据点数
+
+        Returns:
+            覆盖比例（实际覆盖 / 期望覆盖），数据不足返回 0.0（极不健康）
+        """
+        if len(self._data) == 0:
+            return 0.0
+
+        # bisect_left: 第一个 >= start_timestamp 的位置
+        start_pos = bisect.bisect_left(self._data, start_timestamp, key=lambda x: x[0])
+        # bisect_right: 第一个 > end_timestamp 的位置（exclusive）
+        end_pos = bisect.bisect_right(self._data, end_timestamp, key=lambda x: x[0])
+
+        # end_pos 是 exclusive，所以窗口内的点数是 end_pos - start_pos
+        num_points = end_pos - start_pos
+        if num_points < min_points:
+            return 0.0
+
+        # 最后一个点的索引是 end_pos - 1
+        last_idx = end_pos - 1
+        actual_range = abs(self._data[last_idx][0] - self._data[start_pos][0])
+        expected_range = abs(end_timestamp - start_timestamp)
+
+        if expected_range < 1e-8:
+            return 0.0
+
+        return actual_range / expected_range
+
+    def is_healthy(
+        self,
+        start_timestamp: float,
+        end_timestamp: float,
+        timeout_threshold: float = 60,
+        cv_threshold: float = 0.8,
+        range_threshold: float = 0.6,
+        min_points: int = 3,
+    ) -> bool:
+        """
+        判断指定时间范围内的数据是否健康
+
+        三个条件同时满足：
+        1. timeout < timeout_threshold: 数据足够新鲜
+        2. cv < cv_threshold: 采样足够均匀
+        3. range > range_threshold: 覆盖时间足够长
+        """
+        if self.timeout >= timeout_threshold:
+            return False
+
+        cv = self.get_cv(start_timestamp, end_timestamp, min_points)
+        if cv >= cv_threshold:
+            return False
+
+        range_val = self.get_range(start_timestamp, end_timestamp, min_points)
+        if range_val <= range_threshold:
+            return False
+
+        return True
+
+    def clear(self) -> None:
+        """清空数据"""
+        self._data.clear()
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __bool__(self) -> bool:
+        return len(self._data) > 0
+
+    def __getitem__(self, index: int) -> T:
+        """索引访问，返回值（不含时间戳）"""
+        return self._data[index][1]
+
+    def __iter__(self):
+        """迭代返回值（不含时间戳）"""
+        return (item[1] for item in self._data)
+
+    def items(self):
+        """迭代返回 (timestamp, value) 元组"""
+        return iter(self._data)

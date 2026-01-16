@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from ccxt.base.errors import UnsubscribeError
 from ..core.listener import Listener, GroupListener
 from ..database.client import OrderBillController
-from ..database.listeners import DataListener
+from ..indicator.persist import DataListener
 from ..plugin import pm
 
 if TYPE_CHECKING:

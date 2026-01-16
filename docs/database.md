@@ -1,5 +1,13 @@
 # 数据库模块文档
 
+## 迁移说明
+
+> **注意**: `DataListener` 及其子类已迁移到 `hft/indicator/persist/` 模块。
+> 旧路径 `hft.database.listeners` 仍可用但已废弃，请使用新路径：
+> ```python
+> from hft.indicator.persist import DataListener, FundingRatePersistListener
+> ```
+
 ## 概述
 
 数据库模块负责数据的持久化和缓存管理，采用多层架构：
@@ -7,7 +15,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      数据访问层                              │
-│  HealthyData (单值缓存) / DataArray (时序缓存)               │
+│  HealthyData (单值缓存) / HealthyDataArray (时序缓存)         │
 │  - fresh → 直接返回                                         │
 │  - expired/dirty → fetch 或等待 watch 填充                   │
 └─────────────────────────────────────────────────────────────┘
@@ -36,7 +44,11 @@
 hft/database/
 ├── __init__.py
 ├── client.py           # ClickHouseDatabase + Controllers
-└── listeners.py        # DataListener 基类
+└── listeners.py        # DEPRECATED: 重新导出 hft.indicator.persist
+
+hft/indicator/persist/  # 新位置
+├── __init__.py
+└── listeners.py        # DataListener 基类及子类
 ```
 
 ## 缓存层
@@ -65,22 +77,23 @@ positions = HealthyDataWithFallback(
 data = await positions.get_or_fetch()  # 自动刷新
 ```
 
-### DataArray - 时序缓存
+### HealthyDataArray - 时序缓存
 
 用于缓存时序数据（如 OHLCV, trades）。
 
 ```python
-from hft.datasource.group import DataArray
+from hft.core.healthy_data import HealthyDataArray
 
-ohlcv = DataArray[OHLCVData](
-    maxlen=1000,              # 最大容量
-    max_age=600.0,            # 数据保留时间
-    freshness_threshold=10.0  # 新鲜度阈值
+ohlcv = HealthyDataArray[OHLCVData](
+    max_seconds=600.0,        # 数据保留时间窗口
 )
 
+# 添加数据
+ohlcv.append(timestamp, data)
+
 # 健康检查
-if ohlcv.check_healthy(require_fresh=True, min_count=20):
-    data = ohlcv.get_latest(20)
+if ohlcv.is_healthy(start_timestamp, end_timestamp, timeout_threshold=10):
+    data = list(ohlcv)
 ```
 
 ## 同步模式
@@ -163,9 +176,11 @@ persist:
 
 ## DataListener
 
-数据采集监听器基类：
+数据采集监听器基类（已迁移到 `hft.indicator.persist`）：
 
 ```python
+from hft.indicator.persist import DataListener
+
 class DataListener(Listener):
     persist_key: str = ""  # 子类覆盖，对应 PersistConfig 中的字段名
 
