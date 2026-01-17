@@ -19,21 +19,51 @@ StrategyGroup 管理多个策略实例：
     3. StrategyGroup.is_finished 变为 True
     4. StrategyGroup.on_tick() 返回 True
     5. AppCore.on_tick() 检测到并退出
+
+Feature 0008: Strategy 数据驱动增强
+- 支持新格式 StrategyOutput（通用字典）
+- 向后兼容旧格式 TargetPositions
+- 聚合结果返回新格式 AggregatedTargets
 """
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from collections import defaultdict
 from ..core.listener import Listener, ListenerState
 from ..plugin import pm
-from .base import BaseStrategy, TargetPositions
+from .base import BaseStrategy, TargetPositions, StrategyOutput
 from .config import BaseStrategyConfig
 
 if TYPE_CHECKING:
     from ..core.app import AppCore
 
 
-# 聚合后的目标仓位类型（与 TargetPositions 相同）
-# {(exchange_path, symbol): (position_usd, speed)}
-AggregatedTargets = dict[tuple[str, str], tuple[float, float]]
+# 聚合后的目标仓位类型（Feature 0008 新格式）
+# {(exchange_path, symbol): {"字段名": [值列表], ...}}
+# 所有字段都聚合为列表，供 Executor 的 vars 表达式使用
+AggregatedTargets = dict[tuple[str, str], dict[str, list[Any]]]
+
+
+def _normalize_strategy_output(
+    raw_output: TargetPositions | StrategyOutput
+) -> StrategyOutput:
+    """
+    将旧格式 TargetPositions 转换为新格式 StrategyOutput
+
+    旧格式: {(exchange_path, symbol): (position_usd, speed)}
+    新格式: {(exchange_path, symbol): {"position_usd": ..., "speed": ...}}
+    """
+    result: StrategyOutput = {}
+    for key, value in raw_output.items():
+        if isinstance(value, tuple):
+            # 旧格式: (position_usd, speed)
+            position_usd, speed = value
+            result[key] = {"position_usd": position_usd, "speed": speed}
+        elif isinstance(value, dict):
+            # 新格式: 直接使用
+            result[key] = value
+        else:
+            # 未知格式，忽略
+            pass
+    return result
 
 
 class StrategyGroup(Listener):
@@ -96,47 +126,42 @@ class StrategyGroup(Listener):
 
     def get_aggregated_targets(self) -> AggregatedTargets:
         """
-        聚合所有策略的目标仓位
+        聚合所有策略的目标仓位（Feature 0008 新格式）
 
         聚合规则：
-        - position_usd: 直接求和
-        - speed: 按仓位绝对值加权平均
+        - 所有字段聚合为列表
+        - Executor 通过 strategies["字段名"] 访问列表
+        - Executor 的 vars 表达式可以用 sum(strategies["position_usd"]) 等聚合
 
         Returns:
-            {(exchange_path, symbol): (aggregated_position_usd, aggregated_speed)}
+            {(exchange_path, symbol): {"字段名": [值列表], ...}}
         """
-        # 临时存储: (exchange_path, symbol) -> [(position, speed), ...]
-        temp: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+        # 临时存储: (exchange_path, symbol) -> {"字段名": [值列表], ...}
+        temp: dict[tuple[str, str], dict[str, list[Any]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
 
         # 收集所有策略的目标
         for strategy in self.strategies:
             try:
-                targets = strategy.get_target_positions_usd()
+                raw_targets = strategy.get_target_positions_usd()
+                # 规范化为新格式
+                targets = _normalize_strategy_output(raw_targets)
                 # 插件钩子：单个策略目标计算完成
                 pm.hook.on_strategy_targets_calculated(strategy=strategy, targets=targets)
-                for key, (position, speed) in targets.items():
-                    temp[key].append((position, speed))
+
+                for key, fields in targets.items():
+                    for field_name, field_value in fields.items():
+                        temp[key][field_name].append(field_value)
             except Exception as e:
                 self.logger.warning(
                     "Error getting targets from %s: %s", strategy.name, e
                 )
 
-        # 聚合
+        # 转换为普通 dict（去掉 defaultdict）
         result: AggregatedTargets = {}
-        for key, values in temp.items():
-            # position: 直接求和
-            total_position = sum(pos for pos, _ in values)
-
-            # speed: 按仓位绝对值加权平均
-            total_weight = sum(abs(pos) for pos, _ in values)
-            if total_weight > 0:
-                weighted_speed = sum(
-                    abs(pos) * speed for pos, speed in values
-                ) / total_weight
-            else:
-                weighted_speed = 0.5  # 默认值
-
-            result[key] = (total_position, weighted_speed)
+        for key, fields in temp.items():
+            result[key] = dict(fields)
 
         # 插件钩子：目标聚合完成
         pm.hook.on_targets_aggregated(strategy_group=self, targets=result)

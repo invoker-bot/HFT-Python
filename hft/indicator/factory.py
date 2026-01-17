@@ -2,6 +2,8 @@
 Indicator 工厂类
 
 可 pickle 的 indicator 工厂，用于配置驱动创建指标。
+
+Feature 0008: 支持 exchange_path 级别的 Indicator
 """
 import logging
 from typing import Any, Optional
@@ -43,6 +45,7 @@ class IndicatorFactory:
                 OHLCVDataSource,
                 GlobalFundingRateIndicator,
                 FundingRateIndicator,
+                MedalEquationDataSource,
             )
             from .computed import (
                 MidPriceIndicator,
@@ -59,6 +62,8 @@ class IndicatorFactory:
                 # FundingRate 类（Feature 0007）
                 "GlobalFundingRateIndicator": GlobalFundingRateIndicator,
                 "FundingRateIndicator": FundingRateIndicator,
+                # ExchangePath 级别（Feature 0008）
+                "MedalEquationDataSource": MedalEquationDataSource,
                 # Computed Indicator 类（Feature 0005）
                 "MidPriceIndicator": MidPriceIndicator,
                 "MedalEdgeIndicator": MedalEdgeIndicator,
@@ -71,6 +76,7 @@ class IndicatorFactory:
         self,
         exchange_class: Optional[str],
         symbol: Optional[str],
+        exchange_path: Optional[str] = None,
     ) -> Optional[BaseIndicator]:
         """
         创建 indicator 实例
@@ -78,6 +84,7 @@ class IndicatorFactory:
         Args:
             exchange_class: 交易所类名
             symbol: 交易对
+            exchange_path: 交易所实例路径（Feature 0008）
 
         Returns:
             BaseIndicator 实例，创建失败返回 None
@@ -91,11 +98,22 @@ class IndicatorFactory:
         indicator_class = builtin_classes[self._class_name]
 
         try:
-            indicator = indicator_class(
-                exchange_class=exchange_class,
-                symbol=symbol,
-                **self._params
-            )
+            # 根据 indicator 类型构建参数
+            if exchange_path is not None:
+                # ExchangePath 级别的 indicator
+                indicator = indicator_class(
+                    exchange_path=exchange_path,
+                    exchange_class=exchange_class,
+                    symbol=symbol,
+                    **self._params
+                )
+            else:
+                # 其他级别的 indicator
+                indicator = indicator_class(
+                    exchange_class=exchange_class,
+                    symbol=symbol,
+                    **self._params
+                )
 
             # 如果有 ready_condition，单独注入（Feature 0005）
             if self._ready_condition is not None and hasattr(indicator, 'set_ready_condition'):

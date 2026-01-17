@@ -108,7 +108,7 @@ class RSIIndicator(BaseIndicator[float]):
 
         # 缓存到 _data
         now = time.time()
-        self._data.append(rsi, timestamp=now)
+        self._data.append(now, rsi)
 
         # 更新 lazy 缓存
         self._cached_rsi = rsi

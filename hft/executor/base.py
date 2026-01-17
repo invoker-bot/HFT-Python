@@ -5,7 +5,7 @@ Executor 执行器基类
 
 工作流程：
     1. on_tick() 调用 strategy_group.get_aggregated_targets() 获取聚合目标
-    2. 对每个 (exchange_class, symbol, target_usd, speed)：
+    2. 对每个 (exchange_class, symbol, strategies_data)：
         a. 获取当前仓位
         b. 计算 delta = target - current
         c. 如果 |delta| > per_order_usd，执行交易
@@ -15,6 +15,11 @@ Executor 执行器基类
     per_order_usd: 单笔订单大小，也是执行阈值
         - delta > per_order_usd 时才执行
         - 这避免了频繁的小额交易
+
+Feature 0008: Strategy 数据驱动增强
+    - strategies_data: {"字段名": [值列表], ...} 格式
+    - Executor 可通过 strategies["字段名"] 访问聚合列表
+    - 支持 sum(strategies["position_usd"]) 等聚合表达式
 """
 from abc import abstractmethod
 from enum import Enum
@@ -135,6 +140,10 @@ class BaseExecutor(Listener):
             "orders_reused": 0,
             "orders_failed": 0,
         }
+
+        # Feature 0010: conditional_vars 状态持久化
+        # {(exchange_class, symbol, 变量名): (当前值, 上次更新时间)}
+        self._conditional_var_states: dict[tuple[str, str, str], tuple[Any, float]] = {}
 
     # ===== 属性 =====
 
@@ -556,6 +565,34 @@ class BaseExecutor(Listener):
 
     # ===== 条件求值与变量注入（Feature 0005）=====
 
+    # 保留变量名集合 - Indicator 的 calculate_vars() 不应覆盖这些变量
+    # Issue 0005: Executor 上下文变量名冲突
+    # Feature 0008: 添加 strategies namespace
+    RESERVED_CONTEXT_VARS = frozenset({
+        # 内置执行变量
+        "direction",
+        "buy",
+        "sell",
+        "speed",
+        "notional",
+        # SmartExecutor 路由变量
+        "target_notional",
+        "trades_notional",
+        # 价格变量（由 Executor 显式注入）
+        "mid_price",
+        "current_price",
+        "best_bid",
+        "best_ask",
+        # 仓位变量
+        "current_position_usd",
+        "current_position_amount",
+        "position_usd",
+        "max_position_usd",
+        "delta_usd",
+        # Strategy 聚合变量（Feature 0008）
+        "strategies",
+    })
+
     @property
     def requires(self) -> list[str]:
         """依赖的 indicator ID 列表"""
@@ -630,13 +667,19 @@ class BaseExecutor(Listener):
         direction: int,
         speed: float,
         notional: float,
+        strategies_data: Optional[dict[str, list[Any]]] = None,
     ) -> dict[str, Any]:
         """
         收集条件求值所需的所有变量
 
-        包括：
+        计算顺序（Feature 0010）：
         1. 内置变量（direction, buy, sell, speed, notional）
-        2. requires 中声明的 indicator 提供的变量
+        2. strategies namespace（Feature 0008）
+        3. requires 中声明的 indicator 提供的变量
+        4. vars 列表（按顺序计算，后面可引用前面）
+        5. conditional_vars（条件满足时更新）
+
+        Issue 0005: 保留变量名不允许被 Indicator 覆盖，冲突时会记录警告并跳过。
 
         Args:
             exchange_class: 交易所类名
@@ -644,10 +687,13 @@ class BaseExecutor(Listener):
             direction: 交易方向（1=买，-1=卖）
             speed: 执行紧急度
             notional: 目标仓位的 USD 价值（绝对值）
+            strategies_data: Strategy 聚合数据（Feature 0008）
 
         Returns:
             变量字典
         """
+        import time
+
         # 内置变量
         context: dict[str, Any] = {
             "direction": direction,
@@ -657,18 +703,103 @@ class BaseExecutor(Listener):
             "notional": notional,
         }
 
+        # Feature 0008: 注入 strategies namespace
+        # Executor 可以通过 strategies["position_usd"] 访问聚合列表
+        # 可以用 sum(strategies["position_usd"]) 等表达式聚合
+        if strategies_data is not None:
+            context["strategies"] = strategies_data
+
         # 从 indicator 收集变量
         for indicator_id in self.requires:
             indicator = self._get_indicator(indicator_id, exchange_class, symbol)
             if indicator and indicator.is_ready():
                 try:
                     vars_dict = indicator.calculate_vars(direction)
-                    context.update(vars_dict)
+                    # Issue 0005: 检查并跳过保留变量名，避免覆盖
+                    for key, value in vars_dict.items():
+                        if key in self.RESERVED_CONTEXT_VARS:
+                            self.logger.warning(
+                                "Indicator %s attempted to override reserved var '%s', skipping",
+                                indicator_id, key
+                            )
+                            continue
+                        context[key] = value
                 except Exception as e:
                     self.logger.warning(
                         "Failed to get vars from indicator %s: %s",
                         indicator_id, e
                     )
+
+        # Feature 0010 Phase 1: 计算 vars 列表
+        config_vars = getattr(self.config, 'vars', None)
+        if config_vars:
+            if isinstance(config_vars, dict):
+                # 旧格式：dict 格式（向后兼容）
+                for var_name, var_expr in config_vars.items():
+                    try:
+                        value = self._safe_eval(var_expr, context)
+                        if value is not None:
+                            context[var_name] = value
+                    except Exception as e:
+                        self.logger.warning(
+                            "Failed to compute var %s: %s",
+                            var_name, e
+                        )
+            elif isinstance(config_vars, list):
+                # 新格式：list 格式（按顺序计算）
+                for var_def in config_vars:
+                    try:
+                        value = self._safe_eval(var_def.value, context)
+                        if value is not None:
+                            context[var_def.name] = value
+                    except Exception as e:
+                        self.logger.warning(
+                            "Failed to compute var %s: %s",
+                            var_def.name, e
+                        )
+
+        # Feature 0010 Phase 2: 计算 conditional_vars
+        now = time.time()
+        config_conditional_vars = getattr(self.config, 'conditional_vars', None) or {}
+        for var_name, var_def in config_conditional_vars.items():
+            state_key = (exchange_class, symbol, var_name)
+
+            # 获取当前状态
+            current_value, last_update = self._conditional_var_states.get(
+                state_key, (var_def.default, 0.0)
+            )
+
+            # 计算 duration（距上次更新的秒数）
+            duration = now - last_update if last_update > 0 else float('inf')
+
+            # 构建求值上下文（包含 duration）
+            eval_context = {**context, "duration": duration}
+
+            # 检查条件
+            try:
+                condition_met = self._safe_eval_bool(var_def.on, eval_context)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to evaluate condition for %s: %s",
+                    var_name, e
+                )
+                condition_met = False
+
+            if condition_met:
+                # 条件满足，更新值
+                try:
+                    new_value = self._safe_eval(var_def.value, eval_context)
+                    self._conditional_var_states[state_key] = (new_value, now)
+                    context[var_name] = new_value
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to compute conditional var %s: %s",
+                        var_name, e
+                    )
+                    context[var_name] = current_value
+            else:
+                # 条件不满足，保持当前值
+                context[var_name] = current_value
 
         return context
 
@@ -711,7 +842,19 @@ class BaseExecutor(Listener):
         """安全求值表达式"""
         from simpleeval import EvalWithCompoundTypes, DEFAULT_OPERATORS
 
+        # 辅助函数
+        def avg(values):
+            """计算平均值"""
+            if not values:
+                return 0.0
+            return sum(values) / len(values)
+
+        def clip(value, min_val, max_val):
+            """限制值在 [min_val, max_val] 范围内"""
+            return max(min_val, min(max_val, value))
+
         # 安全函数白名单
+        # Feature 0008/0010: 支持 strategies 聚合函数
         safe_functions = {
             'len': len,
             'abs': abs,
@@ -719,6 +862,8 @@ class BaseExecutor(Listener):
             'max': max,
             'sum': sum,
             'round': round,
+            'avg': avg,      # Feature 0010: 平均值聚合
+            'clip': clip,    # 常用的限幅函数
         }
 
         evaluator = EvalWithCompoundTypes(
@@ -803,13 +948,14 @@ class BaseExecutor(Listener):
         处理所有目标仓位，返回每个目标的执行结果列表
 
         Args:
-            targets: {(exchange_path, symbol): (target_usd, speed)}
+            targets: {(exchange_path, symbol): {"字段名": [值列表], ...}}
+                    (Feature 0008 新格式)
 
         Returns:
             执行结果列表，每个目标对应一个结果（失败/跳过时为 None）
         """
         results = []
-        for (exchange_path, symbol), (target_usd, speed) in targets.items():
+        for (exchange_path, symbol), strategies_data in targets.items():
             # 根据 exchange_path 获取交易所
             exchange = self._get_exchange_by_path(exchange_path)
 
@@ -820,7 +966,7 @@ class BaseExecutor(Listener):
 
             try:
                 result = await self._process_single_target(
-                    exchange, symbol, target_usd, speed
+                    exchange, symbol, strategies_data
                 )
                 results.append(result)
             except Exception as e:
@@ -836,8 +982,7 @@ class BaseExecutor(Listener):
         self,
         exchange: "BaseExchange",
         symbol: str,
-        target_usd: float,
-        speed: float,
+        strategies_data: dict[str, list[Any]],
     ) -> Optional[ExecutionResult]:
         """
         处理单个目标仓位
@@ -845,12 +990,33 @@ class BaseExecutor(Listener):
         Args:
             exchange: 交易所实例
             symbol: 交易对
-            target_usd: 目标仓位（USD）
-            speed: 执行紧急度
+            strategies_data: Strategy 聚合数据 {"字段名": [值列表], ...}
+                           (Feature 0008 新格式)
 
         Returns:
             执行结果，如果未执行则返回 None
         """
+        # 从 strategies_data 提取 target_usd 和 speed（向后兼容）
+        # 默认聚合方式：position_usd 求和，speed 加权平均
+        position_list = strategies_data.get("position_usd", [])
+        speed_list = strategies_data.get("speed", [])
+
+        if not position_list:
+            return None
+
+        # 计算聚合值（向后兼容旧逻辑）
+        target_usd = sum(position_list)
+        if speed_list and position_list:
+            total_weight = sum(abs(p) for p in position_list)
+            if total_weight > 0:
+                speed = sum(
+                    abs(p) * s for p, s in zip(position_list, speed_list)
+                ) / total_weight
+            else:
+                speed = 0.5
+        else:
+            speed = 0.5
+
         # 1. 获取当前价格
         try:
             ticker = await exchange.fetch_ticker(symbol)
@@ -887,6 +1053,7 @@ class BaseExecutor(Listener):
             direction=direction,
             speed=speed,
             notional=abs(delta_usd),
+            strategies_data=strategies_data,  # Feature 0008
         )
         # 注入 mid_price 供表达式使用
         context["mid_price"] = price

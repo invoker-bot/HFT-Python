@@ -11,6 +11,11 @@ Demo 配置集成测试
 - conf/app/demo/* - 应用配置
 
 标记：@pytest.mark.integration - 集成测试，需要网络连接
+
+运行方式：
+- 默认不运行（pytest -q 会跳过）
+- 显式运行：pytest -m integration -v -s
+- 运行全部测试（包括集成测试）：pytest -m "" -v -s
 """
 import os
 import pytest

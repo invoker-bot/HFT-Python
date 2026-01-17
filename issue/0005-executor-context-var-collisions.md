@@ -1,5 +1,7 @@
 # Issue: Executor 上下文变量名冲突（Indicator 覆盖保留变量）
 
+> **状态**：全部通过
+
 ## 背景 / 现象
 
 Feature 0005 引入了 `collect_context_vars()`：先注入内置变量（`direction/buy/sell/speed/notional`），再 `context.update(indicator.calculate_vars())` 注入指标变量。
@@ -52,8 +54,51 @@ Feature 0005 引入了 `collect_context_vars()`：先注入内置变量（`direc
 
 ## TODO
 
-- [ ] 明确保留变量名集合与覆盖策略（待实现）
-- [ ] 修复 `VolumeIndicator`/`MidPriceIndicator` 的输出 key 或在 Executor 侧屏蔽覆盖（待实现）
-- [ ] 补充单测：确保 `notional=abs(delta_usd)` 不会被 indicator 覆盖；SmartExecutor 的 `target_notional` 恒等于 `abs(delta_usd)`（待实现）
-- [ ] 评估并更新路由表达式示例：明确使用 `target_notional`/`trades_notional`（待实现）
+- [x] 明确保留变量名集合与覆盖策略（已通过）
+- [x] 修复 `VolumeIndicator`/`MidPriceIndicator` 的输出 key 或在 Executor 侧屏蔽覆盖（已通过）
+- [x] 补充单测：确保 `notional=abs(delta_usd)` 不会被 indicator 覆盖；SmartExecutor 的 `target_notional` 恒等于 `abs(delta_usd)`（已通过）
+- [x] 评估并更新路由表达式示例：明确使用 `target_notional`/`trades_notional`（已通过）
 
+## 审核结论
+
+结论：审核通过。
+
+验收依据：
+- `hft/executor/base.py`：新增 `RESERVED_CONTEXT_VARS`，并在 `collect_context_vars()` 中跳过保留名覆盖（Issue 0005 的根因修复）
+- `hft/indicator/computed/mid_price_indicator.py`：使用 `orderbook_mid_price/orderbook_best_bid/orderbook_best_ask/orderbook_spread`，避免覆盖执行链路注入的 `mid_price`
+- `hft/indicator/computed/volume_indicator.py`：使用 `volume_notional/buy_volume_notional/sell_volume_notional`，避免覆盖内置 `notional`
+- `tests/test_executor_dynamic_conditions.py`：`TestExecutorContextVarCollisions` 覆盖保留变量不被覆盖、常量集合存在与非保留变量可注入
+
+## 实现说明
+
+### 1. 保留变量名集合
+
+在 `BaseExecutor` 中定义了 `RESERVED_CONTEXT_VARS` 常量，包含所有保留变量名：
+
+```python
+RESERVED_CONTEXT_VARS = frozenset({
+    "direction", "buy", "sell", "speed", "notional",
+    "target_notional", "trades_notional",
+    "mid_price", "current_price", "best_bid", "best_ask",
+    "current_position_usd", "current_position_amount",
+    "position_usd", "max_position_usd", "delta_usd",
+})
+```
+
+### 2. 覆盖策略
+
+在 `collect_context_vars()` 中，Indicator 返回的变量会逐个检查：
+- 如果变量名在 `RESERVED_CONTEXT_VARS` 中，跳过并记录警告
+- 否则添加到上下文
+
+### 3. Indicator 变量重命名
+
+- `VolumeIndicator`: `notional` → `volume_notional`, `buy_notional` → `buy_volume_notional`, `sell_notional` → `sell_volume_notional`
+- `MidPriceIndicator`: `mid_price` → `orderbook_mid_price`, 新增 `orderbook_best_bid`, `orderbook_best_ask`, `orderbook_spread`
+
+### 4. 测试用例
+
+新增 `TestExecutorContextVarCollisions` 测试类，覆盖：
+- 保留变量不被覆盖
+- 非保留变量正常注入
+- `RESERVED_CONTEXT_VARS` 包含预期变量

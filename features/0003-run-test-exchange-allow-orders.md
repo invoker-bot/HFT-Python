@@ -1,6 +1,6 @@
 # Feature: `hft run test exchange` 支持 `--allow-orders`
 
-> **状态**: ✅ 已完成，审核通过
+> **状态**：全部通过
 
 ## 背景
 
@@ -27,6 +27,6 @@
 
 ## TODO
 
-- [x] `--allow-orders` 参数与下单测试逻辑（审核完成，hft/bin/run.py / hft/test/exchange.py）
-- [x] 现货/合约下单 amount 口径与 reduceOnly 行为复核（审核完成）
-- [x] 手工验证：`hft -p <pwd> run test exchange <path> --allow-orders`（审核完成，用户已验证）
+- [x] `--allow-orders` 参数与下单测试逻辑（已通过，hft/bin/run.py / hft/test/exchange.py）
+- [x] 现货/合约下单 amount 口径与 reduceOnly 行为复核（已通过）
+- [x] 手工验证：`hft -p <pwd> run test exchange <path> --allow-orders`（已通过，用户已验证）

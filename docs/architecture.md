@@ -260,12 +260,30 @@ conf/app/main.yaml
         v
    AppConfig.load()
         │
-        ├──> strategies: [keep_positions/main]
-        │         └──> StrategyConfig.load() ──> BaseStrategy 实例
-        │
-        ├──> exchanges: [okx/demo]
+        ├──> exchanges: [okx/demo]           # 配置路径列表
         │         └──> ExchangeConfig.load() ──> BaseExchange 实例
         │
-        └──> executor: market/default
-                  └──> ExecutorConfig.load() ──> BaseExecutor 实例
+        ├──> strategies: [keep_positions/main]  # 配置路径列表
+        │         └──> StrategyConfig.load() ──> BaseStrategy 实例
+        │
+        ├──> executor: market/default        # 单个配置路径
+        │         └──> ExecutorConfig.load() ──> BaseExecutor 实例
+        │
+        └──> indicators:                     # 内联定义（运行时创建）
+                  ticker:
+                    class: TickerDataSource
+                    params: {window: 60.0}
+                    ready_condition: "timeout < 5"
+                  └──> IndicatorFactory ──> BaseIndicator 实例
 ```
+
+### 配置路径 vs 内联定义
+
+| 组件 | 配置方式 | 原因 |
+|------|----------|------|
+| exchanges | 路径列表 | 配置复杂，可复用 |
+| strategies | 路径列表 | 配置复杂，可复用 |
+| executor | 单个路径 | 配置复杂，可复用 |
+| indicators | 内联定义 | 配置简单，与交易对绑定 |
+
+详见 [app-config.md](app-config.md)。

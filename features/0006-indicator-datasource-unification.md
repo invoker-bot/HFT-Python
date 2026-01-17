@@ -1,5 +1,7 @@
 # Feature: Indicator 与 DataSource 统一架构
 
+> **状态**：全部通过
+
 ## 背景
 
 当前 DataSource 和 Indicator 是两套独立概念，导致概念冗余、生命周期分散、健康检查不统一。
@@ -520,75 +522,66 @@ class FundingRateDataSource(BaseIndicator[FundingRate]):
 
 > Phase 1：基础设施（本 Feature 范围）
 
-- [x] 实现 HealthyDataArray（审核完成）
-- [x] HealthyDataArray.assign() 批量更新方法（审核完成）
+- [x] 实现 HealthyDataArray（已通过）
+- [x] HealthyDataArray.assign() 批量更新方法（已通过）
   - 实现权威快照优化接口，支持批量替换数据
   - 自动排序、去重归并、shrink
   - 单元测试：`tests/test_healthy_data_array.py::TestHealthyDataArrayAssign`
-- [x] HealthyDataArray 单元测试（审核完成）
-- [x] 重构 BaseIndicator 基类，添加 `_event`、`_data`、`calculate_vars`（审核完成）
-- [x] 实现 GlobalIndicator（审核完成）
-- [x] 实现 BaseDataSource 骨架（继承 BaseIndicator）（审核完成）
-- [x] 实现 IndicatorGroup（审核完成）
-- [x] IndicatorGroup.get_indicator 和 query_indicator（审核完成）
-- [x] BaseIndicator 自动过期机制（审核完成）
-- [x] 单元测试：BaseIndicator、IndicatorGroup、query_indicator（审核完成）
-- [x] 迁移 DataListener 到 hft/indicator/persist/（审核完成）
-- [x] 更新文档（审核完成）
+- [x] HealthyDataArray 单元测试（已通过）
+- [x] 重构 BaseIndicator 基类，添加 `_event`、`_data`、`calculate_vars`（已通过）
+- [x] 实现 GlobalIndicator（已通过）
+- [x] 实现 BaseDataSource 骨架（继承 BaseIndicator）（已通过）
+- [x] 实现 IndicatorGroup（已通过）
+- [x] IndicatorGroup.get_indicator 和 query_indicator（已通过）
+- [x] BaseIndicator 自动过期机制（已通过）
+- [x] 单元测试：BaseIndicator、IndicatorGroup、query_indicator（已通过）
+- [x] 迁移 DataListener 到 hft/indicator/persist/（已通过）
+- [x] 更新文档（已通过）
 
 > Phase 1.5：配置驱动与落地
 
-- [x] BaseDataSource 完善（审核完成）
+- [x] BaseDataSource 完善（已通过）
   - 覆盖：on_start() 启动 watch 协程；exchange 引用机制（通过 root.exchange_group + exchange_class 获取 exchange 实例）；_watch_task 管理（启动/停止）
-- [x] 实现具体 DataSource 示例（审核完成）
+- [x] 实现具体 DataSource 示例（已通过）
   - 覆盖：TickerDataSource（继承 BaseDataSource）+ 单元测试
-- [x] AppCore 集成 IndicatorGroup（审核完成）
+- [x] AppCore 集成 IndicatorGroup（已通过）
   - 覆盖：AppCore 创建/管理 IndicatorGroup；暴露 query_indicator / get_indicator 接口
-- [x] 配置驱动创建指标（审核完成）
+- [x] 配置驱动创建指标（已通过）
   - 覆盖：从 YAML 配置解析 indicator 定义；注册 indicator factory（`params` 会作为 **kwargs 传给 indicator）
 
 > Phase 2：DataSource 迁移（部分完成）
 
-- [x] 将 `hft/datasource/` 下的市场数据源（Ticker/Trades/OrderBook/OHLCV）迁移到 `hft/indicator/datasource/`（审核完成）
+- [x] 将 `hft/datasource/` 下的市场数据源（Ticker/Trades/OrderBook/OHLCV）迁移到 `hft/indicator/datasource/`（已通过）
   - 已完成：`hft/indicator/datasource/` 下已存在 `TickerDataSource/TradesDataSource/OrderBookDataSource/OHLCVDataSource`
   - 修复内容：
     - `TradesDataSource` 使用 `_never_duplicate` 函数替代 lambda，确保可 pickle
     - `TradesDataSource/OrderBookDataSource/OHLCVDataSource` 的 `from_ccxt()` 对 `timestamp=None` 健壮处理
   - 回归测试：`tests/test_ticker_datasource.py::TestRegressionFeature0006Phase2`
-- [x] 继承新的 `BaseDataSource`（继承自 `BaseIndicator`）（审核完成）
+- [x] 继承新的 `BaseDataSource`（继承自 `BaseIndicator`）（已通过）
   - 已完成：所有 DataSource 类继承关系正确，pickle 兼容性和 timestamp 健壮性已修复
-- [x] DataArray 使用方迁移到 HealthyDataArray（运行期不再依赖 DataArray）（审核完成）
+- [x] DataArray 使用方迁移到 HealthyDataArray（运行期不再依赖 DataArray）（已通过）
   - 证据：生产代码中不存在 `DataArray(...)` 实例化；资金费率容器已使用 `HealthyDataArray`（`hft/datasource/funding_rate_datasource.py`）
   - 兼容：旧 `hft/datasource/group.py:DataArray` 仍被 `hft/datasource/__init__.py` 导出（仅用于旧代码兼容），将在 Phase 3 移除
-- [x] 添加 DEPRECATED 标记到旧模块（审核完成）
+- [x] 添加 DEPRECATED 标记到旧模块（已通过）
   - 覆盖：`hft/datasource/base.py`、`hft/datasource/group.py`、`hft/datasource/ticker_datasource.py`、`hft/datasource/trades_datasource.py`、`hft/datasource/orderbook_datasource.py`、`hft/datasource/ohlcv_datasource.py`
 
 > Phase 3：清理（后续 Feature）
 
-- [x] 旧 DataArray 标记为 DEPRECATED（保留兼容导出；完全删除移交 Feature 0007）（审核完成）
+- [x] 旧 DataArray 标记为 DEPRECATED（保留兼容导出；完全删除移交 Feature 0007）（已通过）
   - 已添加 DEPRECATED 标记到 `hft/datasource/group.py`
   - 生产链路已迁移到 `HealthyDataArray`；旧 `DataArray` 仅作为旧模块兼容与历史测试保留
-- [x] 旧 DataType 标记为 DEPRECATED（字符串 ID 为主；完全删除移交 Feature 0007）（审核完成）
+- [x] 旧 DataType 标记为 DEPRECATED（字符串 ID 为主；完全删除移交 Feature 0007）（已通过）
   - 已添加 DEPRECATED 标记到 `hft/datasource/group.py`
   - 新链路优先使用字符串 ID（如 `"ticker"`, `"trades"`），仍保留枚举作为旧回退路径兼容
-- [ ] 删除旧的 `DataSourceGroup`（待实现）
-  - **→ 已移至 [Feature 0007: 移除 DataSourceGroup](./0007-remove-datasource-group.md)**
-  - 依赖分析：
-    - `AppCore` 创建并持有 `datasource_group` 实例
-    - `GlobalFundingRateFetcher` 依赖 `datasource_group.children` 和 `exchange_group`
-    - `avellaneda_stoikov_executor` 回退路径使用 `datasource_group.query()`
-  - 前置条件：
-    - 迁移 `GlobalFundingRateFetcher` 到 `IndicatorGroup` 架构
-    - 移除 `AppCore.datasource_group`
-    - 更新所有回退路径
-- [x] `LazyIndicator` 支持字符串 ID（兼容 DataType）（审核完成）
+- [x] 删除旧的 `DataSourceGroup`（已通过：已移交并在 Feature 0007 内完成）
+- [x] `LazyIndicator` 支持字符串 ID（兼容 DataType）（已通过）
   - 说明：目前仍通过 `DataType` 适配到旧 `TradingPairDataSource.query(DataType)`；这是“API 入口兼容改造”，不是“架构迁移”
   - 已覆盖：`VWAPIndicator`、`SpreadIndicator`、`MidPriceIndicator`、`TradeIntensityIndicator` 的 `depends_on` 均使用字符串 ID
-- [x] `LazyIndicator` 优先使用 IndicatorGroup 获取数据源（保留旧回退路径）（审核完成）
+- [x] `LazyIndicator` 优先使用 IndicatorGroup 获取数据源（保留旧回退路径）（已通过）
   - 已完成：`get_datasource()` 优先 `IndicatorGroup.get_indicator()`，并提供 `_get_indicator_group()` / `_get_exchange_info()`；保留旧架构回退以兼容
   - 注意：新 `hft/indicator/datasource/*` 的时间戳单位为“秒(float)”；旧 `hft/datasource/*` 多为“毫秒(int)”——混用时必须统一单位
   - 说明：移除旧回退路径与删除 `DataType` 属于 Feature 0007 的收尾工作
-- [x] 更新关键引用（Executor 回退路径优先走 IndicatorGroup）（审核完成）
+- [x] 更新关键引用（Executor 回退路径优先走 IndicatorGroup）（已通过）
   - `avellaneda_stoikov_executor` 已迁移：
     - 添加 `indicator_group` 属性和 `_get_datasource()` 辅助方法
     - 优先使用 `IndicatorGroup.get_indicator()`，回退到旧 `DataSourceGroup.query()`

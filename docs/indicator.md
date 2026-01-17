@@ -138,6 +138,120 @@ class RSIIndicator(BaseIndicator[float]):
 | `VolumeIndicator` | volume | trades | volume, buy_volume, sell_volume |
 | `RSIIndicator` | rsi | ohlcv | rsi |
 
+## Ready 语义（Feature 0005）
+
+### 概述
+
+Indicator 的 `is_ready()` 方法用于判断指标是否可用。当 Executor 通过 `requires` 声明依赖时，系统会检查所有依赖的 Indicator 是否 ready，只有全部 ready 才会执行。
+
+### Ready 判断逻辑
+
+```python
+def is_ready(self) -> bool:
+    """
+    判断指标是否 ready
+
+    逻辑：
+    1. 首先检查 ready_condition（如果配置了）
+    2. 然后检查 ready_internal()（子类实现）
+    3. 两者都满足才返回 True
+    """
+    # 1. 检查 ready_condition 表达式
+    if self._ready_condition:
+        context = self._get_ready_condition_context()
+        if not self._safe_eval_bool(self._ready_condition, context):
+            return False
+
+    # 2. 检查 ready_internal()
+    return self.ready_internal()
+```
+
+### ready_condition 配置
+
+`ready_condition` 是一个表达式字符串，支持以下变量：
+
+| 变量 | 说明 |
+|------|------|
+| `timeout` | 距离最后一次数据更新的秒数 |
+| `cv` | 数据变异系数（Coefficient of Variation） |
+| `count` | 数据点数量 |
+
+**配置示例**：
+
+```yaml
+indicators:
+  trades:
+    class: TradesDataSource
+    ready_condition: "timeout < 60 and cv < 0.8"  # 单独字段
+    params:
+      window: 300.0  # 构造参数
+```
+
+### ready_internal() 实现
+
+不同类型的 Indicator 有不同的 `ready_internal()` 实现：
+
+#### 数据源类（DataSource）
+
+数据源类的 `ready_internal()` 通常检查是否有数据：
+
+```python
+class TickerDataSource(BaseDataSource[Ticker]):
+    def ready_internal(self) -> bool:
+        """至少有一个 ticker 数据"""
+        return len(self._data) > 0
+```
+
+#### 计算类（Computed Indicator）
+
+计算类 Indicator 采用**混合模式**：
+
+- **被 requires 依赖时**：在 `on_tick()` 中定期计算并缓存到 `_data`
+- **未被依赖时**：`calculate_vars()` 按需计算（lazy）
+
+```python
+class RSIIndicator(BaseIndicator[float]):
+    def ready_internal(self) -> bool:
+        """
+        requires 模式下：检查 _data 是否有数据
+        lazy 模式下：检查依赖的 OHLCV 是否 ready
+        """
+        if self._is_required:
+            return len(self._data) > 0
+        # lazy 模式：委托给依赖
+        ohlcv = self._get_ohlcv_indicator()
+        return ohlcv is not None and ohlcv.is_ready()
+
+    async def on_tick(self) -> bool:
+        """只在被 requires 时定期计算"""
+        if not self._is_required:
+            return False
+        # 计算 RSI 并缓存到 _data
+        ...
+```
+
+### Requires Ready Gate
+
+Executor 在执行前会检查所有 `requires` 中的 Indicator 是否 ready：
+
+```python
+class BaseExecutor:
+    def check_requires_ready(self, exchange_class: str, symbol: str) -> bool:
+        """
+        检查所有 requires 中的 Indicator 是否 ready
+
+        Returns:
+            True 如果所有 Indicator 都 ready，否则 False
+        """
+        for indicator_id in self.config.requires:
+            indicator = self._get_indicator(exchange_class, symbol, indicator_id)
+            if indicator is None or not indicator.is_ready():
+                return False
+        return True
+```
+
+如果任一 Indicator 未 ready，执行会被跳过（返回 None），不会触发实际交易。
+
 ## 在 Executor 中使用
 
 ```yaml
@@ -152,7 +266,7 @@ per_order_usd: 100
 
 Executor 通过 `requires` 声明依赖，系统自动：
 1. 查询所需 Indicator
-2. 检查 `is_ready()` 状态
+2. 检查 `is_ready()` 状态（**requires ready gate**）
 3. 调用 `calculate_vars(direction)` 收集变量
 4. 注入到 condition 表达式上下文
 

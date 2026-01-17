@@ -7,6 +7,7 @@
 - 唯一开关：INTEGRATION_TEST_ALLOW_LISTS 环境变量控制
 - 默认不执行：环境变量未设置或为空时全部跳过
 - 强制要求 test: true 配置
+- 网络预检：在测试开始前检查网络连通性
 
 分组：
 - 0: 交易所 API 级（spot+swap 市价开平 + fetch_my_trades 可见性）
@@ -14,13 +15,19 @@
 - 2: App tick 级（demo app/executor/strategy 组合运行）
 
 运行示例：
-- INTEGRATION_TEST_ALLOW_LISTS="0,1" pytest tests/test_integration_trading.py -v -s
-- INTEGRATION_TEST_ALLOW_LISTS="*" pytest tests/test_integration_trading.py -v -s
+- INTEGRATION_TEST_ALLOW_LISTS="0,1" pytest -m integration_test -v -s
+- INTEGRATION_TEST_ALLOW_LISTS="*" pytest -m integration_test -v -s
+
+注意：
+- 默认不运行（pytest -q 会跳过，见 pytest.ini 的 addopts）
+- 需要设置 INTEGRATION_TEST_ALLOW_LISTS 环境变量
+- 需要网络连接，否则会明确提示跳过原因
 """
 import os
 import asyncio
 import time
 import random
+import socket
 from pathlib import Path
 from typing import Optional
 from glob import glob
@@ -43,6 +50,38 @@ ORDER_USD = 100.0  # 单笔订单 USD（用于 swap）
 SPOT_ORDER_AMOUNT = 1.0  # 现货订单数量（SOL）
 SOL_SPOT_SYMBOL = "SOL/USDT"  # 现货测试使用 SOL（OKX Demo Trading 的 ETH 现货有 bug）
 ETH_SWAP_SYMBOL = "ETH/USDT:USDT"
+
+# 网络预检主机列表（常用交易所域名）
+NETWORK_CHECK_HOSTS = [
+    ("www.okx.com", 443),
+    ("api.binance.com", 443),
+    ("1.1.1.1", 53),  # Cloudflare DNS as fallback
+]
+
+
+def check_network_connectivity(timeout: float = 3.0) -> tuple[bool, str]:
+    """
+    检查网络连通性
+
+    Returns:
+        (is_connected, message): 是否连通及详细信息
+    """
+    errors = []
+    for host, port in NETWORK_CHECK_HOSTS:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+            sock.close()
+            return True, f"Network OK (connected to {host}:{port})"
+        except socket.gaierror as e:
+            errors.append(f"{host}:{port} - DNS resolution failed: {e}")
+        except socket.timeout:
+            errors.append(f"{host}:{port} - Connection timeout ({timeout}s)")
+        except OSError as e:
+            errors.append(f"{host}:{port} - Connection failed: {e}")
+
+    return False, "Network unavailable. Tried:\n  - " + "\n  - ".join(errors)
 
 
 def is_group_allowed(group: int) -> bool:
@@ -102,6 +141,24 @@ def get_demo_app_configs() -> list[str]:
 # ============================================================
 
 @pytest.fixture(scope="module")
+def check_network():
+    """
+    网络预检 fixture（module 级别）
+
+    在测试模块开始时检查网络连通性，如果不可用则跳过整个模块的测试。
+    提供清晰的错误信息，便于排障。
+    """
+    is_connected, message = check_network_connectivity()
+    if not is_connected:
+        pytest.skip(
+            f"Integration tests require network connectivity.\n"
+            f"  {message}\n"
+            f"  Please check your network connection and try again."
+        )
+    print(f"\n  [Network Check] {message}")
+
+
+@pytest.fixture(scope="module")
 def init_fernet():
     """初始化 Fernet 解密（密码: null）"""
     from hft.config.crypto import init_fernet
@@ -110,8 +167,8 @@ def init_fernet():
 
 
 @pytest.fixture
-async def exchange_instance(request, init_fernet):
-    """创建交易所实例"""
+async def exchange_instance(request, init_fernet, check_network):
+    """创建交易所实例（自动检查网络）"""
     config_path = request.param
     from hft.exchange.config import BaseExchangeConfig
 
@@ -122,7 +179,19 @@ async def exchange_instance(request, init_fernet):
         pytest.skip(f"Exchange {config_path} does not have test: true")
 
     exchange = config.instance
-    await exchange.load_markets()
+
+    try:
+        await exchange.load_markets()
+    except Exception as e:
+        # 捕获网络错误，给出更清晰的提示
+        error_msg = str(e)
+        if "gaierror" in error_msg or "DNS" in error_msg.upper() or "name resolution" in error_msg.lower():
+            pytest.skip(
+                f"Network/DNS error while connecting to {config_path}:\n"
+                f"  {error_msg}\n"
+                f"  Please check your network connection."
+            )
+        raise
 
     yield exchange
 

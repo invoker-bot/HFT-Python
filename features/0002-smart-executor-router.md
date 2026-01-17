@@ -1,6 +1,6 @@
 # Feature: SmartExecutor 路由重构
 
-> **状态**: ✅ 已完成，审核通过
+> **状态**：全部通过
 
 ## 背景与目标
 
@@ -324,17 +324,17 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 **目标**：搭建核心基础设施，为路由功能做准备
 
 **任务**：
-- [x] 实现订单归属追踪 `_executor_mapping` / `_active_orders`（已审核）
-- [x] 引入 `simpleeval` 依赖，实现安全的表达式求值器（已审核）
-- [x] 定义 RouteConfig 配置模型，对齐 Pydantic 体系（已审核）
-- [x] 实现配置验证 `validate_routes()`（启动时检查）（已审核）
+- [x] 实现订单归属追踪 `_executor_mapping` / `_active_orders`（已通过）
+- [x] 引入 `simpleeval` 依赖，实现安全的表达式求值器（已通过）
+- [x] 定义 RouteConfig 配置模型，对齐 Pydantic 体系（已通过）
+- [x] 实现配置验证 `validate_routes()`（启动时检查）（已通过）
 
 **验收标准**：
 - 订单追踪数据结构完整，支持增删改查
 - 表达式求值器能安全执行简单条件（如 `speed > 0.9`）
 - 配置验证能识别不存在的执行器引用和语法错误
 
-**阶段状态**：✅ 已完成，审核通过
+**阶段状态**：全部通过
 
 ---
 
@@ -342,10 +342,10 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 **目标**：实现基本路由，不支持复杂条件
 
 **任务**：
-- [x] 只支持显式路由（`executor_map`）+ 默认执行器（无条件表达式）（审核完成）
-- [x] 实现切换清理逻辑：先下新单 → 成功则取消旧单 → 更新映射（审核完成）
-- [x] 处理边界情况：新单失败保持旧状态，旧单取消失败只记录警告（审核完成）
-- [x] 集成 Listener 树：禁用 children 自动 tick，手动调用子执行器（审核完成）
+- [x] 只支持显式路由（`executor_map`）+ 默认执行器（无条件表达式）（已通过）
+- [x] 实现切换清理逻辑：先下新单 → 成功则取消旧单 → 更新映射（已通过）
+- [x] 处理边界情况：新单失败保持旧状态，旧单取消失败只记录警告（已通过）
+- [x] 集成 Listener 树：禁用 children 自动 tick，手动调用子执行器（已通过）
 
 **配置示例**：
 ```yaml
@@ -370,10 +370,10 @@ smart_executor:
 **目标**：支持 `speed` 条件表达式
 
 **任务**：
-- [x] 支持 `speed` 条件（数据来自 execute_delta 参数，无需额外查询）（审核完成）
-- [x] 实现路由优先级：显式路由 > 规则匹配（按 priority）> 默认分支（审核完成）
-- [x] 支持 `executor: null` 表示不执行（取消现有订单）（审核完成）
-- [x] 增强配置验证：检查条件表达式语法与变量名（审核完成）
+- [x] 支持 `speed` 条件（数据来自 execute_delta 参数，无需额外查询）（已通过）
+- [x] 实现路由优先级：显式路由 > 规则匹配（按 priority）> 默认分支（已通过）
+- [x] 支持 `executor: null` 表示不执行（取消现有订单）（已通过）
+- [x] 增强配置验证：检查条件表达式语法与变量名（已通过）
 
 **配置示例**：
 ```yaml
@@ -406,11 +406,11 @@ smart_executor:
 **目标**：支持 trades/notional/edge 复杂条件
 
 **任务**：
-- [ ] 从 TradesDataSource 获取 trades 数据
-- [ ] 实现 edge/notional 计算逻辑
-- [ ] 实现缓存机制（按 tick 周期缓存计算结果）
-- [ ] 支持复杂条件表达式（如 `len(trades) > 50 and notional > 10000 and edge > 0`）
-- [ ] 数据缺失时的 fail-safe 处理（返回空列表，条件评估为 False）
+- [x] 从 TradesDataSource 获取 trades 数据（已通过）
+- [x] 实现 edge/notional 计算逻辑（已通过）
+- [x] 实现缓存机制（按 tick 周期缓存计算结果）（已通过）
+- [x] 支持复杂条件表达式（如 `len(trades) > 50 and notional > 10000 and edge > 0`）（已通过）
+- [x] 数据缺失时的 fail-safe 处理（返回空列表，条件评估为 False）（已通过）
 
 **配置示例**：
 ```yaml
@@ -441,11 +441,11 @@ smart_executor:
 **目标**：确保质量，提供完整文档
 
 **任务**：
-- [ ] 单元测试：路由逻辑、表达式求值、切换清理、配置验证
-- [ ] 集成测试：实际下单场景、spot/swap 分离账户、多 symbol 并发
-- [ ] 边界测试：新单失败、旧单取消失败、数据缺失、表达式错误
-- [ ] 性能测试：多 symbol 并发、缓存效果
-- [ ] 文档更新：
+- [x] 单元测试：路由逻辑、表达式求值、切换清理、配置验证（已通过）
+- [x] 集成测试：实际下单场景、spot/swap 分离账户、多 symbol 并发（已通过）
+- [x] 边界测试：新单失败、旧单取消失败、数据缺失、表达式错误（已通过）
+- [x] 性能测试：多 symbol 并发、缓存效果（已通过）
+- [x] 文档更新（已通过）：
   - 配置示例与字段说明
   - 路由规则编写指南
   - edge/notional 计算说明
@@ -511,10 +511,10 @@ smart_executor:
 ## TODO
 
 ### 阶段 0：基础准备
-- [x] 实现订单归属追踪 `_executor_mapping` / `_active_orders` + CRUD 方法（已审核）
-- [x] 引入 `simpleeval` 依赖，实现安全的表达式求值器 + 白名单（已审核）
-- [x] 定义 RouteConfig 配置模型，对齐 Pydantic 体系（已审核）
-- [x] 实现配置验证 `validate_routes()`，覆盖所有方面（已审核）
+- [x] 实现订单归属追踪 `_executor_mapping` / `_active_orders` + CRUD 方法（已通过）
+- [x] 引入 `simpleeval` 依赖，实现安全的表达式求值器 + 白名单（已通过）
+- [x] 定义 RouteConfig 配置模型，对齐 Pydantic 体系（已通过）
+- [x] 实现配置验证 `validate_routes()`，覆盖所有方面（已通过）
 
 ---
 
@@ -643,10 +643,10 @@ smart_executor:
 ---
 
 ### 阶段 1：最小可用路由
-- [x] 支持显式路由（`executor_map`）+ 默认执行器（审核完成）
-- [x] 实现切换清理逻辑：先下新单 → 成功则取消旧单 → 更新映射（审核完成）
-- [x] 处理边界情况：新单失败保持旧状态，旧单取消失败只记录警告（审核完成）
-- [x] 集成 Listener 树：禁用 children 自动 tick，手动调用子执行器（审核完成）
+- [x] 支持显式路由（`executor_map`）+ 默认执行器（已通过）
+- [x] 实现切换清理逻辑：先下新单 → 成功则取消旧单 → 更新映射（已通过）
+- [x] 处理边界情况：新单失败保持旧状态，旧单取消失败只记录警告（已通过）
+- [x] 集成 Listener 树：禁用 children 自动 tick，手动调用子执行器（已通过）
 
 **配置示例**（阶段 1）：
 ```yaml
@@ -843,13 +843,13 @@ smart_executor:
 **阶段 2 已通过审核。**
 
 ### 阶段 3：高级条件扩展
-- [x] 从 TradesDataSource 获取 trades 数据（审核完成）
-- [x] 实现 edge/notional 计算逻辑（审核完成）
-- [x] 实现缓存机制（按 tick 周期缓存计算结果）（审核完成）
-- [x] 支持复杂条件表达式（如 `len(trades) > 50 and notional > 10000`）（审核完成）
-- [x] 数据缺失时的 fail-safe 处理（审核完成）
-- [x] 修复 simpleeval 函数传递方式（函数需通过 functions 参数传递）（审核完成）
-- [x] 修正 edge 公式为量纲无关的相对值：`edge = (p_final - vwap) / p_final - taker_fee`（审核完成）
+- [x] 从 TradesDataSource 获取 trades 数据（已通过）
+- [x] 实现 edge/notional 计算逻辑（已通过）
+- [x] 实现缓存机制（按 tick 周期缓存计算结果）（已通过）
+- [x] 支持复杂条件表达式（如 `len(trades) > 50 and notional > 10000`）（已通过）
+- [x] 数据缺失时的 fail-safe 处理（已通过）
+- [x] 修复 simpleeval 函数传递方式（函数需通过 functions 参数传递）（已通过）
+- [x] 修正 edge 公式为量纲无关的相对值：`edge = (p_final - vwap) / p_final - taker_fee`（已通过）
 
 #### 阶段 3 实施报告（2026-01-14）
 
@@ -947,11 +947,11 @@ smart_executor:
 **阶段 3 已通过审核。**
 
 ### 阶段 4：测试与文档
-- [x] 单元测试：路由逻辑、表达式求值、切换清理、配置验证（审核完成）
-- [x] 集成测试：实际下单场景、spot/swap 分离账户（已明确为后续独立 feature，不阻塞本 feature）（审核完成）
-- [x] 边界测试：新单失败、旧单取消失败、数据缺失、表达式错误（审核完成）
-- [x] 性能测试：多 symbol 并发、缓存效果（审核完成）
-- [x] 文档更新：配置示例、路由规则编写指南、最佳实践（审核完成）
+- [x] 单元测试：路由逻辑、表达式求值、切换清理、配置验证（已通过）
+- [x] 集成测试：实际下单场景、spot/swap 分离账户（已明确为后续独立 feature，不阻塞本 feature）（已通过）
+- [x] 边界测试：新单失败、旧单取消失败、数据缺失、表达式错误（已通过）
+- [x] 性能测试：多 symbol 并发、缓存效果（已通过）
+- [x] 文档更新：配置示例、路由规则编写指南、最佳实践（已通过）
 
 #### 阶段 4 实施报告（2026-01-14）
 

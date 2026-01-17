@@ -1,6 +1,6 @@
 # Issue: BaseExecutor 结果列表丢失 & 依赖未安装导致测试阻塞
 
-> **状态**: ✅ 已完成，审核通过
+> **状态**：全部通过
 > **发现版本**: `main`（2024-XX-XX）
 
 ## 背景
@@ -24,8 +24,8 @@
 
 ## 修复建议
 
-- [x] 重写 `_process_targets()`，累积每个目标的执行结果并返回列表，确保 `on_execution_complete()` 能获取完整数据。（审核完成，见 hft/executor/base.py:522-564）
-- [x] 在当前开发环境执行 `pip install -r requirements.txt`，并重新运行 `pytest tests/test_executor.py -q --maxfail=1` 以验证修复效果。（审核完成，测试通过）
+- [x] 重写 `_process_targets()`，累积每个目标的执行结果并返回列表，确保 `on_execution_complete()` 能获取完整数据。（已通过，见 hft/executor/base.py:522-564）
+- [x] 在当前开发环境执行 `pip install -r requirements.txt`，并重新运行 `pytest tests/test_executor.py -q --maxfail=1` 以验证修复效果。（已通过，测试通过）
 
 ---
 

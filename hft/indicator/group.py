@@ -2,11 +2,15 @@
 IndicatorGroup - 指标管理器
 
 Feature 0006: Indicator 与 DataSource 统一架构
+Feature 0008: Strategy 数据驱动增强 - Indicator 层级体系
 
 层级结构：
 - IndicatorGroup: 顶层管理器
   ├── GlobalIndicators: 全局指标容器
   │   └── GlobalFundingRateDataSource, ...
+  ├── ExchangePathIndicators: 交易所实例级指标容器
+  │   └── (exchange_path) -> ExchangePathIndicators
+  │       └── MedalEquationDataSource, ...
   └── LocalIndicators: 交易对级指标容器
       └── (exchange_class, symbol) -> TradingPairIndicators
           └── TradesDataSource, OrderBookDataSource, MedalEdgeIndicator, ...
@@ -196,21 +200,110 @@ class GlobalIndicators(GroupListener):
         }
 
 
+class ExchangePathIndicators(GroupListener):
+    """
+    交易所实例级指标容器（Feature 0008）
+
+    管理特定 exchange_path 的指标，如 MedalEquationDataSource。
+
+    层级位于 GlobalIndicators 和 TradingPairIndicators 之间：
+    - Global: 全局唯一
+    - ExchangePath: 按交易所实例（如 okx/main, okx/sub1）
+    - Pair: 按交易对
+    """
+    __pickle_exclude__ = (*GroupListener.__pickle_exclude__,)
+
+    def __init__(self, exchange_path: str):
+        name = f"ExchangePath:{exchange_path}"
+        super().__init__(name=name, interval=60.0)
+        self._exchange_path = exchange_path
+        # indicator_id -> BaseIndicator
+        self._indicators: dict[str, BaseIndicator] = {}
+
+    @property
+    def exchange_path(self) -> str:
+        return self._exchange_path
+
+    # ============================================================
+    # 指标管理
+    # ============================================================
+
+    def get_indicator(self, indicator_id: str) -> Optional[BaseIndicator]:
+        """获取指标实例"""
+        return self._indicators.get(indicator_id)
+
+    def register_indicator(self, indicator_id: str, indicator: BaseIndicator) -> None:
+        """注册指标"""
+        self._indicators[indicator_id] = indicator
+        self.add_child(indicator)
+
+    def has_indicator(self, indicator_id: str) -> bool:
+        """检查指标是否存在"""
+        return indicator_id in self._indicators
+
+    # ============================================================
+    # GroupListener 接口
+    # ============================================================
+
+    def sync_children_params(self) -> dict[str, Any]:
+        return {
+            indicator_id: {"indicator": indicator}
+            for indicator_id, indicator in self._indicators.items()
+        }
+
+    def create_dynamic_child(self, name: str, param: Any) -> Listener:
+        return param["indicator"]
+
+    # ============================================================
+    # 生命周期
+    # ============================================================
+
+    async def on_tick(self) -> bool:
+        """检查并停止过期的指标"""
+        for indicator_id, indicator in list(self._indicators.items()):
+            if indicator.is_expired() and indicator.state == ListenerState.RUNNING:
+                await indicator.stop()
+                self.logger.debug(
+                    "Stopped expired indicator: %s/%s",
+                    self.name, indicator_id
+                )
+        return False
+
+    @property
+    def log_state_dict(self) -> dict:
+        active = [
+            ind_id for ind_id, ind in self._indicators.items()
+            if ind.state == ListenerState.RUNNING
+        ]
+        return {
+            "exchange_path": self._exchange_path,
+            "total_indicators": len(self._indicators),
+            "active_indicators": active,
+        }
+
+
 class IndicatorGroup(GroupListener):
     """
     指标管理器 - 顶层
 
     Feature 0006 的核心组件，提供统一的 query_indicator / get_indicator 接口。
+    Feature 0008: 支持 exchange_path 级别查询。
 
-    层级结构：
+    层级结构（按查询优先级）：
     - GlobalIndicators: 全局指标
+    - ExchangePathIndicators: (exchange_path,) -> ExchangePathIndicators
     - LocalIndicators: (exchange_class, symbol) -> TradingPairIndicators
 
     使用示例：
-        # 获取指标（ready 时返回，否则返回 None）
+        # 获取交易对级指标（ready 时返回，否则返回 None）
         indicator = indicator_group.query_indicator("rsi", "okx", "BTC/USDT:USDT")
         if indicator:
             vars = indicator.calculate_vars(direction=1)
+
+        # 获取 exchange_path 级指标
+        equation = indicator_group.query_indicator(
+            "equation", None, None, exchange_path="okx/main"
+        )
 
         # 获取指标实例（不管 ready 与否，用于订阅事件）
         indicator = indicator_group.get_indicator("rsi", "okx", "BTC/USDT:USDT")
@@ -221,6 +314,8 @@ class IndicatorGroup(GroupListener):
         super().__init__(name="IndicatorGroup", interval=60.0)
         # 全局指标容器
         self._global_indicators = GlobalIndicators()
+        # 交易所实例级指标容器: exchange_path -> ExchangePathIndicators (Feature 0008)
+        self._exchange_path_indicators: dict[str, ExchangePathIndicators] = {}
         # 交易对级指标容器: (exchange_class, symbol) -> TradingPairIndicators
         self._local_indicators: dict[tuple[str, str], TradingPairIndicators] = {}
         # 指标工厂注册表: indicator_id -> factory_func
@@ -237,7 +332,7 @@ class IndicatorGroup(GroupListener):
         """
         from .factory import IndicatorFactory
 
-        # 字符串 ID -> DataSource 类名映射
+        # 字符串 ID -> DataSource 类名映射（Pair 级别）
         default_mappings = {
             "ticker": "TickerDataSource",
             "trades": "TradesDataSource",
@@ -245,8 +340,18 @@ class IndicatorGroup(GroupListener):
             "ohlcv": "OHLCVDataSource",
         }
 
+        # ExchangePath 级别映射（Feature 0008）
+        exchange_path_mappings = {
+            "equation": "MedalEquationDataSource",
+        }
+
         for indicator_id, class_name in default_mappings.items():
             # 只注册尚未存在的工厂（允许配置覆盖默认）
+            if indicator_id not in self._indicator_factories:
+                factory = IndicatorFactory(class_name, {})
+                self._indicator_factories[indicator_id] = factory
+
+        for indicator_id, class_name in exchange_path_mappings.items():
             if indicator_id not in self._indicator_factories:
                 factory = IndicatorFactory(class_name, {})
                 self._indicator_factories[indicator_id] = factory
@@ -288,6 +393,7 @@ class IndicatorGroup(GroupListener):
         indicator_id: str,
         exchange_class: Optional[str],
         symbol: Optional[str],
+        exchange_path: Optional[str] = None,
     ) -> Optional[BaseIndicator]:
         """
         获取 indicator 实例（不管 ready 与否）
@@ -299,11 +405,43 @@ class IndicatorGroup(GroupListener):
             indicator_id: 指标 ID
             exchange_class: 交易所类名，GlobalIndicator 传 None
             symbol: 交易对，GlobalIndicator 传 None
+            exchange_path: 交易所实例路径（Feature 0008），如 "okx/main"
 
         Returns:
             BaseIndicator 实例，如果无法创建则返回 None
+
+        查询优先级：
+        1. exchange_path 级别（如果指定了 exchange_path）
+        2. 交易对级别（如果指定了 exchange_class 和 symbol）
+        3. 全局级别
         """
-        # 全局指标
+        # 1. exchange_path 级指标 (Feature 0008)
+        if exchange_path is not None:
+            path_indicators = self._exchange_path_indicators.get(exchange_path)
+
+            if path_indicators is None:
+                # 创建 ExchangePathIndicators
+                path_indicators = ExchangePathIndicators(exchange_path)
+                self._exchange_path_indicators[exchange_path] = path_indicators
+                self.add_child(path_indicators)
+                self._ensure_started(path_indicators)
+
+            indicator = path_indicators.get_indicator(indicator_id)
+            if indicator is not None:
+                indicator.touch()
+                self._ensure_started(indicator)
+                return indicator
+
+            # 尝试创建 (使用 exchange_path 作为参数)
+            indicator = self._create_indicator(
+                indicator_id, exchange_class, symbol, exchange_path=exchange_path
+            )
+            if indicator is not None:
+                path_indicators.register_indicator(indicator_id, indicator)
+                self._ensure_started(indicator)
+            return indicator
+
+        # 2. 全局指标
         if exchange_class is None and symbol is None:
             indicator = self._global_indicators.get_indicator(indicator_id)
             if indicator is not None:
@@ -317,7 +455,7 @@ class IndicatorGroup(GroupListener):
                 self._ensure_started(indicator)
             return indicator
 
-        # 交易对级指标
+        # 3. 交易对级指标
         key = (exchange_class, symbol)
         pair_indicators = self._local_indicators.get(key)
 
@@ -347,6 +485,7 @@ class IndicatorGroup(GroupListener):
         indicator_id: str,
         exchange_class: Optional[str],
         symbol: Optional[str],
+        exchange_path: Optional[str] = None,
     ) -> Optional[BaseIndicator]:
         """
         查询 indicator，支持 lazy 创建和自动启动
@@ -355,12 +494,15 @@ class IndicatorGroup(GroupListener):
             indicator_id: 指标 ID
             exchange_class: 交易所类名，GlobalIndicator 传 None
             symbol: 交易对，GlobalIndicator 传 None
+            exchange_path: 交易所实例路径（Feature 0008），如 "okx/main"
 
         Returns:
             - BaseIndicator 实例：indicator ready
             - None：indicator 未 ready（实例仍可通过 get_indicator() 获取）
         """
-        indicator = self.get_indicator(indicator_id, exchange_class, symbol)
+        indicator = self.get_indicator(
+            indicator_id, exchange_class, symbol, exchange_path=exchange_path
+        )
         if indicator is None:
             return None
         return indicator if indicator.is_ready() else None
@@ -374,11 +516,18 @@ class IndicatorGroup(GroupListener):
         indicator_id: str,
         exchange_class: Optional[str],
         symbol: Optional[str],
+        exchange_path: Optional[str] = None,
     ) -> Optional[BaseIndicator]:
         """
         创建指标实例
 
         使用注册的工厂函数创建指标。
+
+        Args:
+            indicator_id: 指标 ID
+            exchange_class: 交易所类名
+            symbol: 交易对
+            exchange_path: 交易所实例路径（Feature 0008）
         """
         factory = self._indicator_factories.get(indicator_id)
         if factory is None:
@@ -386,7 +535,11 @@ class IndicatorGroup(GroupListener):
             return None
 
         try:
-            indicator = factory(exchange_class, symbol)
+            # 根据工厂类型调用
+            if exchange_path is not None:
+                indicator = factory(exchange_class, symbol, exchange_path=exchange_path)
+            else:
+                indicator = factory(exchange_class, symbol)
             return indicator
         except Exception as e:
             self.logger.exception(
@@ -412,11 +565,15 @@ class IndicatorGroup(GroupListener):
     # ============================================================
 
     def sync_children_params(self) -> dict[str, Any]:
-        """返回所有子节点（包括 GlobalIndicators 和 TradingPairIndicators）"""
+        """返回所有子节点（包括 GlobalIndicators、ExchangePathIndicators 和 TradingPairIndicators）"""
         params = {
             # 静态子节点：GlobalIndicators
             "GlobalIndicators": {"static": self._global_indicators},
         }
+        # 动态子节点：ExchangePathIndicators (Feature 0008)
+        for exchange_path, path_indicators in self._exchange_path_indicators.items():
+            name = f"ExchangePath:{exchange_path}"
+            params[name] = {"path_indicators": path_indicators}
         # 动态子节点：TradingPairIndicators
         for (exchange_class, symbol), pair_indicators in self._local_indicators.items():
             name = f"{exchange_class}:{symbol}"
@@ -427,7 +584,10 @@ class IndicatorGroup(GroupListener):
         # 静态子节点直接返回
         if "static" in param:
             return param["static"]
-        # 动态子节点
+        # ExchangePathIndicators (Feature 0008)
+        if "path_indicators" in param:
+            return param["path_indicators"]
+        # TradingPairIndicators
         return param["pair_indicators"]
 
     # ============================================================
@@ -436,14 +596,20 @@ class IndicatorGroup(GroupListener):
 
     @property
     def log_state_dict(self) -> dict:
-        stats = defaultdict(int)
+        local_stats = defaultdict(int)
         for (exchange_class, _), pair_indicators in self._local_indicators.items():
-            stats[exchange_class] += len(pair_indicators._indicators)
+            local_stats[exchange_class] += len(pair_indicators._indicators)
+
+        exchange_path_stats = {}
+        for exchange_path, path_indicators in self._exchange_path_indicators.items():
+            exchange_path_stats[exchange_path] = len(path_indicators._indicators)
 
         return {
             "global_indicators": len(self._global_indicators._indicators),
+            "exchange_path_indicators": len(self._exchange_path_indicators),
             "trading_pairs": len(self._local_indicators),
-            "by_exchange": dict(stats),
+            "by_exchange": dict(local_stats),
+            "by_exchange_path": exchange_path_stats,
         }
 
     def get_stats(self) -> dict:
@@ -456,12 +622,29 @@ class IndicatorGroup(GroupListener):
                     if ind.state == ListenerState.RUNNING
                 ),
             },
+            "exchange_path_indicators": {
+                "total": len(self._exchange_path_indicators),
+                "by_path": {},
+            },
             "local_indicators": {
                 "trading_pairs": len(self._local_indicators),
                 "by_exchange": defaultdict(lambda: {"total": 0, "active": 0}),
             },
         }
 
+        # ExchangePath 级统计 (Feature 0008)
+        for exchange_path, path_indicators in self._exchange_path_indicators.items():
+            total = len(path_indicators._indicators)
+            active = sum(
+                1 for ind in path_indicators._indicators.values()
+                if ind.state == ListenerState.RUNNING
+            )
+            stats["exchange_path_indicators"]["by_path"][exchange_path] = {
+                "total": total,
+                "active": active,
+            }
+
+        # 交易对级统计
         for (exchange_class, _), pair_indicators in self._local_indicators.items():
             total = len(pair_indicators._indicators)
             active = sum(

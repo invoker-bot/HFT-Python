@@ -1,5 +1,6 @@
 # Feature: Executor 动态条件与变量注入机制
 
+> **状态**：全部通过
 > 依赖 Feature 0006（Indicator 与 DataSource 统一架构）
 
 ## 背景
@@ -152,9 +153,9 @@ indicators:
 - `ready_internal()`：由 indicator 自身实现的内置就绪判断。`BaseIndicator` 的默认行为是“`_data` 至少有 1 个可用数据点则 ready”，其他 indicator 可覆盖为更严格的逻辑（例如 RSI 需要足够长度、MidPrice 需要 orderbook 可用等）
 - 由于 `ready_condition` 的变量（timeout/cv/range）来自 indicator 自己的 `_data` 健康统计：计算型 indicator 也必须维护自身 `_data`（通常在依赖数据源 update 时写入一条新点或 upsert/replace），否则无法得到正确的健康口径与 ready 行为
 
-**实现现状提醒（需要与 Feature 0006 口径对齐）**：
+**实现现状提醒（与 Feature 0006 口径对齐）**：
 - 当前仓库的 `RSIIndicator` 已实现 requires 模式下的 `_data` 维护与 `ready_internal()`
-- 当前仓库的 `MidPriceIndicator/MedalEdgeIndicator/VolumeIndicator` 尚未维护自身 `_data` 且未覆盖 `ready_internal()`，会导致它们在 `query_indicator()` 语义下长期处于 not ready（从而无法用于 requires gate / 变量注入）；这部分需要补齐后才能按本文档示例使用（见本文 TODO 与 `issue/0006-feature-0005-implementation-gaps.md`）
+- 当前仓库的 `MidPriceIndicator/MedalEdgeIndicator/VolumeIndicator` 已实现 requires 模式下的 `_data` 维护与 `ready_internal()`（已通过）
 
 ### 4. Executor 的 `requires` 和 `condition`
 
@@ -240,7 +241,7 @@ routes:
 4. 最终执行选中的 executor（或 executor=null 表示不执行）
 
 **实现注意（当前仓库现状）**：
-- SmartExecutor 路由上下文里的 `trades/edge/trades_notional` 当前来自 legacy 的 `datasource_group`（后续计划在 Feature 0007 移除/迁移）；与 Feature 0006 的 `IndicatorGroup` 仍存在双源并存期，需要在文档/实现中保持口径一致
+- SmartExecutor 路由上下文里的 trades 数据当前从 `IndicatorGroup` 的 `TradesDataSource` 获取（不再依赖 legacy 的 `datasource_group`）；`notional/target_notional/trades_notional` 语义见 `issue/0004-smart-executor-route-notional-semantics.md`
 
 ### 5. 参数解析规则
 
@@ -250,7 +251,7 @@ routes:
 |------|------|------------|----------|
 | `spread` | `str \| float` | 表达式求值（需返回**绝对价差**） | 直接使用（**绝对价差**，单位为 price 的计价货币，例如 USDT） |
 | `refresh_tolerance` | `str \| float` | 表达式求值 | 直接使用（**相对原 spread 的比例阈值**，无单位） |
-| `timeout` | `str \| float` | 表达式求值 | 直接使用（秒） |
+| `timeout` | `str \| float` | 表达式求值 | 直接使用（秒；当前仓库未实现 `7d/1h/30s` 这类 duration 字符串解析） |
 | `per_order_usd` | `str \| float` | 表达式求值 | 直接使用（USD） |
 | `reverse` | `str \| bool` | 表达式求值 | 直接使用 |
 
@@ -259,7 +260,7 @@ routes:
 spread: 10.0                 # 解释为绝对价差 10（如 BTC/USDT 则为 10 USDT）
 spread: "0.001 * mid_price"  # 绝对价差表达式：按比例换算（例如 0.1% * mid_price）
 
-refresh_tolerance: 0.5              # 无单位：允许价格在“原 spread”的 50% 范围内偏移仍视为可复用
+refresh_tolerance: 0.5              # 无单位：允许价格在"原 spread"的 50% 范围内偏移仍视为可复用
 refresh_tolerance: "0.3 if speed > 0.8 else 0.6"  # 表达式返回比例阈值
 ```
 
@@ -616,25 +617,25 @@ def _get_indicator(
 
 > 注意：部分任务依赖 Feature 0006 的基础设施（IndicatorGroup / BaseIndicator / BaseDataSource）
 
-- [x] BaseExecutor：实现 requires + collect_context_vars（仅注入 ready indicator vars）（审核完成）
-- [x] BaseExecutor：requires 作为 ready gate：任一 requires indicator 未 ready 时，跳过路由/参数求值/下单（审核完成）
-- [x] BaseExecutor：实现 evaluate_condition/evaluate_param + safe eval 白名单，并 fail-safe（审核完成）
-- [x] LimitExecutor：orders 动态参数（spread/refresh_tolerance/timeout/per_order_usd/reverse）表达式求值（审核完成）
-- [x] MarketExecutor：实现动态 per_order_usd（支持表达式），并由 BaseExecutor 阈值判断/拆单逻辑统一使用（审核完成）
-- [x] 单元测试：condition 求值、动态参数解析、indicator 变量注入、安全性（审核完成）
-- [ ] 单元测试：覆盖 MidPrice/MedalEdge/Volume 的 ready 语义（requires 模式 `_data` 维护 + `ready_internal()`）（待实现）
-- [x] BaseExecutor：在统一执行链路中接入 `condition` gate（condition=False 时不下单）（审核完成）
-- [x] MarketExecutor / LimitExecutor：明确 condition 的执行语义（在 delta 阈值检查之前执行）（审核完成）
-- [x] SmartExecutor：接入外层 `condition` 与子 executor 的 `condition` 递归检查（审核完成）
-- [x] 实现数据源类 Indicator：TradesDataSource / OrderBookDataSource / OHLCVDataSource（依赖 Feature 0006；实现：`hft/indicator/datasource/`）（审核完成）
-- [ ] 实现计算类 Indicator：MidPriceIndicator（可用于 requires/变量注入）（审核不通过：当前未覆盖 `ready_internal()` 且未维护 `_data`，导致长期 not ready）
-- [ ] 实现计算类 Indicator：MedalEdgeIndicator（可用于 requires/变量注入）（审核不通过：当前未覆盖 `ready_internal()` 且未维护 `_data`，导致长期 not ready）
-- [ ] 实现计算类 Indicator：VolumeIndicator（可用于 requires/变量注入）（审核不通过：当前未覆盖 `ready_internal()` 且未维护 `_data`，导致长期 not ready，且 `notional` key 与内置变量冲突风险较高）
-- [x] 实现计算类 Indicator：RSIIndicator（依赖 Feature 0006；实现：`hft/indicator/computed/`，注册：`hft/indicator/factory.py`）（审核完成）
-- [x] 计算类 Indicator：requires 模式维护自身 `_data` + 覆盖 `ready_internal()`（以 RSIIndicator 为基准样例）（审核完成）
-- [x] 配置与兼容：历史 `spread` 比例写法迁移与 demo 配置更新（审核完成）
-- [x] 文档更新：`docs/executor.md`、`docs/indicator.md`（审核完成）
-- [x] 配置加载层：支持 `ready_condition` 通过 `set_ready_condition(...)` 注入（不放入 `params`）（审核完成）
+- [x] BaseExecutor：实现 requires + collect_context_vars（仅注入 ready indicator vars）（已通过）
+- [x] BaseExecutor：requires 作为 ready gate：任一 requires indicator 未 ready 时，跳过路由/参数求值/下单（已通过）
+- [x] BaseExecutor：实现 evaluate_condition/evaluate_param + safe eval 白名单，并 fail-safe（已通过）
+- [x] LimitExecutor：orders 动态参数（spread/refresh_tolerance/timeout/per_order_usd/reverse）表达式求值（已通过）
+- [x] MarketExecutor：实现动态 per_order_usd（支持表达式），并由 BaseExecutor 阈值判断/拆单逻辑统一使用（已通过）
+- [x] 单元测试：condition 求值、动态参数解析、indicator 变量注入、安全性（已通过）
+- [x] 单元测试：覆盖 MidPrice/MedalEdge/Volume 的 ready 语义（requires 模式 `_data` 维护 + `ready_internal()`）（已通过）
+- [x] BaseExecutor：在统一执行链路中接入 `condition` gate（condition=False 时不下单）（已通过）
+- [x] MarketExecutor / LimitExecutor：明确 condition 的执行语义（在 delta 阈值检查之前执行）（已通过）
+- [x] SmartExecutor：接入外层 `condition` 与子 executor 的 `condition` 递归检查（已通过）
+- [x] 实现数据源类 Indicator：TradesDataSource / OrderBookDataSource / OHLCVDataSource（依赖 Feature 0006；实现：`hft/indicator/datasource/`）（已通过）
+- [x] 实现计算类 Indicator：MidPriceIndicator（可用于 requires/变量注入）（已通过）
+- [x] 实现计算类 Indicator：MedalEdgeIndicator（可用于 requires/变量注入）（已通过）
+- [x] 实现计算类 Indicator：VolumeIndicator（可用于 requires/变量注入）（已通过）
+- [x] 实现计算类 Indicator：RSIIndicator（依赖 Feature 0006；实现：`hft/indicator/computed/`，注册：`hft/indicator/factory.py`）（已通过）
+- [x] 计算类 Indicator：requires 模式维护自身 `_data` + 覆盖 `ready_internal()`（已通过）
+- [x] 配置与兼容：历史 `spread` 比例写法迁移与 demo 配置更新（已通过）
+- [x] 文档更新：`docs/executor.md`、`docs/indicator.md`（已通过）
+- [x] 配置加载层：支持 `ready_condition` 通过 `set_ready_condition(...)` 注入（不放入 `params`）（已通过）
 
 > 相关追踪：`issue/0006-feature-0005-implementation-gaps.md`、`issue/0007-feature-0005-computed-indicators-not-ready.md`
 

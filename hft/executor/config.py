@@ -3,13 +3,26 @@
 
 提供执行器的配置类：
 - BaseExecutorConfig: 执行器配置基类
+- ExecutorVarDefinition: 变量定义（Feature 0010）
+- ExecutorConditionalVarDefinition: 条件变量定义（Feature 0010）
+- OrderDefinition: 统一订单配置（Feature 0010 Phase 4）
 - MarketExecutorConfig: 市价单执行器配置
 - LimitExecutorConfig: 限价单执行器配置
 - AvellanedaStoikovExecutorConfig: Avellaneda-Stoikov 做市执行器配置
 - PCAExecutorConfig: PCA 执行器配置
 - SmartExecutorConfig: 智能路由执行器配置
 """
-from .base_config import BaseExecutorConfig
+from .base_config import (
+    BaseExecutorConfig,
+    ExecutorVarDefinition,
+    ExecutorConditionalVarDefinition,
+)
+from .order_config import (
+    OrderVarDefinition,
+    OrderConditionalVarDefinition,
+    OrderDefinition,
+    EntryExitOrderDefinition,
+)
 from .avellaneda_stoikov_executor.config import (
     ASOrderLevel,
     AvellanedaStoikovExecutorConfig,
@@ -21,6 +34,12 @@ from .smart_executor.config import SmartExecutorConfig
 
 __all__ = [
     "BaseExecutorConfig",
+    "ExecutorVarDefinition",
+    "ExecutorConditionalVarDefinition",
+    "OrderVarDefinition",
+    "OrderConditionalVarDefinition",
+    "OrderDefinition",
+    "EntryExitOrderDefinition",
     "MarketExecutorConfig",
     "LimitOrderLevel",
     "LimitExecutorConfig",

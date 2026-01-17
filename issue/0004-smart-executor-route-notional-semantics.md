@@ -1,5 +1,7 @@
 # Issue 0004: SmartExecutor routes 的 notional 语义与实现不一致（导致路由失效）
 
+> **状态**：全部通过
+
 ## 概述
 
 当前 `SmartExecutor` 的 routes 条件表达式中，变量 `notional` 的语义在「设计/测试期望」与「实际实现」之间不一致，导致路由规则无法按预期命中，进而出现执行器选择错误。
@@ -58,21 +60,21 @@ pytest -q
 
 ### P0 - 严重
 
-- [x] 明确 SmartExecutor routes 的 `notional` 定义（成交额 vs 目标差额），并给出最终裁决（审核完成）
+- [x] 明确 SmartExecutor routes 的 `notional` 定义（成交额 vs 目标差额），并给出最终裁决（已通过）
   - 裁决：采用方案 2（兼容旧写法），routes 中 `notional` = 成交额（trades_notional），新增 `target_notional` = 目标差额
-- [x] 统一实现：调整 SmartExecutor 路由上下文变量命名与内容（审核完成）
+- [x] 统一实现：调整 SmartExecutor 路由上下文变量命名与内容（已通过）
   - 位置：`hft/executor/smart_executor/executor.py:500-512`
   - 修复：`_get_route_context()` 中将 `notional` 覆盖为 `trades_notional`，保留 `target_notional`
-- [x] 统一测试：修复/更新上述失败用例，使其与最终语义一致（审核完成）
+- [x] 统一测试：修复/更新上述失败用例，使其与最终语义一致（已通过）
   - 测试结果：`pytest -q tests/test_smart_executor_phase3.py tests/test_smart_executor_phase4.py` 33 passed
-- [x] 统一文档：更新相关 feature 文档与配置注释，避免用户误用（审核完成）
+- [x] 统一文档：更新相关 feature 文档与配置注释，避免用户误用（已通过）
   - 位置：`hft/executor/smart_executor/config.py:34-38`
   - 修复：RouteConfig docstring 中明确 `notional` 和 `target_notional` 的区别
 
 ### P1 - 中等
 
-- [x] 补充/调整路由配置校验：对 `notional`/`trades_notional`/`target_notional` 的可用变量与错误信息做一致化（审核完成）
+- [x] 补充/调整路由配置校验：对 `notional`/`trades_notional`/`target_notional` 的可用变量与错误信息做一致化（已通过）
   - 位置：`hft/executor/smart_executor/executor.py:274-291`
   - 修复：`_validate_routes()` 中的 `available_vars` 已包含所有三个变量
-- [x] 增加迁移说明：旧配置如使用 `notional` 的含义变更时，给出替换建议（审核完成）
+- [x] 增加迁移说明：旧配置如使用 `notional` 的含义变更时，给出替换建议（已通过）
   - 说明：旧配置中 `notional` 原本指目标差额，现改为成交额；如需目标差额请使用 `target_notional`

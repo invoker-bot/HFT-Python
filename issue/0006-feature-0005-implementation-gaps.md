@@ -1,40 +1,37 @@
 # Issue 0006: Feature 0005 实现缺陷
 
+> **状态**：全部通过
+
 ## 问题描述
 
 Feature 0005（Executor 动态条件与变量注入）的部分任务虽然标记为"待审核"，但实际上存在实现不完整或缺失的问题。
 
 ## 问题列表
 
-### 1. requires ready gate 实现不明确（待实现）
+### 1. requires ready gate 实现不明确（已修复）
 
-**状态**：代码已实现，但文档与测试不完整
+**状态**：已实现并补齐测试（已通过）
 
-**问题**：
-- `hft/executor/base.py#L582` 的 `check_requires_ready()` 方法已实现
-- 在 `_process_single_target()` 的第 864 行已被调用
-- 但是当 `condition=None` 时，`collect_context_vars()` 不会被调用
-- 用户可能误认为 requires ready gate 没有工作
+**问题（历史）**：
+- `hft/executor/base.py` 的 `check_requires_ready()` 已实现并在 `_process_single_target()` 中调用
+- 历史上存在 `condition=None` 时不调用 `collect_context_vars()` 的行为不一致问题，已修复：现在无论 `condition` 是否为 None 都会先 collect context 并做 gate/求值
 
 **需要**：
-- ✅ 代码已实现（第 582-609 行 `check_requires_ready()`，第 864 行调用）
-- ❌ 需要明确文档说明：即使 `condition=None`，ready gate 仍然生效
-- ❌ 需要增加测试用例：验证 `condition=None` 时 ready gate 仍然工作
+- ✅ 代码已实现（`check_requires_ready()` + `_process_single_target()` 接入）
+- ✅ 已补充测试：覆盖 `condition=None` 且 requires 有值时的 gate 行为
 
 **验收标准**：
 1. 所有执行器（MarketExecutor、LimitExecutor、SmartExecutor）都正确调用 `check_requires_ready()`
 2. 当任一 requires indicator 未 ready 时，跳过执行（返回 None）
 3. 测试覆盖：condition=None 但 requires 有值的场景
 
-### 2. 计算类 Indicator 缺少 ready_internal() 实现（待实现）
+### 2. 计算类 Indicator 缺少 ready_internal() 实现（已修复）
 
-**状态**：未实现
+**状态**：已实现（已通过）
 
-**问题**：
-- 计算类 Indicator（RSIIndicator、MedalEdgeIndicator等）没有维护自身的 `_data`
-- 没有实现/覆盖 `ready_internal()` 方法
-- 当前实现只在 `calculate_vars()` 中检查依赖的数据源是否 ready
-- 这导致 `is_ready()` 可能返回不正确的结果（因为没有 `_data`，`ready_internal()` 总是返回 True）
+**问题（历史）**：
+- 计算类 Indicator（RSI/MidPrice/MedalEdge/Volume）曾缺少 `_data` 维护与 `ready_internal()`，导致在 `query_indicator()` 语义下长期 not ready
+- 该问题已修复：上述 indicator 已实现 requires 模式 `_data` 更新、`ready_internal()` 与 lazy cache（详见 `issue/0007-feature-0005-computed-indicators-not-ready.md`）
 
 **需要**：
 1. 计算类 Indicator 应该维护自身的 `_data: HealthyDataArray`
@@ -67,15 +64,13 @@ class RSIIndicator(BaseIndicator[float]):
         return len(self._data) > 0  # 或者更严格：len(self._data) >= self._period
 ```
 
-### 3. ready_condition 配置加载机制缺失（待实现）
+### 3. ready_condition 配置加载机制缺失（已修复）
 
-**状态**：未实现
+**状态**：已实现（已通过）
 
-**问题**：
-- `AppCore._register_indicator_factories()` 只把 `params` 传给 `IndicatorFactory`
-- 如果 `ready_condition` 放在 `params` 外，会被忽略
-- 当前所有 DataSource 都把 `ready_condition` 作为构造参数，放在 `params` 中
-- Feature 0005 要求 `ready_condition` 应该通过 `set_ready_condition()` 单独注入，不放入 `params`
+**问题（历史）**：
+- 历史上 `ready_condition` 若放在 `params` 外会被忽略
+- 当前已支持 `ready_condition` 单独字段：由 `IndicatorFactory` 创建实例后调用 `set_ready_condition()` 注入
 
 **需要**：
 1. 在 `BaseIndicator` 中添加 `set_ready_condition(condition: str)` 方法
@@ -95,7 +90,7 @@ class RSIIndicator(BaseIndicator[float]):
 - 不同环境可能需要不同的 ready_condition（测试 vs 生产）
 - 避免 `ready_condition` 污染 Indicator 的构造参数列表
 
-### 4. Feature 0005 文档状态不一致（待更新）
+### 4. Feature 0005 文档状态不一致（已修复）
 
 **问题**：
 - 第 616 行任务标记为"待审核"，但代码已实现
@@ -155,41 +150,41 @@ indicators:
 - SmartExecutor 可能有自己的 requires
 - 即使委托给子 executor，也应该先检查外层的 requires
 
-## 优先级（更新）
+## 优先级（历史记录，已处理）
 
 | 问题 | 优先级 | 原因 |
 |------|--------|------|
-| 问题 1.1 | **P0** | condition=None 时不调用 collect_context_vars() 是 BUG |
-| 问题 1.2 | P2 | SmartExecutor 缺少 check_requires_ready() 调用 |
-| 问题 2 | **P0** | 计算类 Indicator 需要实现被依赖时的定期更新 |
-| 问题 3 | P1 | ready_condition 配置加载机制 |
-| 问题 4 | P2 | 文档更新 |
+| 问题 1.1 | **P0** | condition=None 时不调用 collect_context_vars()（已修复） |
+| 问题 1.2 | P2 | SmartExecutor 缺少 check_requires_ready() 调用（已修复） |
+| 问题 2 | **P0** | 计算类 Indicator 被 requires 时需定期更新（已修复） |
+| 问题 3 | P1 | ready_condition 配置加载机制（已修复） |
+| 问题 4 | P2 | 文档状态/说明同步（已修复） |
 
 ## 任务列表
 
 ### Phase 1: 修复关键 BUG（P0）
 
-- [x] 修复 BaseExecutor._process_single_target()：condition=None 时也要调用 collect_context_vars()（审核完成）
-- [x] BaseIndicator 添加 set_requires_flag() 方法，标记是否被依赖（审核完成）
-- [x] RSIIndicator：实现 requires 模式 on_tick() 定期更新 + `_data` 维护 + `ready_internal()`（审核完成）
-- [ ] MidPrice/MedalEdge/Volume：补齐 requires 模式 `_data` 维护与 `ready_internal()`（待实现；见 `issue/0007-feature-0005-computed-indicators-not-ready.md`）
+- [x] 修复 BaseExecutor._process_single_target()：condition=None 时也要调用 collect_context_vars()（已通过）
+- [x] BaseIndicator 添加 set_requires_flag() 方法，标记是否被依赖（已通过）
+- [x] RSIIndicator：实现 requires 模式 on_tick() 定期更新 + `_data` 维护 + `ready_internal()`（已通过）
+- [x] MidPrice/MedalEdge/Volume：补齐 requires 模式 `_data` 维护与 `ready_internal()`（已通过）
 
 ### Phase 2: 配置机制（P1）
 
-- [x] BaseIndicator 添加 set_ready_condition() 方法（审核完成）
-- [x] AppCore._register_indicator_factories() 支持 ready_condition 单独字段（审核完成）
-- [ ] 迁移现有配置：将 ready_condition 从 params 中分离（待实现）
+- [x] BaseIndicator 添加 set_ready_condition() 方法（已通过）
+- [x] AppCore._register_indicator_factories() 支持 ready_condition 单独字段（已通过）
+- [x] 迁移现有配置：将 ready_condition 从 params 中分离（已通过：`conf/` 内未发现任何 `ready_condition`，无需迁移）
 
 ### Phase 3: SmartExecutor 和测试（P2）
 
-- [x] SmartExecutor.execute_delta() 添加 check_requires_ready() 调用（审核完成）
-- [x] 已有测试：condition=None 但 requires 有值的场景（37 tests passed）
-- [ ] 添加测试：计算类 Indicator 的 ready 状态（待实现）
+- [x] SmartExecutor.execute_delta() 添加 check_requires_ready() 调用（已通过）
+- [x] 已有测试：condition=None 但 requires 有值的场景（已通过）
+- [x] 添加测试：计算类 Indicator 的 ready 状态（已通过）
 
 ### Phase 4: 文档更新（P2）
 
-- [x] 更新 Feature 0005 文档状态（审核完成）
-- [ ] 更新 docs/indicator.md 关于 ready 语义（待实现）
+- [x] 更新 Feature 0005 文档状态（已通过）
+- [x] 更新 docs/indicator.md 关于 ready 语义（已通过：已补充 Ready 语义/ready_condition/requires gate/ready_internal 说明）
 
 ## 实现总结
 
@@ -202,10 +197,22 @@ indicators:
 5. **IndicatorFactory** - 支持 ready_condition 参数，创建后调用 set_ready_condition()
 6. **AppCore._register_indicator_factories()** - 支持从配置中读取 ready_condition 单独字段
 7. **SmartExecutor.execute_delta()** - 添加了 check_requires_ready() 调用
+8. **MidPriceIndicator** - 实现了 requires 模式的 `on_tick()` 定期更新、`ready_internal()`、lazy 缓存（已通过）
+9. **MedalEdgeIndicator** - 实现了 requires 模式的 `on_tick()` 定期更新、`ready_internal()`、lazy 缓存（已通过）
+10. **VolumeIndicator** - 实现了 requires 模式的 `on_tick()` 定期更新、`ready_internal()`、lazy 缓存（已通过）
+11. **测试用例** - 添加了 `TestComputedIndicatorsReadyState` 测试类，覆盖计算类 Indicator 的 ready 状态（已通过）
 
 ### 待完成
 
-1. **配置迁移** - 将现有 DataSource 配置中的 ready_condition 从 params 中分离（可选，向后兼容）
-2. **计算类 Indicator** - MidPrice/MedalEdge/Volume 的 ready 语义与 `_data` 维护（见 `issue/0007-feature-0005-computed-indicators-not-ready.md`）
-3. **测试用例** - 添加计算类 Indicator 的 ready 状态测试
-4. **文档更新** - docs/indicator.md 关于 ready 语义
+无。所有任务已完成（已通过）。
+
+## 审核结论
+
+结论：本 issue 中所有任务已完成（已通过）。
+
+验收依据：
+- `hft/executor/base.py`：requires ready gate 在 `_process_single_target()` 中生效，且 `condition=None` 时仍会 collect context 并求值
+- `hft/indicator/base.py`：`set_ready_condition()` + `ready_internal()` + `is_ready()` 组合语义
+- `hft/indicator/computed/mid_price_indicator.py`、`hft/indicator/computed/medal_edge_indicator.py`、`hft/indicator/computed/volume_indicator.py`：requires 模式 `_data` 维护与 `ready_internal()`
+- `docs/indicator.md`：新增 Ready 语义章节，包含 ready_condition 配置、ready_internal() 实现、requires ready gate 说明
+- `tests/test_executor_dynamic_conditions.py` / `tests/test_executor_vars_system.py` / `tests/test_strategy_data_driven.py`：本地运行通过（`pytest -q ...`）

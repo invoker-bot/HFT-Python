@@ -1,6 +1,6 @@
 # Feature: 集成测试（真实下单 + 历史记录校验）
 
-> **状态**: ✅ 已完成，审核通过
+> **状态**：全部通过
 
 ## 背景
 
@@ -155,14 +155,14 @@
 
 ## TODO
 
-- [x] 新增 demo executor/app/strategy 配置（审核完成）
-- [x] 集成测试分组开关：`INTEGRATION_TEST_ALLOW_LISTS`（审核完成）
-- [x] 分组运行时长控制：`INTEGRATION_TEST_DELAY_TIMEOUT`（审核完成）
-- [x] 增加 `tests/test_integration_trading.py`（基于环境变量的分组 allow-list）（审核完成）
-- [x] 实现"开测前/结束后"清仓与撤单（SOL spot + ETH swap）工具函数（审核完成）
-- [x] 增加历史记录验证（ccxt trades 或本地事件）（审核完成）
-- [x] Spot 支持处理：demo exchange 未开启 spot 时跳过 spot 子用例（审核完成）
-- [x] 文档：如何安全运行、如何跳过、如何排查失败（审核完成）
+- [x] 新增 demo executor/app/strategy 配置（已通过）
+- [x] 集成测试分组开关：`INTEGRATION_TEST_ALLOW_LISTS`（已通过）
+- [x] 分组运行时长控制：`INTEGRATION_TEST_DELAY_TIMEOUT`（已通过）
+- [x] 增加 `tests/test_integration_trading.py`（基于环境变量的分组 allow-list）（已通过）
+- [x] 实现"开测前/结束后"清仓与撤单（SOL spot + ETH swap）工具函数（已通过）
+- [x] 增加历史记录验证（ccxt trades 或本地事件）（已通过）
+- [x] Spot 支持处理：demo exchange 未开启 spot 时跳过 spot 子用例（已通过）
+- [x] 文档：如何安全运行、如何跳过、如何排查失败（已通过）
 
 ## 运行指南
 

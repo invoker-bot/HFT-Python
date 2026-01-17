@@ -726,3 +726,424 @@ class TestBaseExecutorRequiresReadyGate:
         result = executor.check_requires_ready("okx", "BTC/USDT:USDT")
 
         assert result is True
+
+
+# ============================================================
+# Issue 0005: Executor Context Variable Collisions Tests
+# ============================================================
+
+class TestExecutorContextVarCollisions:
+    """Tests for Issue 0005: Executor context variable name collisions."""
+
+    def test_reserved_vars_not_overridden_by_indicator(self):
+        """
+        Issue 0005: Reserved variables should not be overridden by indicator.
+
+        When an indicator returns a variable with a reserved name (e.g., 'notional'),
+        it should be skipped and the original value preserved.
+        """
+        config = MockExecutorConfig()
+        config.requires = ["volume"]
+        executor = MockExecutor(config)
+
+        # Indicator attempts to override 'notional' (reserved)
+        mock_indicator = MockIndicator(vars_dict={
+            "notional": 99999.0,  # This should be blocked
+            "volume": 10000.0,    # This should be allowed
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,
+                speed=0.5,
+                notional=1000.0,  # Original value
+            )
+
+        # notional should NOT be overridden
+        assert context["notional"] == 1000.0, "notional should not be overridden by indicator"
+        # volume should be added
+        assert context["volume"] == 10000.0
+
+    def test_reserved_vars_direction_not_overridden(self):
+        """Issue 0005: direction should not be overridden by indicator."""
+        config = MockExecutorConfig()
+        config.requires = ["bad_indicator"]
+        executor = MockExecutor(config)
+
+        mock_indicator = MockIndicator(vars_dict={
+            "direction": 999,  # Attempt to override
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,
+                speed=0.5,
+                notional=1000.0,
+            )
+
+        assert context["direction"] == 1
+
+    def test_reserved_vars_speed_not_overridden(self):
+        """Issue 0005: speed should not be overridden by indicator."""
+        config = MockExecutorConfig()
+        config.requires = ["bad_indicator"]
+        executor = MockExecutor(config)
+
+        mock_indicator = MockIndicator(vars_dict={
+            "speed": 999.0,  # Attempt to override
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,
+                speed=0.5,
+                notional=1000.0,
+            )
+
+        assert context["speed"] == 0.5
+
+    def test_reserved_vars_buy_sell_not_overridden(self):
+        """Issue 0005: buy/sell should not be overridden by indicator."""
+        config = MockExecutorConfig()
+        config.requires = ["bad_indicator"]
+        executor = MockExecutor(config)
+
+        mock_indicator = MockIndicator(vars_dict={
+            "buy": False,  # Attempt to override
+            "sell": True,
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,  # Buy direction
+                speed=0.5,
+                notional=1000.0,
+            )
+
+        assert context["buy"] is True
+        assert context["sell"] is False
+
+    def test_reserved_vars_mid_price_not_overridden(self):
+        """Issue 0005: mid_price should not be overridden by indicator."""
+        config = MockExecutorConfig()
+        config.requires = ["mid_price_indicator"]
+        executor = MockExecutor(config)
+
+        mock_indicator = MockIndicator(vars_dict={
+            "mid_price": 12345.0,  # This is reserved
+            "orderbook_mid_price": 12345.0,  # This is allowed
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,
+                speed=0.5,
+                notional=1000.0,
+            )
+
+        # mid_price should NOT be in context (not set by collect_context_vars)
+        # but indicator's mid_price should be blocked
+        assert "mid_price" not in context or context.get("mid_price") != 12345.0
+        # orderbook_mid_price should be allowed
+        assert context["orderbook_mid_price"] == 12345.0
+
+    def test_non_reserved_vars_allowed(self):
+        """Issue 0005: Non-reserved variables should be allowed."""
+        config = MockExecutorConfig()
+        config.requires = ["volume"]
+        executor = MockExecutor(config)
+
+        mock_indicator = MockIndicator(vars_dict={
+            "volume": 10000.0,
+            "volume_notional": 50000.0,
+            "buy_volume": 6000.0,
+            "sell_volume": 4000.0,
+            "medal_edge": 0.002,
+            "custom_var": 123,
+        })
+
+        with patch.object(executor, '_get_indicator', return_value=mock_indicator):
+            context = executor.collect_context_vars(
+                exchange_class="okx",
+                symbol="BTC/USDT:USDT",
+                direction=1,
+                speed=0.5,
+                notional=1000.0,
+            )
+
+        # All non-reserved vars should be present
+        assert context["volume"] == 10000.0
+        assert context["volume_notional"] == 50000.0
+        assert context["buy_volume"] == 6000.0
+        assert context["sell_volume"] == 4000.0
+        assert context["medal_edge"] == 0.002
+        assert context["custom_var"] == 123
+
+    def test_reserved_vars_constant_defined(self):
+        """Issue 0005: RESERVED_CONTEXT_VARS should be defined with expected vars."""
+        from hft.executor.base import BaseExecutor
+
+        expected_reserved = {
+            "direction", "buy", "sell", "speed", "notional",
+            "target_notional", "trades_notional",
+            "mid_price", "current_price", "best_bid", "best_ask",
+            "current_position_usd", "current_position_amount",
+            "position_usd", "max_position_usd", "delta_usd",
+        }
+
+        for var in expected_reserved:
+            assert var in BaseExecutor.RESERVED_CONTEXT_VARS, f"{var} should be reserved"
+
+
+# ============================================================
+# Issue 0006/0007: Computed Indicators Ready State Tests
+# ============================================================
+
+class TestComputedIndicatorsReadyState:
+    """Tests for Issue 0006/0007: Computed indicators ready state and requires mode."""
+
+    def test_volume_indicator_ready_internal_not_required(self):
+        """VolumeIndicator should check trades ready when not required."""
+        from hft.indicator.computed.volume_indicator import VolumeIndicator
+
+        indicator = VolumeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = False
+
+        # Without root/indicator_group, should return False
+        assert indicator.ready_internal() is False
+
+    def test_volume_indicator_ready_internal_when_required(self):
+        """VolumeIndicator should check _data when required."""
+        from hft.indicator.computed.volume_indicator import VolumeIndicator, VolumeData
+        import time
+
+        indicator = VolumeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        # Empty _data, should be not ready
+        assert indicator.ready_internal() is False
+
+        # Add data point
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            VolumeData(
+                volume=1000.0,
+                buy_volume=600.0,
+                sell_volume=400.0,
+                volume_notional=50000.0,
+                buy_volume_notional=30000.0,
+                sell_volume_notional=20000.0,
+                timestamp=now,
+            ),
+        )
+
+        # Now should be ready
+        assert indicator.ready_internal() is True
+
+    def test_volume_indicator_calculate_vars_output(self):
+        """VolumeIndicator should output correct variable names (Issue 0005)."""
+        from hft.indicator.computed.volume_indicator import VolumeIndicator, VolumeData
+        import time
+
+        indicator = VolumeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        # Add data point
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            VolumeData(
+                volume=1000.0,
+                buy_volume=600.0,
+                sell_volume=400.0,
+                volume_notional=50000.0,
+                buy_volume_notional=30000.0,
+                sell_volume_notional=20000.0,
+                timestamp=now,
+            ),
+        )
+
+        vars_dict = indicator.calculate_vars(direction=1)
+
+        # Should use volume_notional, not notional (Issue 0005)
+        assert "volume_notional" in vars_dict
+        assert "notional" not in vars_dict
+        assert vars_dict["volume_notional"] == 50000.0
+        assert vars_dict["buy_volume_notional"] == 30000.0
+        assert vars_dict["sell_volume_notional"] == 20000.0
+
+    def test_medal_edge_indicator_ready_internal_when_required(self):
+        """MedalEdgeIndicator should check _data when required."""
+        from hft.indicator.computed.medal_edge_indicator import MedalEdgeIndicator, MedalEdgeData
+        import time
+
+        indicator = MedalEdgeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        # Empty _data, should be not ready
+        assert indicator.ready_internal() is False
+
+        # Add data point
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            MedalEdgeData(
+                medal_edge=0.001,
+                buy_edge=0.001,
+                sell_edge=-0.001,
+                timestamp=now,
+            ),
+        )
+
+        # Now should be ready
+        assert indicator.ready_internal() is True
+
+    def test_medal_edge_indicator_calculate_vars_direction(self):
+        """MedalEdgeIndicator should select edge based on direction."""
+        from hft.indicator.computed.medal_edge_indicator import MedalEdgeIndicator, MedalEdgeData
+        import time
+
+        indicator = MedalEdgeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            MedalEdgeData(
+                medal_edge=0.001,
+                buy_edge=0.002,
+                sell_edge=-0.001,
+                timestamp=now,
+            ),
+        )
+
+        # Buy direction (1) should return buy_edge
+        vars_buy = indicator.calculate_vars(direction=1)
+        assert vars_buy["medal_edge"] == 0.002
+        assert vars_buy["medal_buy_edge"] == 0.002
+        assert vars_buy["medal_sell_edge"] == -0.001
+
+        # Sell direction (-1) should return sell_edge
+        vars_sell = indicator.calculate_vars(direction=-1)
+        assert vars_sell["medal_edge"] == -0.001
+
+    def test_mid_price_indicator_ready_internal_when_required(self):
+        """MidPriceIndicator should check _data when required."""
+        from hft.indicator.computed.mid_price_indicator import MidPriceIndicator, MidPriceData
+        import time
+
+        indicator = MidPriceIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        # Empty _data, should be not ready
+        assert indicator.ready_internal() is False
+
+        # Add data point
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            MidPriceData(
+                mid_price=50000.0,
+                best_bid=49999.0,
+                best_ask=50001.0,
+                spread=2.0,
+                timestamp=now,
+            ),
+        )
+
+        # Now should be ready
+        assert indicator.ready_internal() is True
+
+    def test_mid_price_indicator_calculate_vars_output(self):
+        """MidPriceIndicator should output correct variable names (Issue 0005)."""
+        from hft.indicator.computed.mid_price_indicator import MidPriceIndicator, MidPriceData
+        import time
+
+        indicator = MidPriceIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = True
+
+        now = time.time()
+        indicator._data.append(
+            now,  # timestamp first
+            MidPriceData(
+                mid_price=50000.0,
+                best_bid=49999.0,
+                best_ask=50001.0,
+                spread=2.0,
+                timestamp=now,
+            ),
+        )
+
+        vars_dict = indicator.calculate_vars(direction=1)
+
+        # Should use orderbook_mid_price, not mid_price (Issue 0005)
+        assert "orderbook_mid_price" in vars_dict
+        assert "mid_price" not in vars_dict
+        assert vars_dict["orderbook_mid_price"] == 50000.0
+        assert vars_dict["orderbook_best_bid"] == 49999.0
+        assert vars_dict["orderbook_best_ask"] == 50001.0
+        assert vars_dict["orderbook_spread"] == 2.0
+
+    def test_computed_indicator_lazy_cache(self):
+        """Computed indicators should use lazy caching when not required."""
+        from hft.indicator.computed.volume_indicator import VolumeIndicator
+        import time
+
+        indicator = VolumeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+        indicator._is_required = False
+
+        # Without trades data source, should return zeros
+        vars_dict = indicator.calculate_vars(direction=1)
+        assert vars_dict["volume"] == 0.0
+        assert vars_dict["volume_notional"] == 0.0
+
+    def test_is_required_property(self):
+        """Indicators should have is_required property."""
+        from hft.indicator.computed.volume_indicator import VolumeIndicator
+
+        indicator = VolumeIndicator(
+            exchange_class="okx",
+            symbol="BTC/USDT:USDT",
+        )
+
+        # Default should be False
+        assert indicator.is_required is False
+
+        # Can be set via _is_required
+        indicator._is_required = True
+        assert indicator.is_required is True

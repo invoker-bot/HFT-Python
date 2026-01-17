@@ -1,6 +1,6 @@
 # Issue: `hft run test exchange` 因缺少 `fetch_balance` 崩溃
 
-> **状态**: ✅ 已完成，审核通过
+> **状态**：全部通过
 > **发现命令**: `hft -p null run test exchange demo/okx`
 > **现象**: 直接崩溃，无法进入后续 API 测试
 
@@ -34,6 +34,6 @@ Error: 'OKXExchange' object has no attribute 'fetch_balance'
 
 ## TODO
 
-- [x] 增加 `BaseExchange.fetch_balance()` 兼容封装（审核完成，hft/exchange/base.py）
-- [x] 增加单测覆盖 `fetch_balance` 方法存在性（审核完成，tests/test_exchange_fetch_balance.py）
-- [x] 验证 `hft -p null run test exchange demo/okx` 可完整出报告（审核完成，用户已验证）
+- [x] 增加 `BaseExchange.fetch_balance()` 兼容封装（已通过，hft/exchange/base.py）
+- [x] 增加单测覆盖 `fetch_balance` 方法存在性（已通过，tests/test_exchange_fetch_balance.py）
+- [x] 验证 `hft -p null run test exchange demo/okx` 可完整出报告（已通过，用户已验证）
