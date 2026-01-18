@@ -6,7 +6,7 @@
 
 统一 Executor 的变量计算和订单展开机制，支持：
 1. `vars` 列表语义：顺序计算，后面可引用前面
-2. `conditional_vars` 条件触发更新
+2. 条件变量：通过 `on` 字段实现条件触发更新
 3. 统一的 order 展开机制
 
 ## 动机
@@ -33,20 +33,20 @@ vars:
 - 按列表顺序计算，后面可引用前面
 - 支持表达式
 
-### 2. conditional_vars 条件触发
+### 2. 条件变量
 
 ```yaml
-conditional_vars:
-  center_price:
+vars:
+  - name: center_price
     value: mid_price
     on: rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600
-    default: null
+    initial_value: null
 ```
 
 **特性**：
 - 仅当 `on` 条件满足时更新 `value`
 - 条件不满足时保持上次值
-- `default` 为首次值（条件从未满足时）
+- `initial_value` 为首次值（条件从未满足时）
 - 支持 `duration` 变量（距上次更新的秒数）
 
 ### 3. strategies namespace
@@ -71,9 +71,8 @@ vars:
 1. 内置变量（direction/buy/sell/speed/notional 等）
 2. 注入 strategies namespace（来自多个 Strategy 的聚合输出）
 3. 收集 requires 中 Indicator 的变量
-4. 计算 vars（按列表顺序）
-5. 计算 conditional_vars（按定义顺序，包含 duration）
-6. （如适用）计算 order 内部的 vars / conditional_vars
+4. 计算 vars（按列表顺序，包括条件变量和 duration）
+5. （如适用）计算 order 内部的 vars
 ```
 
 ### 5. 统一的 Order 展开机制
@@ -95,8 +94,7 @@ order:
   vars:           # 订单级别变量（可选）
     - name: spread_value
       value: 0.0002 * mid_price * level
-  conditional_vars:  # 订单级别条件变量（可选）
-    ...
+  # vars 支持条件变量（通过 on 字段）
   condition: ...  # 挂单条件
   price: ...      # 订单价格（表达式，可选）
   spread: ...     # 价差（当 price 未定义时使用）
@@ -172,7 +170,7 @@ vars:
 - [x] 实现顺序计算逻辑（已通过）
 - [x] 向后兼容 dict 格式（已通过）
 
-### Phase 2: conditional_vars（P1）
+### Phase 2: 条件变量（P1）
 
 - [x] 新增 ConditionalVar 数据结构（已通过）
 - [x] 实现条件触发更新逻辑（已通过）
@@ -192,7 +190,7 @@ vars:
 ### Phase 4: Order 统一展开（P1）
 
 - [x] 统一 Order 配置格式（已通过：引入 OrderDefinition，并在 PCAExecutor 中落地使用）
-- [x] Order 内部 vars/conditional_vars 支持（已通过：PCAExecutor 求值时支持并持久化 order 级状态）
+- [x] Order 内部 vars 支持（已通过：PCAExecutor 求值时支持并持久化 order 级状态）
 - [x] 支持 order_amount/order_usd 二选一（已通过）
 - [x] 支持 price/spread 二选一（已通过）
 
@@ -216,7 +214,7 @@ vars:
 | Feature | 关系 |
 |---------|------|
 | Feature 0005 | 扩展 requires 和表达式求值机制 |
-| Feature 0008 | 共享 vars/conditional_vars 机制；接收 Strategy 通用字典输出 |
+| Feature 0008 | 共享 vars 机制；接收 Strategy 通用字典输出 |
 | Feature 0009 | ~~GridExecutor 可使用统一 order 格式~~ GridExecutor 已废弃，使用 LimitExecutor + order_levels 替代 |
 
 ## 示例

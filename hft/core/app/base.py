@@ -100,11 +100,15 @@ class AppCore(Listener):
         # 注册配置中的 indicator factory
         self._register_indicator_factories()
 
-        # 3. 策略组
+        # 3. Scope 管理器（Feature 0012）
+        from ..scope.manager import ScopeManager
+        self.scope_manager = ScopeManager()
+
+        # 4. 策略组
         self.strategy_group = StrategyGroup()
         self.add_child(self.strategy_group)
 
-        # 4. 交易执行器（从配置加载）
+        # 5. 交易执行器（从配置加载）
         executor_config = BaseExecutorConfig.load(config.executor)
         self.executor: BaseExecutor = executor_config.instance
         self.add_child(self.executor)

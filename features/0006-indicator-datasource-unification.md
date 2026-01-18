@@ -1,7 +1,5 @@
 # Feature: Indicator 与 DataSource 统一架构
 
-> **状态**：全部通过
-
 ## 背景
 
 当前 DataSource 和 Indicator 是两套独立概念，导致概念冗余、生命周期分散、健康检查不统一。
@@ -142,8 +140,9 @@ def is_healthy(self, timeout_threshold, cv_threshold, range_threshold) -> bool:
 ```
 
 **无 window 的指标/数据源如何处理**：
-- 对于“不需要数组语义”的场景（例如只关心最新值的 Ticker/单值健康态），可以使用 `HealthyData`（单值缓存）而非 `HealthyDataArray`
-- 为了让 `ready_condition` 写法统一：当 indicator 没有 `window` 或 `window <= 0` 时，规定
+- `window: null` 明确支持，语义等价 `window: 0`（不保留历史窗口，仅保留最新点；行为类似 `HealthyData` 单值缓存；实现侧需确保 `None -> 0.0` 归一化）
+- 对于“不需要数组语义”的场景（例如只关心最新值的 Ticker/单值健康态），可以使用 `HealthyData`（单值缓存），或等价地使用 `HealthyDataArray(max_seconds=0)`
+- 为了让 `ready_condition` 写法统一：当 indicator 的 `window` 未提供 / 为 `null` / 或 `window <= 0` 时，规定
   - `cv = 0.0`（视为采样均匀，不阻塞）
   - `range = 1.0`（视为覆盖完整，不阻塞）
   - `timeout` 仍按“当前时间 - 最新时间戳”计算（无数据则 `inf`）
@@ -536,7 +535,7 @@ class FundingRateDataSource(BaseIndicator[FundingRate]):
 - [x] BaseIndicator 自动过期机制（已通过）
 - [x] 单元测试：BaseIndicator、IndicatorGroup、query_indicator（已通过）
 - [x] 迁移 DataListener 到 hft/indicator/persist/（已通过）
-- [x] 更新文档（已通过）
+- [ ] 更新文档：明确 `window: null` 语义等价 `0`（待审核）
 
 > Phase 1.5：配置驱动与落地
 

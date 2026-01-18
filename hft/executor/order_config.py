@@ -2,7 +2,7 @@
 Order 统一配置模块（Feature 0010 Phase 4）
 
 提供统一的订单配置格式，支持：
-- vars / conditional_vars（订单级变量）
+- vars（订单级变量，支持条件变量）
 - price / spread（二选一）
 - order_usd / order_amount（二选一）
 - condition（挂单条件）
@@ -24,9 +24,9 @@ class OrderVarDefinition(BaseModel):
 
 class OrderConditionalVarDefinition(BaseModel):
     """
-    订单级条件变量定义
+    订单级条件变量定义（DEPRECATED - 使用 OrderVarDefinition 的 on 字段替代）
 
-    用于 order.conditional_vars 中的条件变量定义。
+    用于 order.vars 中的条件变量定义。
     """
     value: str = Field(..., description="更新表达式")
     on: str = Field(..., description="触发条件表达式")
@@ -64,9 +64,10 @@ class OrderDefinition(BaseModel):
         default_factory=list,
         description="订单级变量列表"
     )
+    # DEPRECATED: 使用 vars 中的 on 字段替代
     conditional_vars: dict[str, OrderConditionalVarDefinition] = Field(
         default_factory=dict,
-        description="订单级条件变量"
+        description="订单级条件变量（已废弃）"
     )
 
     # 挂单条件

@@ -96,6 +96,9 @@ class BaseIndicator(Listener, Generic[T]):
         # 被依赖的 Indicator 需要在 on_tick() 中定期更新
         self._is_required: bool = False
 
+        # Feature 0012: Scope 注入层级
+        self.scope_level: Optional[str] = None
+
         # 初始化事件发射器
         self._init_event()
 

@@ -3,6 +3,7 @@ Core 核心模块
 """
 from .listener import Listener, ListenerState
 from .healthy_data import HealthyData, HealthyDataWithFallback, UnhealthyDataError
+from .scope import BaseScope, ScopeManager, VirtualMachine
 
 __all__ = [
     "Listener",
@@ -10,4 +11,7 @@ __all__ = [
     "HealthyData",
     "HealthyDataWithFallback",
     "UnhealthyDataError",
+    "BaseScope",
+    "ScopeManager",
+    "VirtualMachine",
 ]

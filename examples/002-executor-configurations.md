@@ -18,8 +18,7 @@ orders:  # 或 order + order_levels
     refresh_tolerance_usd: ... # 刷新容忍度（绝对值）
     timeout: ...            # 订单超时
     condition: ...          # 挂单条件
-    vars: ...               # 订单级变量
-    conditional_vars: ...   # 订单级条件变量
+    vars: ...               # 订单级变量（支持条件变量通过 on 字段）
 ```
 
 ### Order 展开机制
@@ -284,7 +283,7 @@ order:
 
 ### 2.6 真正的网格交易（Grid Trading）
 
-使用 `conditional_vars` 缓存中心价格，实现真正的网格交易策略。
+使用条件变量缓存中心价格，实现真正的网格交易策略。
 
 ```yaml
 # conf/executor/limit/true_grid.yaml
@@ -293,14 +292,12 @@ class_name: limit
 requires:
   - ticker
 
-conditional_vars:
+vars:
   # 每隔 7 天缓存一次中心价格
-  center_price:
+  - name: center_price
     value: mid_price
     on: 'duration > 7 * 24 * 3600'  # 7 天
-    default: mid_price
-
-vars:
+    initial_value: mid_price
   - name: grid_spacing
     value: '0.0002 * center_price'  # 0.02% 网格间距
 
@@ -326,11 +323,11 @@ order:
 
 1. **中心价格缓存**：
    ```yaml
-   conditional_vars:
-     center_price:
+   vars:
+     - name: center_price
        value: mid_price
        on: 'duration > 7 * 24 * 3600'
-       default: mid_price
+       initial_value: mid_price
    ```
    - `duration > 7d` 时更新 `center_price`
    - 其他时间保持上次值，形成稳定的网格中心
@@ -381,17 +378,15 @@ order:
 **高级技巧：动态网格间距**
 
 ```yaml
-conditional_vars:
-  center_price:
+vars:
+  - name: center_price
     value: mid_price
     on: 'duration > 7 * 24 * 3600'
-    default: mid_price
-  volatility_snapshot:
+    initial_value: mid_price
+  - name: volatility_snapshot
     value: volatility
     on: 'duration > 7 * 24 * 3600'
-    default: 0.01
-
-vars:
+    initial_value: 0.01
   - name: grid_spacing
     value: 'volatility_snapshot * center_price * 2'  # 2x 波动率
 ```
@@ -593,12 +588,10 @@ requires:
 vars:
   - name: delta_position_usd
     value: 'current_position_usd - position_usd'
-
-conditional_vars:
-  center_price:
+  - name: center_price
     value: mid_price
     on: 'rsi[-1] < 30 or rsi[-1] > 70'
-    default: null
+    initial_value: null
 
 reset: 'abs(delta_position_usd) < 50'
 
@@ -778,13 +771,11 @@ order:
 ### 6.2 时间衰减
 
 ```yaml
-conditional_vars:
-  order_start_time:
+vars:
+  - name: order_start_time
     value: 'current_timestamp'
     on: 'abs(delta_usd) > 10'
-    default: 'current_timestamp'
-
-vars:
+    initial_value: 'current_timestamp'
   - name: elapsed
     value: 'current_timestamp - order_start_time'
   - name: urgency_factor
@@ -841,9 +832,236 @@ order:
 
 ---
 
-## 8. 相关文档
+## 8. Scope 系统集成（可选）
+
+从 Feature 0012 开始，Executor 支持 Scope 系统，可以实现更强大的多层级变量计算和条件判断。
+
+### 8.1 基本 Scope 配置
+
+Executor 可以访问 Strategy 定义的 Scope 变量：
+
+```yaml
+# conf/executor/limit/scope_aware.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+# Executor 可以访问 Strategy 的 Scope 变量
+vars:
+  - name: position_weight
+    value: 'weight'  # 来自 trading_pair scope
+  - name: adjusted_spread
+    value: 'base_spread * position_weight'
+
+orders:
+  - spread: 'adjusted_spread'
+    order_usd: 'abs(delta_usd)'
+    refresh_tolerance: 0.5
+    timeout: 30s
+```
+
+### 8.2 使用 Scope 变量进行条件判断
+
+```yaml
+# conf/executor/smart/scope_routing.yaml
+class_name: smart
+
+requires:
+  - ticker
+
+vars:
+  - name: group_score
+    value: 'score'  # 来自 trading_pair_class_group scope
+  - name: is_high_priority
+    value: 'group_score > 0.01'
+
+routes:
+  # 高优先级组：使用市价单快速成交
+  - condition: 'is_high_priority and abs(delta_usd) > 100'
+    executor: market/basic
+
+  # 低优先级组：使用限价单慢慢成交
+  - condition: 'not is_high_priority'
+    executor: limit/fixed_spread
+```
+
+### 8.3 Order 级别的 Scope 变量
+
+```yaml
+# conf/executor/limit/order_scope.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+order_levels: 3
+order:
+  vars:
+    # Order 级别可以访问父级 Scope 变量
+    - name: level_weight
+      value: 'weight * abs(level)'  # weight 来自 trading_pair scope
+    - name: level_spread
+      value: 'base_spread * level_weight'
+
+  spread: 'level_spread'
+  order_usd: '100 * abs(level)'
+  refresh_tolerance: 0.5
+  timeout: 1h
+```
+
+### 8.4 MarketNeutralPositions 策略的 Executor 配置
+
+MarketNeutralPositions 策略会注入特殊的 Scope 变量，Executor 可以利用这些变量：
+
+```yaml
+# conf/executor/limit/market_neutral.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+vars:
+  # 使用 MarketNeutralPositions 注入的变量
+  - name: delta_min_dir
+    value: 'delta_min_direction'  # -1 / 0 / 1 / null
+  - name: delta_max_dir
+    value: 'delta_max_direction'  # -1 / 0 / 1 / null
+  - name: position_ratio
+    value: 'ratio'  # 仓位比例 [-1, 1]
+
+  # 根据 direction 调整 spread
+  - name: is_entry
+    value: 'delta_min_dir == -1 or delta_max_dir == 1'
+  - name: is_exit
+    value: 'delta_min_dir == 0 or delta_max_dir == 0'
+  - name: adaptive_spread
+    value: 'base_spread * 0.5 if is_entry else base_spread * 2.0'
+
+orders:
+  - spread: 'adaptive_spread'
+    order_usd: 'abs(delta_usd)'
+    condition: 'position_ratio != 0'  # 仅当有目标仓位时执行
+    refresh_tolerance: 0.5
+    timeout: 30s
+```
+
+### 8.5 跨层级访问 Scope 变量
+
+Executor 可以通过 `parent` 访问上级 Scope 的变量：
+
+```yaml
+# conf/executor/limit/cross_scope.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+vars:
+  # 访问 trading_pair_class_group 层级的变量
+  - name: group_fair_price_min
+    value: 'parent.parent["fair_price_min"]'  # 跨两级访问
+  - name: group_fair_price_max
+    value: 'parent.parent["fair_price_max"]'
+
+  # 根据组内价格范围调整 spread
+  - name: price_range
+    value: 'group_fair_price_max - group_fair_price_min'
+  - name: dynamic_spread
+    value: 'price_range * 0.1'  # 10% 的价格范围
+
+orders:
+  - spread: 'dynamic_spread'
+    order_usd: 'abs(delta_usd)'
+    refresh_tolerance: 0.5
+    timeout: 30s
+```
+
+### 8.6 Scope 条件变量在 Executor 中的应用
+
+```yaml
+# conf/executor/limit/scope_conditional.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+# Executor 级别的条件变量
+vars:
+  - name: last_entry_time
+    value: 'current_timestamp'
+    on: 'abs(delta_usd) > 100'
+    initial_value: 0
+  - name: time_since_entry
+    value: 'current_timestamp - last_entry_time'
+  - name: cooldown_active
+    value: 'time_since_entry < 60'  # 60 秒冷却期
+
+  # 结合 Scope 变量和本地条件变量
+  - name: can_trade
+    value: 'not cooldown_active and ratio != 0'  # ratio 来自 Scope
+
+orders:
+  - spread: 'base_spread'
+    order_usd: 'abs(delta_usd)'
+    condition: 'can_trade'
+    refresh_tolerance: 0.5
+    timeout: 30s
+```
+
+### 8.7 完整示例：Scope 驱动的智能路由
+
+```yaml
+# conf/executor/smart/scope_driven.yaml
+class_name: smart
+
+requires:
+  - ticker
+
+vars:
+  # 从 Scope 获取策略级信息
+  - name: group_score
+    value: 'score'  # trading_pair_class_group scope
+  - name: position_ratio
+    value: 'ratio'  # trading_pair_class scope
+  - name: position_weight
+    value: 'weight'  # trading_pair scope
+
+  # 计算综合优先级
+  - name: priority
+    value: 'group_score * abs(position_ratio) * position_weight'
+
+routes:
+  # 超高优先级：市价单
+  - condition: 'priority > 0.1'
+    executor: market/basic
+
+  # 高优先级：小 spread 限价单
+  - condition: 'priority > 0.05'
+    executor: limit/small_spread
+
+  # 中等优先级：正常限价单
+  - condition: 'priority > 0.01'
+    executor: limit/fixed_spread
+
+  # 低优先级：做市策略
+  - condition: 'priority <= 0.01'
+    executor: market_making/multi_layer
+```
+
+**说明**：
+- Executor 通过 Scope 系统获取策略级的上下文信息
+- 可以根据多层级的 Scope 变量做出更智能的执行决策
+- Scope 变量与 Executor 本地变量无缝集成
+
+---
+
+## 9. 相关文档
 
 - [Feature 0010: Executor vars 系统](../features/0010-executor-vars-system.md)
+- [Feature 0012: Scope 系统](../features/0012-scope-system.md)
 - [Feature 0008: Strategy 数据驱动](../features/0008-strategy-data-driven.md)
 - [docs/executor.md](../docs/executor.md)
 - [Example 001: 稳定币做市](./001-stablecoin-market-making.md)
+- [Example 003: StaticPositions 配置详解](./003-static-positions-strategy.md)
+- [Example 004: MarketNeutralPositions 配置详解](./004-market-neutral-positions-strategy.md)

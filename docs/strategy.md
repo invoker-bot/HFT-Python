@@ -10,12 +10,12 @@ Strategy（策略）负责计算目标仓位，不负责执行。执行由 Execu
 - 定义执行紧急度（speed）
 - 监控仓位是否达标
 
-### 数据驱动设计（Feature 0008）
+### 数据驱动设计（Feature 0008 & 0012）
 
-Strategy 也支持数据驱动能力：
+Strategy 支持数据驱动能力：
 
 1. **requires 依赖声明**：声明依赖的 Indicator，自动收集变量
-2. **vars / conditional_vars**：支持变量计算和条件触发更新
+2. **Scope 系统**：多层级变量定义和继承（见 [Scope 文档](scope.md)）
 3. **通用字典输出**：可输出任意字段，不限于 position_usd
 4. **targets 表达式**：目标字段支持表达式求值
 5. **多 Exchange 匹配**：支持匹配多个交易所
@@ -35,11 +35,12 @@ Strategy 也支持数据驱动能力：
 │  │  {equation_usd, mid_price, rsi, ...}                │    │
 │  └─────────────────────────────────────────────────────┘    │
 │           │                                                  │
-│           ▼ vars / conditional_vars                          │
+│           ▼ Scope vars 计算（多层级）                        │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │  Strategy Computation                                │    │
-│  │  - vars: [{name: base_amount, value: "..."}]        │    │
-│  │  - conditional_vars: {center_price: ...}            │    │
+│  │  Scope System                                        │    │
+│  │  - GlobalScope vars                                  │    │
+│  │  - ExchangeScope vars                                │    │
+│  │  - TradingPairScope vars                             │    │
 │  └─────────────────────────────────────────────────────┘    │
 │           │                                                  │
 │           ▼ targets 表达式求值                               │
@@ -123,23 +124,28 @@ trading_pairs:
   - '!ETH/USDT'      # 排除某交易对
 max_trading_pairs: 12
 
-# 数据驱动（Feature 0008）
+# 数据驱动（Feature 0008 & 0012）
 requires:
   - equation
   - rsi
 
-vars:
-  - name: current_amount
-    value: current_position_amount
-  - name: price_ratio
-    value: mid_price / center_price
+# Scope 系统（Feature 0012）
+scopes:
+  global:
+    class_name: GlobalScope
+    vars:
+      - max_position_ratio=0.8
 
-conditional_vars:
-  center_price:
-    value: mid_price
-    on: rsi[-1] < 30 or rsi[-1] > 70
-    default: mid_price
+  trading_pair:
+    class_name: TradingPairScope
+    vars:
+      - name: center_price
+        value: mid_price
+        on: rsi[-1] < 30 or rsi[-1] > 70
+        initial_value: mid_price
 ```
+
+**注意**：Strategy 中的 vars 定义在 `scopes` 配置中，不支持顶级 `vars` 字段。详见 [vars 文档](vars.md) 和 [Scope 文档](scope.md)。
 
 ### KeepPositionsStrategy 配置
 
@@ -221,53 +227,6 @@ targets:
 
 ---
 
-## vars / conditional_vars
-
-### vars 列表
-
-按顺序计算，后面可引用前面的变量：
-
-```yaml
-vars:
-  - name: delta_usd
-    value: current_position_usd - target_position_usd
-  - name: delta_ratio
-    value: delta_usd / target_position_usd  # 引用前面的 delta_usd
-```
-
-### conditional_vars 条件变量
-
-仅当条件满足时更新值，否则保持上次值：
-
-```yaml
-conditional_vars:
-  center_price:
-    value: mid_price
-    on: rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600
-    default: mid_price
-
-  base_amount:
-    value: current_position_amount
-    on: abs(delta_ratio) > 0.1
-    default: 0
-```
-
-- `value`：条件满足时计算的新值
-- `on`：触发条件表达式
-- `default`：首次值（条件从未满足时使用）
-- `duration`：内置变量，表示距上次更新的秒数
-
----
-
-## 计算顺序
-
-1. 收集 requires 中 Indicator 的变量
-2. 计算 vars（按列表顺序）
-3. 计算 conditional_vars（按定义顺序）
-4. 求值 targets 中的表达式字段
-
----
-
 ## 多策略聚合
 
 多个 Strategy 的输出会聚合到 Executor 的 `strategies` namespace：
@@ -293,23 +252,6 @@ vars:
   - name: position_usd
     value: sum(strategies["position_usd"]) if "position_usd" in strategies else 0
 ```
-
----
-
-## 可用函数
-
-在表达式中可使用的内置函数：
-
-| 函数 | 说明 | 示例 |
-|------|------|------|
-| `len` | 列表长度 | `len(strategies["position_usd"])` |
-| `abs` | 绝对值 | `abs(delta_usd)` |
-| `min` | 最小值 | `min(a, b)` |
-| `max` | 最大值 | `max(a, b)` |
-| `sum` | 求和 | `sum(strategies["position_usd"])` |
-| `round` | 四舍五入 | `round(price, 2)` |
-| `avg` | 平均值 | `avg(strategies["speed"])` |
-| `clip` | 限制范围 | `clip(value, 0, 1)` |
 
 ---
 
@@ -348,15 +290,19 @@ requires:
   - equation  # 账户权益数据源
   - rsi       # RSI 指标
 
-vars:
-  - name: risk_ratio
-    value: '0.6'
+scopes:
+  global:
+    class_name: GlobalScope
+    vars:
+      - risk_ratio=0.6
 
-conditional_vars:
-  direction:
-    value: 1 if rsi[-1] < 30 else (-1 if rsi[-1] > 70 else 0)
-    on: rsi[-1] < 30 or rsi[-1] > 70
-    default: 0
+  trading_pair:
+    class_name: TradingPairScope
+    vars:
+      - name: direction
+        value: 1 if rsi[-1] < 30 else (-1 if rsi[-1] > 70 else 0)
+        on: rsi[-1] < 30 or rsi[-1] > 70
+        initial_value: 0
 
 targets:
   - exchange: '*'

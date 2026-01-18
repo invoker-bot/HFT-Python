@@ -5,8 +5,8 @@ Feature 0008: Strategy 数据驱动增强
 - 支持 requires 依赖声明
 - 支持 vars / conditional_vars 变量计算
 """
-from typing import ClassVar, Type, Any, Optional, TYPE_CHECKING
-from pydantic import BaseModel, Field
+from typing import ClassVar, Type, Any, Optional, Union, TYPE_CHECKING
+from pydantic import BaseModel, Field, model_validator
 from ..config.base import BaseConfig
 
 if TYPE_CHECKING:
@@ -21,17 +21,91 @@ class VarDefinition(BaseModel):
     """
     name: str = Field(..., description="变量名")
     value: str = Field(..., description="表达式")
+    on: Optional[str] = Field(None, description="条件表达式（默认 True，条件满足时更新）")
+    initial_value: Any = Field(None, description="初始值（条件从未满足时使用）")
 
 
-class ConditionalVarDefinition(BaseModel):
+class ScopeVarDefinition(BaseModel):
     """
-    条件变量定义（Feature 0008）
+    Scope 变量定义（Feature 0012）
 
-    用于 conditional_vars 中的条件变量定义。
+    用于 scopes 配置中的变量定义。
     """
-    value: str = Field(..., description="更新表达式")
-    on: str = Field(..., description="触发条件表达式")
-    default: Any = Field(None, description="默认值（条件从未满足时使用）")
+    name: str = Field(..., description="变量名")
+    value: str = Field(..., description="表达式")
+    on: Optional[str] = Field(None, description="条件表达式（默认 True，条件满足时更新）")
+    initial_value: Any = Field(None, description="初始值（条件从未满足时使用）")
+
+
+class ScopeConfig(BaseModel):
+    """
+    Scope 配置（Feature 0012）
+
+    用于定义单个 Scope 层级的配置。
+    """
+    class_name: str = Field("BaseScope", description="Scope 类名（如 GlobalScope, ExchangeScope）")
+    instance_id: Optional[str] = Field(None, description="Scope 实例 ID（如 'global'，可选）")
+    vars: Union[list[ScopeVarDefinition], dict[str, str], list[str]] = Field(
+        default_factory=list,
+        description="变量列表（支持三种格式：1. list[ScopeVarDefinition] 标准格式，2. dict[str, str] 简化格式（计算顺序不确定），3. list[str] 'name=value' 格式）"
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_vars(cls, data: Any) -> Any:
+        """
+        将 vars 的简化格式转换为标准格式
+
+        支持三种格式：
+        1. list[ScopeVarDefinition] - 标准格式（不转换）
+        2. dict[str, str] - 简化格式：{name: value}（计算顺序不确定）
+        3. list[str] - 简化格式：["name=value"]
+
+        支持混合格式：list 中可以混合标准格式和简化格式
+        """
+        if not isinstance(data, dict):
+            return data
+
+        vars_value = data.get('vars')
+        if vars_value is None:
+            return data
+
+        # 格式 2: dict[str, str] - {name: value}
+        if isinstance(vars_value, dict):
+            normalized = []
+            for name, value in vars_value.items():
+                normalized.append({
+                    'name': name,
+                    'value': str(value)
+                })
+            data['vars'] = normalized
+            return data
+
+        # 格式 1 和 3: list 格式（可能混合）
+        if isinstance(vars_value, list) and len(vars_value) > 0:
+            normalized = []
+            for item in vars_value:
+                if isinstance(item, dict):
+                    # 标准格式：已经是 dict，直接保留
+                    normalized.append(item)
+                elif isinstance(item, str):
+                    # 简化格式：字符串 "name=value"
+                    if '=' in item:
+                        name, value = item.split('=', 1)
+                        normalized.append({
+                            'name': name.strip(),
+                            'value': value.strip()
+                        })
+                    else:
+                        # 格式错误，跳过
+                        continue
+                else:
+                    # 未知格式，跳过
+                    continue
+            data['vars'] = normalized
+            return data
+
+        return data
 
 
 class TargetDefinition(BaseModel):
@@ -75,14 +149,15 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
     """
     策略配置基类
 
-    Feature 0008: 支持 requires、vars、conditional_vars
+    Feature 0008: 支持 requires
     Feature 0011: 支持全局 condition
+    Feature 0012: 支持 Scope 系统
 
     提供：
     - 策略基本配置
     - 交易所引用
     - 交易对配置
-    - 变量计算机制
+    - Scope 系统配置
     - 全局 condition 门控
     """
     class_dir: ClassVar[str] = "conf/strategy"
@@ -107,19 +182,37 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
         default_factory=list,
         description="依赖的 Indicator ID 列表"
     )
-    vars: list[VarDefinition] = Field(
+    targets: list[TargetDefinition] = Field(
         default_factory=list,
-        description="变量列表（按顺序计算，后面可引用前面）"
-    )
-    conditional_vars: dict[str, ConditionalVarDefinition] = Field(
-        default_factory=dict,
-        description="条件变量字典（条件满足时更新）"
+        description="目标定义列表（Feature 0008 Phase 4）"
     )
 
     # Feature 0011: 全局 condition
     condition: Optional[str] = Field(
         None,
         description="全局条件表达式（默认 null=True；False/异常时忽略所有 targets）"
+    )
+
+    # Feature 0012: Scope 系统
+    links: list[list[str]] = Field(
+        default_factory=list,
+        description="Scope 链路列表，如 [['global', 'exchange', 'trading_pair']]"
+    )
+    scopes: dict[str, ScopeConfig] = Field(
+        default_factory=dict,
+        description="Scope 配置字典，key 为 scope_class_id"
+    )
+    target_scope: Optional[str] = Field(
+        None,
+        description="目标 Scope 层级（Strategy 输出的层级）"
+    )
+    include_symbols: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="包含的交易对列表，支持通配符"
+    )
+    exclude_symbols: list[str] = Field(
+        default_factory=list,
+        description="排除的交易对列表"
     )
 
     @classmethod

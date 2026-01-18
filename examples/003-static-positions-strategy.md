@@ -433,8 +433,79 @@ Executor 的默认聚合行为：
 
 ---
 
-## 9. 相关文档
+## 9. Scope 系统集成（可选）
+
+从 Feature 0012 开始，Strategy 支持 Scope 系统，可以实现更强大的多层级变量计算。
+
+### 9.1 基本 Scope 配置
+
+```yaml
+class_name: static_positions
+
+# Scope 链路定义
+links:
+  - ["global", "exchange_class", "exchange", "trading_pair"]
+
+# Scope 变量配置
+scopes:
+  global:
+    vars:
+      max_total_position_usd: 10000
+      default_speed: 0.5
+```
+
+### 9.2 使用 Scope 变量
+
+```yaml
+class_name: static_positions
+
+links:
+  - ["global", "exchange_class", "exchange", "trading_pair"]
+
+scopes:
+  global:
+    vars:
+      max_position_usd: 2000
+      speed_multiplier: 1.0
+
+  trading_pair:
+    vars:
+      position_usd: max_position_usd * 0.5
+      speed: default_speed * speed_multiplier
+
+target_pairs:
+  - BTC/USDT
+  - ETH/USDT
+
+target:
+  position_usd: position_usd  # 使用 Scope 变量
+  speed: speed                # 使用 Scope 变量
+```
+
+### 9.3 条件变量（conditional_vars）
+
+```yaml
+scopes:
+  global:
+    vars:
+      base_position: 1000
+
+  trading_pair:
+    vars:
+      - name: position_usd
+        value: >
+          base_position * 2 if symbol == "BTC/USDT" else
+          base_position * 1.5 if symbol == "ETH/USDT" else
+          base_position
+```
+
+---
+
+## 10. 相关文档
 
 - [Feature 0011: Strategy Target 展开式与去特殊化](../features/0011-strategy-target-expansion.md)
+- [Feature 0012: Scope 系统](../features/0012-scope-system.md)
 - [docs/strategy.md](../docs/strategy.md)
 - [Example 002: Executor 配置详解](./002-executor-configurations.md)
+- [Example 004: MarketNeutralPositions 配置详解](./004-market-neutral-positions-strategy.md)
+

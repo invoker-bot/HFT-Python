@@ -1,12 +1,10 @@
 # Feature 0008: Strategy 数据驱动增强
 
-> **状态**：全部通过
-
 ## 概述
 
 增强 Strategy 的数据驱动能力，使其支持：
 1. `requires` 依赖声明（类似 Executor）
-2. `vars` / `conditional_vars` 变量计算
+2. `vars` 变量系统 变量计算
 3. **通用字典输出**（重大变更）
 4. Indicator 层级体系
 5. 多 Exchange 目标匹配
@@ -71,19 +69,24 @@ requires:
   - equation
   - rsi
 
-vars:
-  - name: current_amount
-    value: current_position_amount
+# vars 定义在 scopes 中（Feature 0012）
+scopes:
+  global:
+    class_name: GlobalScope
+    vars:
+      - max_position_ratio=0.8
 
-conditional_vars:
-  center_price:
-    value: mid_price
-    on: rsi[-1] < 30 or rsi[-1] > 70
-    default: mid_price
-  base_amount:
-    value: current_amount
-    on: rsi[-1] < 30 or rsi[-1] > 70
-    default: 0
+  trading_pair:
+    class_name: TradingPairScope
+    vars:
+      - name: center_price
+        value: mid_price
+        on: rsi[-1] < 30 or rsi[-1] > 70
+        initial_value: mid_price
+      - name: base_amount
+        value: current_position_amount
+        on: rsi[-1] < 30 or rsi[-1] > 70
+        initial_value: 0
 
 targets:
   - exchange: okx/a
@@ -186,19 +189,16 @@ vars:
     value: current_position_amount
   - name: price_ratio
     value: mid_price / center_price
-
-conditional_vars:
-  center_price:
+  - name: center_price
     value: mid_price
     on: rsi[-1] < 30 or rsi[-1] > 70
-    default: mid_price
+    initial_value: mid_price
 ```
 
 **计算顺序**：
 1. 收集 requires 中 Indicator 的变量
-2. 计算 vars（按列表顺序）
-3. 计算 conditional_vars
-4. 求值 targets 中的表达式
+2. 计算 vars（按列表顺序，包括条件变量）
+3. 求值 targets 中的表达式
 
 ### 5. targets 通用字段输出
 
@@ -282,6 +282,16 @@ targets:
 
 - [x] 更新 docs/strategy.md（已通过）
 - [x] 添加单元测试（已通过）
+
+### Phase 6: vars 简化格式支持（P2）
+
+- [ ] BaseStrategyConfig 支持 vars 的三种格式（待审核）
+- [ ] BaseExecutorConfig 支持 vars 的三种格式（待审核）
+- [ ] ScopeConfig 支持 vars 的三种格式（待审核）
+- [ ] 更新 docs/strategy.md 说明 vars 格式（待审核）
+- [ ] 更新 docs/executor.md 说明 vars 格式（待审核）
+- [ ] 更新 docs/scope.md 说明 vars 格式（待审核）
+- [ ] 添加 vars 简化格式的单元测试（待实现）
 
 ## 与现有 Feature 的关系
 

@@ -10,8 +10,9 @@
 
 1. **Indicator 统一架构**：所有数据源（DataSource）都是特殊的 Indicator，统一通过 `IndicatorGroup` 管理
 2. **变量注入机制**：Indicator 通过 `calculate_vars(direction)` 提供变量，Executor 通过 `requires` 声明依赖
-3. **vars / conditional_vars**：支持变量计算和条件触发更新
-4. **统一 order 配置**：所有 Executor 使用相同的 order 配置格式
+3. **Scope 系统集成**：Executor 通过 `scope` 字段关联到 Scope class ID（Feature 0012）
+4. **vars 变量系统**：支持变量计算和条件触发更新（详见 [vars 文档](vars.md)）
+5. **统一 order 配置**：所有 Executor 使用相同的 order 配置格式
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -34,11 +35,10 @@
 │  │  strategies["speed"] = [0.1]                         │   │
 │  └─────────────────────────────────────────────────────┘   │
 │           │                                                 │
-│           ▼ vars / conditional_vars                         │
+│           ▼ vars 变量计算                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │  Executor Decision                                   │   │
-│  │  - vars: [{name: q, value: "..."}]                   │   │
-│  │  - conditional_vars: {center_price: ...}             │   │
+│  │  - vars: [{name, value, on?, initial_value?}, ...]  │   │
 │  │  - orders / entry_orders / exit_orders               │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
@@ -73,8 +73,7 @@ order:
   refresh_tolerance_usd: ... # 刷新容忍度（绝对值）
   timeout: ...            # 订单超时
   condition: ...          # 挂单条件
-  vars: ...               # 订单级变量
-  conditional_vars: ...   # 订单级条件变量
+  vars: ...               # 订单级变量（支持条件变量通过 on 字段）
 ```
 
 ### Order 展开方式
@@ -127,7 +126,7 @@ exit_orders:   # 或 exit_order + exit_order_levels
 
 ---
 
-## vars 和 conditional_vars
+## vars 变量系统
 
 ### vars 列表语义
 
@@ -143,31 +142,17 @@ vars:
 - 每次 tick 重新计算
 - 按列表顺序计算，后面可引用前面
 - 支持表达式
+- 支持条件变量（通过 `on` 和 `initial_value` 字段）
 
-### conditional_vars 条件触发
-
-```yaml
-conditional_vars:
-  center_price:
-    value: mid_price
-    on: 'rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600'
-    default: null
-```
-
-**特性**：
-- 仅当 `on` 条件满足时更新 `value`
-- 条件不满足时保持上次值
-- `default` 为首次值（条件从未满足时）
-- 支持 `duration` 变量（距上次更新的秒数）
+**详细说明**：vars 支持三种格式（标准格式、dict 简化格式、list[str] 简化格式），详见 [vars 文档](vars.md)。
 
 ### 计算顺序
 
 ```
 1. 收集 requires 中 Indicator 的变量
 2. 注入 strategies namespace（来自多个 Strategy 的聚合输出）
-3. 计算 vars（按列表顺序）
-4. 计算 conditional_vars（按定义顺序）
-5. 计算 order 内部的 vars 和 conditional_vars
+3. 计算 vars（按列表顺序，包括条件变量）
+4. 计算 order 内部的 vars
 ```
 
 ---
@@ -307,12 +292,10 @@ requires:
 vars:
   - name: delta_position_usd
     value: 'current_position_usd - position_usd'
-
-conditional_vars:
-  center_price:
+  - name: center_price
     value: mid_price
     on: 'rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600'
-    default: null
+    initial_value: null
 
 reset: 'abs(delta_position_usd) < 50'
 
@@ -444,14 +427,14 @@ vars:
 
 ### 网格交易技巧
 
-使用 `conditional_vars` 缓存中心价格：
+使用条件变量缓存中心价格：
 
 ```yaml
-conditional_vars:
-  center_price:
+vars:
+  - name: center_price
     value: mid_price
     on: 'duration > 7 * 24 * 3600'  # 每 7 天更新
-    default: mid_price
+    initial_value: mid_price
 
 order_levels: 5
 order:

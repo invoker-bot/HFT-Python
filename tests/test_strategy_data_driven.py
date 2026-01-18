@@ -163,11 +163,11 @@ class TestStaticPositionsStrategyConfig:
         assert len(config.vars) == 1
         assert config.vars[0].name == "ratio"
 
-    def test_with_conditional_vars(self):
-        """测试 conditional_vars 配置"""
+    def test_with_vars(self):
+        """测试 vars 配置"""
         config = StaticPositionsStrategyConfig(
             name="test",
-            conditional_vars={
+            vars={
                 "center_price": ConditionalVarDefinition(
                     value="mid_price",
                     on="rsi < 30",
@@ -175,8 +175,8 @@ class TestStaticPositionsStrategyConfig:
             },
             targets=[],
         )
-        assert "center_price" in config.conditional_vars
-        assert config.conditional_vars["center_price"].value == "mid_price"
+        assert "center_price" in config.vars
+        assert config.vars["center_price"].value == "mid_price"
 
 
 class TestStaticPositionsStrategyTargetMatching:
@@ -458,14 +458,14 @@ class TestStaticPositionsStrategyVars:
         assert context["ratio"] == 0.6
         assert context["target"] == 600  # 0.6 * 1000
 
-    def test_conditional_vars_triggered(self):
+    def test_vars_triggered(self):
         """测试条件变量触发"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="25"),
             ],
-            conditional_vars={
+            vars={
                 "signal": ConditionalVarDefinition(
                     value="1",
                     on="rsi < 30",
@@ -482,14 +482,14 @@ class TestStaticPositionsStrategyVars:
         # rsi=25 < 30, 所以应该触发
         assert context["signal"] == 1
 
-    def test_conditional_vars_not_triggered(self):
+    def test_vars_not_triggered(self):
         """测试条件变量未触发"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="50"),
             ],
-            conditional_vars={
+            vars={
                 "signal": ConditionalVarDefinition(
                     value="1",
                     on="rsi < 30",
@@ -506,14 +506,14 @@ class TestStaticPositionsStrategyVars:
         # rsi=50 >= 30, 所以不触发，使用默认值
         assert context["signal"] == 0
 
-    def test_conditional_vars_state_persistence(self):
+    def test_vars_state_persistence(self):
         """测试条件变量状态持久化"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="25"),
             ],
-            conditional_vars={
+            vars={
                 "center_price": ConditionalVarDefinition(
                     value="100.0",
                     on="rsi < 30",

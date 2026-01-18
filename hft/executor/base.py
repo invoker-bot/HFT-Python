@@ -141,7 +141,7 @@ class BaseExecutor(Listener):
             "orders_failed": 0,
         }
 
-        # Feature 0010: conditional_vars 状态持久化
+        # Feature 0010: 条件变量状态持久化
         # {(exchange_class, symbol, 变量名): (当前值, 上次更新时间)}
         self._conditional_var_states: dict[tuple[str, str, str], tuple[Any, float]] = {}
 
@@ -676,8 +676,7 @@ class BaseExecutor(Listener):
         1. 内置变量（direction, buy, sell, speed, notional）
         2. strategies namespace（Feature 0008）
         3. requires 中声明的 indicator 提供的变量
-        4. vars 列表（按顺序计算，后面可引用前面）
-        5. conditional_vars（条件满足时更新）
+        4. vars 列表（按顺序计算，包括条件变量）
 
         Issue 0005: 保留变量名不允许被 Indicator 覆盖，冲突时会记录警告并跳过。
 
@@ -758,7 +757,7 @@ class BaseExecutor(Listener):
                             var_def.name, e
                         )
 
-        # Feature 0010 Phase 2: 计算 conditional_vars
+        # Feature 0010 Phase 2: 计算条件变量
         now = time.time()
         config_conditional_vars = getattr(self.config, 'conditional_vars', None) or {}
         for var_name, var_def in config_conditional_vars.items():

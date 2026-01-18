@@ -86,7 +86,7 @@ class PCAExecutor(BaseExecutor):
         super().__init__(config)
         # 追踪每个 (exchange, symbol) 的状态
         self._pca_states: dict[tuple[str, str], PCAState] = {}
-        # Order 级别的 conditional_vars 状态
+        # Order 级别的条件变量状态
         # key = (exchange_name, symbol, order_type, var_name)
         self._order_conditional_var_states: dict[tuple[str, str, str, str], tuple[Any, float]] = {}
 
@@ -176,7 +176,7 @@ class PCAExecutor(BaseExecutor):
             except Exception as e:
                 self.logger.warning("Failed to compute order var %s: %s", var_def.name, e)
 
-        # 计算 order 级 conditional_vars
+        # 计算 order 级条件变量（DEPRECATED - 使用 vars 中的 on 字段替代）
         now = time.time()
         for var_name, var_def in order_def.conditional_vars.items():
             state_key = (exchange_name, symbol, order_type, var_name)

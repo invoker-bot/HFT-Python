@@ -309,12 +309,10 @@ requires:
 vars:
   - name: delta_position_usd
     value: 'current_position_usd - position_usd'
-
-conditional_vars:
-  center_price:
+  - name: center_price
     value: mid_price
     on: 'rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600'
-    default: null
+    initial_value: null
 
 reset: 'abs(delta_position_usd) < 50'
 
@@ -359,7 +357,7 @@ exit_order:
 
 ### 方式二：keep_positions + LimitExecutor
 
-由 Strategy 利用 `vars` / `conditional_vars` 计算动态目标仓位，Executor 只负责执行。
+由 Strategy 利用 `vars` 变量系统计算动态目标仓位，Executor 只负责执行。
 
 **优点**：Strategy 和 Executor 职责分离，复用现有 LimitExecutor
 **缺点**：Strategy 需要维护状态（中心价格、基准仓位）
@@ -381,20 +379,18 @@ vars:
     value: int(max(0, (center_price - mid_price) / (center_price * 0.0002)))
   - name: target_delta
     value: sum([0.01 * (i ** 2 + i) for i in range(1, price_drop_levels + 1)])
-
-conditional_vars:
-  center_price:
+  - name: center_price
     value: mid_price
     on: rsi[-1] < 30 or rsi[-1] > 70
-    default: mid_price
-  base_amount:
+    initial_value: mid_price
+  - name: base_amount
     value: current_amount
     on: rsi[-1] < 30 or rsi[-1] > 70
-    default: 0
-  direction:
+    initial_value: 0
+  - name: direction
     value: 1 if rsi[-1] < 30 else -1
     on: rsi[-1] < 30 or rsi[-1] > 70
-    default: 0
+    initial_value: 0
 
 targets:
   - symbol: USDG/USDT
@@ -433,7 +429,7 @@ order:
 
 | 特性 | 方式一 (PCAExecutor) | 方式二 (keep_positions) |
 |------|---------------------|------------------------|
-| 状态管理 | Executor 内部 | Strategy conditional_vars |
+| 状态管理 | Executor 内部 | Strategy 条件变量 |
 | 复杂度 | 高（专用 Executor） | 低（复用 LimitExecutor） |
 | 灵活性 | 高（entry/exit 分离） | 中（统一 position_amount） |
 | 适用场景 | 复杂 PCA 逻辑 | 简单 PCA 逻辑 |
@@ -442,8 +438,8 @@ order:
 
 ### 需要的 Feature
 
-> 参考：`features/0010-executor-vars-system.md`（vars、conditional_vars、order 展开机制）
-> 参考：`features/0008-strategy-data-driven.md`（Strategy vars/conditional_vars、通用字典输出）
+> 参考：`features/0010-executor-vars-system.md`（vars、order 展开机制）
+> 参考：`features/0008-strategy-data-driven.md`（Strategy vars、通用字典输出）
 
 ---
 
@@ -462,7 +458,7 @@ order:
 | Feature | 文件 | 说明 |
 |---------|------|------|
 | Strategy 数据驱动 | `features/0008-strategy-data-driven.md` | requires、position_usd 表达式、Indicator 层级 |
-| Executor vars 系统 | `features/0010-executor-vars-system.md` | vars、conditional_vars、统一 order 配置 |
+| Executor vars 系统 | `features/0010-executor-vars-system.md` | vars、统一 order 配置 |
 | 现货模式支持 | 部分实现 | Exchange `mode: spot` 配置 |
 
 ## Indicator 层级说明
@@ -473,8 +469,244 @@ order:
 | ExchangePath | 按交易所实例 | MedalEquationDataSource |
 | Pair | 按交易对 | TickerDataSource, RSIIndicator |
 
+## Scope 系统集成（可选）
+
+从 Feature 0012 开始，Strategy 和 Executor 支持 Scope 系统，可以实现更强大的多层级变量计算。
+
+### 使用 Scope 的网格交易策略
+
+```yaml
+# conf/strategy/stablecoin/grid_positions_scope.yaml
+class_name: keep_positions
+
+requires:
+  - equation
+
+# Scope 链路定义
+links:
+  - ["global", "exchange_class", "exchange", "trading_pair"]
+
+# Scope 变量配置
+scopes:
+  global:
+    vars:
+      - name: target_ratio
+        value: 0.6  # USDG 占 60%
+      - name: max_ratio
+        value: 0.8  # 最大 80%
+
+  exchange:
+    vars:
+      - name: total_equity
+        value: equation_usd  # 来自 MedalEquationDataSource
+
+  trading_pair:
+    vars:
+      - name: target_position
+        value: target_ratio * total_equity
+      - name: max_position
+        value: max_ratio * total_equity
+
+targets:
+  - symbol: USDG/USDT
+    position_usd: target_position  # 使用 Scope 变量
+    max_position_usd: max_position  # 使用 Scope 变量
+    speed: 0.1
+```
+
+### 使用 Scope 的动态仓位调整
+
+```yaml
+# conf/strategy/stablecoin/dynamic_scope.yaml
+class_name: keep_positions
+
+requires:
+  - equation
+  - ticker
+
+links:
+  - ["global", "exchange_class", "exchange", "trading_pair"]
+
+scopes:
+  global:
+    vars:
+      - name: base_ratio
+        value: 0.6
+
+  exchange:
+    vars:
+      - name: total_equity
+        value: equation_usd
+
+  trading_pair:
+    vars:
+      - name: spread_pct
+        value: (best_ask - best_bid) / mid_price
+      - name: is_liquid
+        value: spread_pct < 0.001
+
+    vars:
+      # 条件变量：根据流动性调整目标仓位
+      - name: adjusted_ratio
+        value: base_ratio * 1.2 if is_liquid else base_ratio * 0.8
+      - name: target_position
+        value: adjusted_ratio * total_equity
+
+targets:
+  - symbol: USDG/USDT
+    position_usd: target_position
+    speed: 0.1
+```
+
+### Executor 访问 Scope 变量
+
+```yaml
+# conf/executor/stablecoin/scope_aware_executor.yaml
+class_name: limit
+
+requires:
+  - ticker
+
+vars:
+  # 访问 Strategy 的 Scope 变量
+  - name: target_pos
+    value: target_position  # 来自 trading_pair scope
+  - name: max_pos
+    value: max_position  # 来自 trading_pair scope
+  - name: position_ratio
+    value: current_position_usd / max_pos if max_pos > 0 else 0
+
+  # 根据仓位比例动态调整订单大小
+  - name: order_size_multiplier
+    value: 1.0 + abs(position_ratio) * 0.5
+
+entry_order_levels: 3
+entry_order:
+  spread: '0.0002 * mid_price * abs(level)'
+  order_usd: '100 * order_size_multiplier'
+  timeout: 7d
+  refresh_tolerance: 1.0
+
+exit_order_levels: 3
+exit_order:
+  spread: '0.0002 * mid_price * abs(level)'
+  order_usd: '100 * order_size_multiplier'
+  timeout: 7d
+  refresh_tolerance: 1.0
+```
+
+### 跨交易所的 Scope 配置
+
+```yaml
+# conf/strategy/stablecoin/multi_exchange_scope.yaml
+class_name: keep_positions
+
+requires:
+  - equation
+
+links:
+  - ["global", "exchange_class", "exchange", "trading_pair"]
+
+scopes:
+  global:
+    vars:
+      - name: total_target_ratio
+        value: 0.6
+
+  exchange_class:
+    vars:
+      # OKX 和 Binance 不同的权重
+      - name: exchange_weight
+        value: 0.6 if exchange_class == "okx" else 0.4
+
+  exchange:
+    vars:
+      - name: total_equity
+        value: equation_usd
+      - name: weighted_target
+        value: total_target_ratio * exchange_weight
+
+  trading_pair:
+    vars:
+      - name: target_position
+        value: weighted_target * total_equity
+
+targets:
+  - exchange: okx/spot_a
+    symbol: USDG/USDT
+    position_usd: target_position
+    speed: 0.1
+
+  - exchange: binance/spot_main
+    symbol: USDG/USDT
+    position_usd: target_position
+    speed: 0.1
+```
+
+### Scope 条件变量在 PCA 策略中的应用
+
+```yaml
+# conf/strategy/stablecoin/pca_scope.yaml
+class_name: keep_positions
+
+requires:
+  - ticker
+  - rsi
+
+links:
+  - ["global", "exchange", "trading_pair"]
+
+scopes:
+  global:
+    vars:
+      - name: pca_enabled
+        value: true
+
+  trading_pair:
+    vars:
+      - name: is_oversold
+        value: rsi[-1] < 30
+      - name: is_overbought
+        value: rsi[-1] > 70
+      # 使用条件变量缓存中心价格和方向
+      - name: center_price
+        value: mid_price
+        on: is_oversold or is_overbought
+        initial_value: null
+      - name: direction
+        value: 1 if is_oversold else -1
+        on: is_oversold or is_overbought
+        initial_value: 0
+      - name: base_amount
+        value: current_position_amount
+        on: is_oversold or is_overbought
+        initial_value: 0
+      - name: price_drop_levels
+        value: int(max(0, (center_price - mid_price) / (center_price * 0.0002))) if center_price else 0
+      - name: target_delta
+        value: sum([0.01 * (i ** 2 + i) for i in range(1, price_drop_levels + 1)]) if direction else 0
+      - name: target_amount
+        value: base_amount + direction * target_delta if direction else 0
+
+targets:
+  - symbol: USDG/USDT
+    position_amount: target_amount
+    speed: 0.1
+```
+
+**说明**：
+- Scope 系统使配置更加模块化和可复用
+- 可以在不同层级定义变量，实现复杂的计算逻辑
+- 条件变量（vars 的 on 字段）可以实现状态缓存和条件分支
+- Executor 可以无缝访问 Strategy 定义的 Scope 变量
+
+---
+
 ## 相关文档
 
+- [Feature 0012: Scope 系统](../features/0012-scope-system.md) - Scope 系统设计
 - [docs/executor.md](../docs/executor.md) - Executor 设计文档
 - [docs/indicator.md](../docs/indicator.md) - Indicator 统一架构
 - [docs/datasource.md](../docs/datasource.md) - DataSource 数据源
+- [Example 002: Executor 配置详解](./002-executor-configurations.md)
+- [Example 003: StaticPositions 配置详解](./003-static-positions-strategy.md)

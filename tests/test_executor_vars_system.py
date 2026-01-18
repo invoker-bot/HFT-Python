@@ -4,7 +4,7 @@ Feature 0010: Executor vars 系统 - 单元测试
 测试内容：
 1. ExecutorVarDefinition / ExecutorConditionalVarDefinition 配置类
 2. vars 列表语义（按顺序计算）
-3. conditional_vars 条件触发
+3. vars 条件触发
 4. duration 变量
 5. 状态持久化
 """
@@ -87,11 +87,11 @@ class TestExecutorConfigWithVars:
         assert len(config.vars) == 2
         assert config.vars[0].name == "ratio"
 
-    def test_conditional_vars(self):
-        """测试 conditional_vars"""
+    def test_vars(self):
+        """测试 vars"""
         config = MarketExecutorConfig(
             per_order_usd=100,
-            conditional_vars={
+            vars={
                 "center_price": ExecutorConditionalVarDefinition(
                     value="mid_price",
                     on="speed > 0.8",
@@ -99,8 +99,8 @@ class TestExecutorConfigWithVars:
                 ),
             },
         )
-        assert "center_price" in config.conditional_vars
-        assert config.conditional_vars["center_price"].on == "speed > 0.8"
+        assert "center_price" in config.vars
+        assert config.vars["center_price"].on == "speed > 0.8"
 
 
 class TestExecutorCollectContextVars:
@@ -190,13 +190,13 @@ class TestExecutorCollectContextVars:
         assert context["b"] == 20  # 10 * 2
         assert context["c"] == 30  # 20 + 10
 
-    def test_conditional_vars_triggered(self):
-        """测试 conditional_vars 触发"""
+    def test_vars_triggered(self):
+        """测试 vars 触发"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            conditional_vars={
+            vars={
                 "signal": ExecutorConditionalVarDefinition(
                     value="1",
                     on="speed > 0.5",  # 条件满足
@@ -218,13 +218,13 @@ class TestExecutorCollectContextVars:
 
         assert context["signal"] == 1
 
-    def test_conditional_vars_not_triggered(self):
-        """测试 conditional_vars 未触发"""
+    def test_vars_not_triggered(self):
+        """测试 vars 未触发"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            conditional_vars={
+            vars={
                 "signal": ExecutorConditionalVarDefinition(
                     value="1",
                     on="speed > 0.5",  # 条件不满足
@@ -246,13 +246,13 @@ class TestExecutorCollectContextVars:
 
         assert context["signal"] == 0  # 使用默认值
 
-    def test_conditional_vars_state_persistence(self):
-        """测试 conditional_vars 状态持久化"""
+    def test_vars_state_persistence(self):
+        """测试 vars 状态持久化"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            conditional_vars={
+            vars={
                 "center_price": ExecutorConditionalVarDefinition(
                     value="notional",  # 使用 notional 作为值
                     on="speed > 0.5",
@@ -285,13 +285,13 @@ class TestExecutorCollectContextVars:
         # 应该保持上次的值 1000.0，而不是使用 default 或新值
         assert context2["center_price"] == 1000.0
 
-    def test_conditional_vars_duration(self):
-        """测试 conditional_vars 中的 duration 变量"""
+    def test_vars_duration(self):
+        """测试 vars 中的 duration 变量"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            conditional_vars={
+            vars={
                 "reset_signal": ExecutorConditionalVarDefinition(
                     value="1",
                     on="duration > 1",  # 使用 duration
@@ -355,8 +355,8 @@ class TestExecutorCollectContextVars:
         assert context["strategies"] == strategies_data
         assert context["total_position"] == 600.0  # sum([100, 200, 300])
 
-    def test_vars_and_conditional_vars_combined(self):
-        """测试 vars 和 conditional_vars 组合使用"""
+    def test_vars_and_vars_combined(self):
+        """测试 vars 和 vars 组合使用"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
@@ -364,7 +364,7 @@ class TestExecutorCollectContextVars:
             vars=[
                 ExecutorVarDefinition(name="threshold", value="0.5"),
             ],
-            conditional_vars={
+            vars={
                 "signal": ExecutorConditionalVarDefinition(
                     value="direction",
                     on="speed > threshold",  # 引用 vars 中的 threshold
