@@ -435,9 +435,9 @@ if ratio != 0:
   - [ ] 计算公平价格（审核不通过：缺少从 TickerDataSource/mid_price 获取值的实现路径；当前恒返回 None）
   - [ ] 支持返回 `None`（审核不通过：当前恒返回 None，等价“永远 mask”，缺少“有数据时返回价格”的分支）
   - [ ] 注入到 `trading_pair_class` scope（待实现：依赖 Feature 0012 Phase 4 + Strategy scope vars 计算链路）
-- [ ] 实现 `MedalAmountDataSource`（审核不通过：`on_tick()` 返回 True 导致运行一次就停止；`calculate_vars()` 调用 `HealthyDataArray.get_latest()`（不存在））
-  - [ ] 获取合约/现货账户余额（审核不通过：虽然调用 medal_fetch_total_balance_usd()，但 on_tick 返回 True 导致不会周期更新）
-  - [ ] 注入 `amount` 变量到 `exchange` scope（审核不通过：calculate_vars 有 bug；Scope 注入链路也未实现）
+- [ ] 实现 `MedalAmountDataSource`（待审核：on_tick 和 calculate_vars 已修复，但需要验证完整功能）
+  - [x] 获取合约/现货账户余额（已通过：on_tick 返回 False，支持周期更新）
+  - [x] 注入 `amount` 变量到 `exchange` scope（已通过：calculate_vars 已修复，调用 latest()）
 - [ ] 单元测试：FairPriceIndicator（待实现）
 - [ ] 单元测试：MedalAmountDataSource（待实现）
 

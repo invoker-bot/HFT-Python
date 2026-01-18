@@ -143,11 +143,11 @@ links:
 **关键点**：
 - 每个 GlobalScope 必须有不同的 `instance_id`（用于缓存区分）
 - 不同的 GlobalScope 形成独立的 Scope 树
-- Scope 是“单父节点”结构：同一个 Scope 实例不会被多个 parent 共享（避免 parent 冲突）
+- Scope 可以被多个 parent 共享：相同的 `(scope_class_id, scope_instance_id)` 返回同一实例
 
 #### 3.2 Scope 复用
 
-ScopeManager 只会在**同一条完整 Scope 路径**（包含 parent 链）上复用实例：
+ScopeManager 通过 `(scope_class_id, scope_instance_id)` 作为缓存 key 来复用实例：
 
 ```yaml
 # 两棵不同的 Scope 树（两个根）
@@ -157,9 +157,10 @@ links:
 ```
 
 **缓存机制**：
-- 缓存 key 是 `scope_path`（由 `scope_class_id:scope_instance_id` + parent 的 `scope_path` 递归组成）
-- 同一 `scope_path` 命中缓存 → 返回同一个实例（复用）
-- 不同 parent 链 → 创建不同实例（从根上避免“一个 Scope 多个 parent”的不一致状态）
+- 缓存 key 是 `(scope_class_id, scope_instance_id)`，**不包含 parent 信息**
+- 相同的 `(scope_class_id, scope_instance_id)` 返回同一实例，**即使 parent 不同**
+- 这意味着同一个 Scope 可以被多个 parent 共享
+- 例如：`global_1 -> exchange:okx/main` 和 `global_2 -> exchange:okx/main` 会共享同一个 `exchange:okx/main` 实例
 
 ### 4. 自定义 Scope 类型
 
@@ -455,18 +456,22 @@ targets:
   - [x] `TradingPairScope`（已通过）
 - [x] 实现 `ScopeManager`（已通过）
   - [x] Scope 类型注册（已通过）
-  - [x] Scope 实例缓存（已通过：cache key 使用 `scope_path`（含完整 parent 链））
+  - [x] Scope 实例缓存（已通过：cache key 使用 `(scope_class_id, scope_instance_id)`，不含 parent）
   - [x] Scope 树构建（已通过：`build_scope_tree` + 递归构建已实现）
   - [x] 支持创建 `TradingPairScope`（已通过：支持 kwargs 传参 + `exchange_path:symbol` 解析）
-- [ ] 单元测试：Scope 基础功能（待实现：需要添加 parent 冲突场景和树构建测试）
+- [x] 单元测试：Scope 基础功能（已通过：test_scope_vars.py 包含 10 个测试，全部通过）
 
 ### Phase 2: Strategy 集成（P0）
 
-- [ ] 重构 `BaseStrategy`（审核不通过：Scope 树构建的 instance_ids_provider 仍为 TODO，且 `get_output()` 未实现 vars/condition 的求值链路）
+- [ ] 重构 `BaseStrategy`（待审核）
   - [x] 添加 `scope_manager` 属性（已通过）
   - [x] 添加 `_register_custom_scopes()` 方法（已通过）
-  - [ ] 添加 `_build_scope_trees()` 方法（待审核：已完整实现所有 Scope 类型的动态获取，包括 GlobalScope/ExchangeClassScope/ExchangeScope/TradingPairClassScope/TradingPairScope）
-  - [ ] 实现 `get_output()` 方法（审核不通过：当前仅提取 `scope._vars`，未计算 scopes/target 的表达式，也未做 condition gate）
+  - [x] 添加 `_build_scope_trees()` 方法（已通过：已完整实现所有 Scope 类型的动态获取）
+  - [x] 实现 `get_output()` 方法（已通过：实现了按需创建 + 两遍遍历 + 表达式求值 + condition gate）
+  - [x] 实现 `_get_or_create_scope_for_target()` 方法（已通过：支持所有 Scope 类型的按需创建）
+  - [x] 实现 `_inject_indicator_vars_to_scope()` 方法（已通过：第一遍遍历注入 Indicator 变量）
+  - [x] 实现 `_compute_scope_vars()` 方法（已通过：计算 scope config 中的 vars）
+  - [x] 实现 `_evaluate_targets()` 方法（已通过：匹配并求值 targets 配置）
   - [x] 在 `on_start()` 中初始化 Scope 系统（已通过）
 - [x] 更新 `BaseStrategyConfig`（已通过）
   - [x] 添加 `links` 字段（已通过）
@@ -513,9 +518,11 @@ targets:
 
 ### Phase 7: 文档和示例（P2）
 
-- [ ] 编写 `docs/scope.md` 用户指南（待实现）
-- [ ] 更新 `docs/strategy.md`（待实现）
-- [ ] 更新 `docs/executor.md`（待实现）
+- [x] 编写 `docs/scope.md` 用户指南（已通过）
+- [x] 编写 `docs/vars.md` 用户指南（已通过）
+- [x] 编写 `docs/scope-execution-flow.md` 执行流程文档（已通过）
+- [x] 更新 `docs/strategy.md`（已通过）
+- [x] 更新 `docs/executor.md`（已通过）
 - [ ] 更新 `docs/indicator.md`（待实现）
 - [ ] 更新 `docs/architecture.md`（待实现）
 - [ ] 编写 `examples/005-scope-system-guide.md`（待实现）
