@@ -14,6 +14,11 @@ from pydantic import Field, ClickHouseDsn, BaseModel
 from ...config.base import BaseConfig
 from .base import AppCore
 from .listeners import CacheListener
+from ..config_path import (
+    ExchangeConfigPathGroup,
+    StrategyConfigPath,
+    ExecutorConfigPath,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +87,14 @@ class AppConfig(BaseConfig[AppCore]):
     health_check_interval: float = Field(60.0, description="健康检查间隔（秒）")
     log_interval: float = Field(120.0, description="状态日志间隔（秒）")
     cache_interval: float = Field(300.0, description="缓存保存间隔（秒）")
-    strategies: list[str] = Field(description="策略配置路径列表")
+
+    # 使用配置路径引用
+    exchanges: ExchangeConfigPathGroup = Field(description="交易所配置路径组")
+    strategy: StrategyConfigPath = Field(description="策略配置路径")
+    executor: ExecutorConfigPath = Field(description="执行器配置路径")
+
     database_url: ClickHouseDsn | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
     persist: PersistConfig = Field(default_factory=PersistConfig, description="持久化配置")
-    exchanges: list[str] = Field(description="交易所配置路径列表")
-
-    # Executor 配置路径
-    executor: str = Field(description="执行器配置路径（如 market/default）")
 
     # Indicator 配置（Feature 0006）
     indicators: dict[str, dict] = Field(
