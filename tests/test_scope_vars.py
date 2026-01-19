@@ -140,8 +140,8 @@ class TestScopeManager:
         # 应该返回同一个实例
         assert scope1 is scope2
 
-    def test_same_scope_shared_by_different_parents(self):
-        """测试相同的 (scope_class_id, scope_instance_id) 会被不同 parent 共享"""
+    def test_different_parents_create_different_scopes(self):
+        """测试不同 parent 创建不同的 Scope 实例"""
         manager = ScopeManager()
 
         parent1 = GlobalScope("global", "global1", None)
@@ -161,11 +161,10 @@ class TestScopeManager:
             parent=parent2
         )
 
-        # 相同的 (scope_class_id, scope_instance_id) 应该返回同一实例
-        assert scope1 is scope2
-        # scope1 应该被两个 parent 共享
-        assert scope1 in parent1.children.values()
-        assert scope1 in parent2.children.values()
+        # 不同 parent 应该创建不同实例
+        assert scope1 is not scope2
+        assert scope1.parent is parent1
+        assert scope2.parent is parent2
 
 
 class TestScopeTreeBuilding:

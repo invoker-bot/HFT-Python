@@ -27,14 +27,13 @@ class ScopeManager:
 
     def __init__(self):
         """初始化 ScopeManager"""
-        # Scope 实例缓存：{cache_key: scope_instance}
-        # cache_key 格式："scope_class_id:scope_instance_id"
-        # 注意：相同的 (scope_class_id, scope_instance_id) 会复用同一个实例，
-        # 即使 parent 不同也会返回相同的实例
+        # Scope 实例缓存：{scope_path: scope_instance}
+        # scope_path 包含从根到当前节点的完整路径
+        # 格式："scope_class_id:scope_instance_id/parent_path"
         # 例如：
         # - "global:global"
-        # - "exchange:okx/main"
-        # - "trading_pair:okx/main:BTC/USDT"
+        # - "exchange:okx/main/global:global"
+        # - "trading_pair:okx/main:BTC/USDT/exchange:okx/main/global:global"
         self._cache: Dict[str, BaseScope] = {}
 
         # Scope 类型注册表：{scope_class_name: scope_class}
@@ -67,26 +66,47 @@ class ScopeManager:
         """
         self._scope_classes[scope_class_name] = scope_class
 
-    def _build_cache_key(
+    def _build_scope_path(
         self,
         scope_class_id: str,
-        scope_instance_id: str
+        scope_instance_id: str,
+        parent: Optional[BaseScope] = None
     ) -> str:
         """
-        构建 Scope 缓存 key
+        构建 Scope 路径（用于缓存 key）
 
         Args:
             scope_class_id: Scope 类型 ID
             scope_instance_id: Scope 实例 ID
+            parent: 父 Scope
 
         Returns:
-            缓存 key，格式："scope_class_id:scope_instance_id"
-
-        注意：
-            缓存 key 不包含 parent 信息，因此相同的 (scope_class_id, scope_instance_id)
-            会复用同一个实例，即使 parent 不同
+            完整的 scope path，格式："scope_class_id:scope_instance_id/parent_path"
         """
-        return f"{scope_class_id}:{scope_instance_id}"
+        current = f"{scope_class_id}:{scope_instance_id}"
+        if parent is None:
+            return current
+
+        # 递归构建父路径
+        parent_path = self._get_scope_path(parent)
+        return f"{current}/{parent_path}"
+
+    def _get_scope_path(self, scope: BaseScope) -> str:
+        """
+        获取已存在 Scope 的路径
+
+        Args:
+            scope: Scope 实例
+
+        Returns:
+            Scope 路径
+        """
+        current = f"{scope.scope_class_id}:{scope.scope_instance_id}"
+        if scope.parent is None:
+            return current
+
+        parent_path = self._get_scope_path(scope.parent)
+        return f"{current}/{parent_path}"
 
     def get_or_create(
         self,
@@ -103,22 +123,18 @@ class ScopeManager:
             scope_class_name: Scope 类名（如 "GlobalScope"）
             scope_class_id: Scope 类型 ID（用户在配置中定义，如 "global", "my_scope"）
             scope_instance_id: Scope 实例 ID
-            parent: 父 Scope（注意：相同的 (scope_class_id, scope_instance_id) 会复用同一实例，即使 parent 不同）
+            parent: 父 Scope
             **kwargs: 传递给 Scope 构造函数的额外参数
 
         Returns:
             Scope 实例
         """
-        # 构建缓存 key（不包含 parent）
-        cache_key = self._build_cache_key(scope_class_id, scope_instance_id)
+        # 构建完整的 scope path 作为缓存 key
+        scope_path = self._build_scope_path(scope_class_id, scope_instance_id, parent)
 
         # 从缓存中获取
-        if cache_key in self._cache:
-            existing_scope = self._cache[cache_key]
-            # 如果 parent 不同，需要更新 parent 关系
-            if parent is not None and existing_scope not in parent.children.values():
-                parent.add_child(existing_scope)
-            return existing_scope
+        if scope_path in self._cache:
+            return self._cache[scope_path]
 
         # 创建新实例
         scope_class = self._scope_classes.get(scope_class_name)
@@ -133,7 +149,7 @@ class ScopeManager:
             parent.add_child(scope)
 
         # 缓存
-        self._cache[cache_key] = scope
+        self._cache[scope_path] = scope
 
         return scope
 
@@ -149,13 +165,13 @@ class ScopeManager:
         Args:
             scope_class_id: Scope 类型 ID
             scope_instance_id: Scope 实例 ID
-            parent: 父 Scope（已废弃，保留用于兼容性）
+            parent: 父 Scope（用于构建完整路径）
 
         Returns:
             Scope 实例，不存在则返回 None
         """
-        cache_key = self._build_cache_key(scope_class_id, scope_instance_id)
-        return self._cache.get(cache_key)
+        scope_path = self._build_scope_path(scope_class_id, scope_instance_id, parent)
+        return self._cache.get(scope_path)
 
     def clear_cache(self) -> None:
         """清空缓存"""
