@@ -551,6 +551,8 @@ class BaseStrategy(Listener):
             if target.condition:
                 try:
                     context = dict(scope._vars)
+                    context['parent'] = scope.parent
+                    context['children'] = scope.children
                     result = self._safe_eval(target.condition, context)
                     if not result:
                         continue
@@ -564,6 +566,8 @@ class BaseStrategy(Listener):
             # 求值所有字段
             output = {}
             context = dict(scope._vars)
+            context['parent'] = scope.parent
+            context['children'] = scope.children
 
             # 求值标准字段
             for field_name in ["position_usd", "position_amount", "max_position_usd"]:
@@ -763,8 +767,12 @@ class BaseStrategy(Listener):
         if not scope_config or not scope_config.vars:
             return
 
-        # 获取上下文（包含 parent 的变量）
+        # 获取上下文（包含当前 scope 的变量 + parent/children 符号）
         context = dict(scope._vars)
+
+        # 注入 parent 和 children 符号
+        context['parent'] = scope.parent
+        context['children'] = scope.children
 
         # 计算每个 var
         for var_def in scope_config.vars:
