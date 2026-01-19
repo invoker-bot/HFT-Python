@@ -3,7 +3,7 @@ Feature 0008: Strategy 数据驱动增强 - 单元测试
 
 测试内容：
 1. TargetDefinition 配置类
-2. VarDefinition / ConditionalVarDefinition 配置类
+2. VarDefinition 配置类（包含条件支持）
 3. StaticPositionsStrategy 新格式支持
 4. 表达式求值
 5. 多 Exchange 目标匹配
@@ -12,7 +12,6 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from hft.strategy.config import (
     VarDefinition,
-    ConditionalVarDefinition,
     TargetDefinition,
 )
 from hft.strategy.static_positions import (
@@ -39,28 +38,24 @@ class TestVarDefinition:
         with pytest.raises(Exception):
             VarDefinition(value="expr")  # 缺少 name
 
-
-class TestConditionalVarDefinition:
-    """ConditionalVarDefinition 配置类测试"""
-
-    def test_basic_creation(self):
-        """测试基本创建"""
-        var = ConditionalVarDefinition(
+    def test_conditional_fields(self):
+        """测试条件字段"""
+        var = VarDefinition(
+            name="center_price",
             value="mid_price",
             on="rsi < 30",
-            default=100.0,
+            initial_value=100.0,
         )
+        assert var.name == "center_price"
         assert var.value == "mid_price"
         assert var.on == "rsi < 30"
-        assert var.default == 100.0
+        assert var.initial_value == 100.0
 
-    def test_default_value_none(self):
-        """测试默认值为 None"""
-        var = ConditionalVarDefinition(
-            value="mid_price",
-            on="rsi < 30",
-        )
-        assert var.default is None
+    def test_default_conditional_fields(self):
+        """测试条件字段默认值"""
+        var = VarDefinition(name="test", value="1")
+        assert var.on is None
+        assert var.initial_value is None
 
 
 class TestTargetDefinition:
@@ -151,8 +146,8 @@ class TestStaticPositionsStrategyConfig:
         )
         assert config.requires == ["equation", "rsi"]
 
-    def test_with_vars(self):
-        """测试 vars 配置"""
+    def test_with_vars_list(self):
+        """测试 vars list 配置"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
@@ -163,20 +158,22 @@ class TestStaticPositionsStrategyConfig:
         assert len(config.vars) == 1
         assert config.vars[0].name == "ratio"
 
-    def test_with_vars(self):
-        """测试 vars 配置"""
+    def test_with_conditional_vars(self):
+        """测试带条件的 vars 配置"""
         config = StaticPositionsStrategyConfig(
             name="test",
-            vars={
-                "center_price": ConditionalVarDefinition(
+            vars=[
+                VarDefinition(
+                    name="center_price",
                     value="mid_price",
                     on="rsi < 30",
+                    initial_value=100.0,
                 ),
-            },
+            ],
             targets=[],
         )
-        assert "center_price" in config.vars
-        assert config.vars["center_price"].value == "mid_price"
+        assert len(config.vars) == 1
+        assert config.vars[0].on == "rsi < 30"
 
 
 class TestStaticPositionsStrategyTargetMatching:
@@ -458,20 +455,19 @@ class TestStaticPositionsStrategyVars:
         assert context["ratio"] == 0.6
         assert context["target"] == 600  # 0.6 * 1000
 
-    def test_vars_triggered(self):
+    def test_conditional_vars_triggered(self):
         """测试条件变量触发"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="25"),
-            ],
-            vars={
-                "signal": ConditionalVarDefinition(
+                VarDefinition(
+                    name="signal",
                     value="1",
                     on="rsi < 30",
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
             targets=[],
         )
         strategy = StaticPositionsStrategy(config)
@@ -482,20 +478,19 @@ class TestStaticPositionsStrategyVars:
         # rsi=25 < 30, 所以应该触发
         assert context["signal"] == 1
 
-    def test_vars_not_triggered(self):
+    def test_conditional_vars_not_triggered(self):
         """测试条件变量未触发"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="50"),
-            ],
-            vars={
-                "signal": ConditionalVarDefinition(
+                VarDefinition(
+                    name="signal",
                     value="1",
                     on="rsi < 30",
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
             targets=[],
         )
         strategy = StaticPositionsStrategy(config)
@@ -503,23 +498,22 @@ class TestStaticPositionsStrategyVars:
 
         context = strategy.collect_context_vars("okx/main", "BTC/USDT:USDT")
 
-        # rsi=50 >= 30, 所以不触发，使用默认值
+        # rsi=50 >= 30, 所以不触发，使用初始值
         assert context["signal"] == 0
 
-    def test_vars_state_persistence(self):
+    def test_conditional_vars_state_persistence(self):
         """测试条件变量状态持久化"""
         config = StaticPositionsStrategyConfig(
             name="test",
             vars=[
                 VarDefinition(name="rsi", value="25"),
-            ],
-            vars={
-                "center_price": ConditionalVarDefinition(
+                VarDefinition(
+                    name="center_price",
                     value="100.0",
                     on="rsi < 30",
-                    default=None,
+                    initial_value=None,
                 ),
-            },
+            ],
             targets=[],
         )
         strategy = StaticPositionsStrategy(config)
@@ -529,8 +523,7 @@ class TestStaticPositionsStrategyVars:
         context1 = strategy.collect_context_vars("okx/main", "BTC/USDT:USDT")
         assert context1["center_price"] == 100.0
 
-        # 修改 config 中的 rsi 表达式不太现实，所以直接修改状态
-        # 模拟第二次调用，条件不满足，应该保持上次值
+        # 修改 config 中的 rsi 表达式
         config.vars[0] = VarDefinition(name="rsi", value="50")
         context2 = strategy.collect_context_vars("okx/main", "BTC/USDT:USDT")
 

@@ -108,8 +108,8 @@ class AppCore(Listener):
         self.strategy_group = StrategyGroup()
         self.add_child(self.strategy_group)
 
-        # 5. 交易执行器（从配置加载）
-        executor_config = BaseExecutorConfig.load(config.executor)
+        # 5. 交易执行器（从配置路径加载）
+        executor_config = config.executor.instance
         self.executor: BaseExecutor = executor_config.instance
         self.add_child(self.executor)
 

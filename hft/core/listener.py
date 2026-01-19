@@ -70,7 +70,14 @@ class Listener(ABC):
     类属性：
     - lazy_start: 是否延迟启动（True 时不跟随父节点自动启动，需要显式调用 start()）
     """
-    __pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index", "root")
+    # pickle 排除列表：不序列化的属性
+    # - _parent: 弱引用，由 get_or_create 重建
+    # - _children: 由 get_or_create 重建，不保存整棵树
+    # - _background_task: asyncio.Task 不可序列化
+    # - _alock: asyncio.Lock 不可序列化
+    # - _class_index: 由 add_child 重建
+    # - root: 缓存属性，由 parent 构建
+    __pickle_exclude__ = ("_parent", "_children", "_background_task", "_alock", "_class_index", "root")
 
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
@@ -105,6 +112,8 @@ class Listener(ABC):
         # 类索引: Type -> list[(weakref, depth)]
         # 只在根节点维护，用于快速按类查找子监听器
         self._class_index: dict[type, list[tuple[weakref.ReferenceType['Listener'], int]]] = defaultdict(list)
+        # children 由 get_or_create 重建，不从 pickle 恢复
+        self._children: dict[str, 'Listener'] = {}
 
     def __getstate__(self) -> dict:
         """
@@ -121,18 +130,17 @@ class Listener(ABC):
         从序列化数据恢复状态
 
         重新初始化不可序列化的对象（锁、任务、弱引用）。
-        恢复子监听器的父引用和类索引。
+        children 不再从 pickle 恢复，而是通过 get_or_create 重建。
         """
         # Restore basic attributes
         self.__dict__.update(state)
 
-        # Reinitialize non-serializable objects
+        # Reinitialize non-serializable objects (including empty _children)
         self.initialize()
-        # Restore children (note: subclasses must handle actual child reconstruction)
-        for child in self._children.values():
-            child.parent = self
-            # 重建类索引
-            self._register_to_class_index(child, relative_depth=1)
+
+        # NOTE: children 现在不保存了，由 get_or_create 机制重建
+        # 子类可以在 on_reload 中手动重建 children
+
         self.on_reload(state)
 
     def on_save(self):

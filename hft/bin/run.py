@@ -41,7 +41,10 @@ async def balance_async(app_name: str):
         app_config = AppConfig.load(app_name)
         console.print(f"[green]Loaded app config: {app_config.class_name}[/green]")
 
-        if not app_config.exchanges:
+        # 获取 exchange 配置映射
+        exchange_id_map = app_config.exchanges.get_id_map()
+
+        if not exchange_id_map:
             console.print("[yellow]No exchanges configured in app config[/yellow]")
             return
 
@@ -56,8 +59,10 @@ async def balance_async(app_name: str):
         free = 0.0
         total = 0.0
         # Load each exchange and fetch balances
-        for exchange_name, exchange in app_config.exchange_instances.items():
-            console.print(f"[cyan]Fetching balance from {exchange_name}...[/cyan]")
+        for exchange_id, exchange_path in exchange_id_map.items():
+            exchange_config = exchange_path.instance
+            exchange = exchange_config.instance
+            console.print(f"[cyan]Fetching balance from {exchange_id}...[/cyan]")
             try:
                 balance_data = await exchange.fetch_balance()
                 # Display balances for currencies with non-zero total
@@ -68,7 +73,7 @@ async def balance_async(app_name: str):
                             _free = amounts.get('free', 0)
                             _used = amounts.get('used', 0)
                             table.add_row(
-                                exchange_name,
+                                exchange_id,
                                 currency,
                                 f"{_free:.8f}",
                                 f"{_used:.8f}",
@@ -78,9 +83,9 @@ async def balance_async(app_name: str):
                             used += _used
                             total += _total
             except FileNotFoundError:
-                console.print(f"[red]Exchange config not found: {exchange_name}[/red]")
+                console.print(f"[red]Exchange config not found: {exchange_id}[/red]")
             except Exception as e:
-                console.print(f"[red]Error fetching balance from {exchange_name}: {str(e)}[/red]")
+                console.print(f"[red]Error fetching balance from {exchange_id}: {str(e)}[/red]")
             finally:
                 # Always close the exchange connection
                 await exchange.close()

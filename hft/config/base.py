@@ -6,6 +6,7 @@
 - YAML 文件读写
 - 配置类的自动发现和注册
 """
+import os
 import textwrap
 import inspect
 from abc import abstractmethod
@@ -155,12 +156,14 @@ class BaseConfig(BaseModel, Generic[T]):
         """获取配置文件的绝对路径"""
         return path.join(cwd, self.class_dir, f"{self.path}.yaml")
 
-    def save(self, cwd: str = '.') -> None:
+    def save(self, cwd: str = None) -> None:
         """
         保存配置到 YAML 文件
 
         自动创建目录结构，并在数据中添加 class_name 用于加载时识别类型。
         """
+        if cwd is None:
+            cwd = os.getenv('HFT_ROOT_PATH', '.')
         data = self.model_dump(mode="json", exclude={"path"})
         data["class_name"] = self.class_name  # add class name for loading
         makedirs(path.dirname(self.get_abs_path(cwd)), exist_ok=True)
@@ -168,7 +171,7 @@ class BaseConfig(BaseModel, Generic[T]):
             yaml.safe_dump(data, f)
 
     @classmethod
-    def load(cls, pathname: str, cwd: str = '.') -> Self:
+    def load(cls, pathname: str, cwd: str = None) -> Self:
         """
         从 YAML 文件加载配置
 
@@ -178,6 +181,8 @@ class BaseConfig(BaseModel, Generic[T]):
         Returns:
             加载的配置实例
         """
+        if cwd is None:
+            cwd = os.getenv('HFT_ROOT_PATH', '.')
         path_ = path.join(cwd, cls.class_dir, f"{pathname}.yaml")
         with open(path_, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
@@ -187,13 +192,15 @@ class BaseConfig(BaseModel, Generic[T]):
         return constructor(**data)
 
     @classmethod
-    def list_configs(cls, cwd: str = '.') -> list[str]:
+    def list_configs(cls, cwd: str = None) -> list[str]:
         """
         列出所有已保存的配置文件
 
         Returns:
             配置文件路径名列表
         """
+        if cwd is None:
+            cwd = os.getenv('HFT_ROOT_PATH', '.')
         pattern = path.join(cwd, cls.class_dir, "**", "*.yaml")
         files = glob(pattern, recursive=True)
         result = []

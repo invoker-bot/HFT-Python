@@ -748,7 +748,14 @@ class TestClassIndexSerialization:
         assert '_class_index' not in state
 
     def test_class_index_rebuilt_on_setstate(self):
-        """Class index should be rebuilt when restoring from pickle."""
+        """
+        Class index is initialized empty after __setstate__.
+
+        NOTE: Children are NOT restored from pickle (per cache dict pattern).
+        They should be rebuilt via get_or_create when reconstructing the tree.
+        This test verifies that __setstate__ properly initializes an empty
+        class index (ready for children to be added later).
+        """
         root = MockListener(name="root")
         executor = MockMarketExecutor(name="executor")
         root.add_child(executor)
@@ -759,7 +766,14 @@ class TestClassIndexSerialization:
         new_root = MockListener(name="new_root")
         new_root.__setstate__(state)
 
-        # Class index should be rebuilt
+        # Class index should be initialized but empty (no children restored)
+        # Children are rebuilt via get_or_create, not from pickle
+        result = new_root.find_child_by_class(MockMarketExecutor)
+        assert result is None  # No children restored from pickle
+
+        # Verify we can add children and they appear in class index
+        new_executor = MockMarketExecutor(name="new_executor")
+        new_root.add_child(new_executor)
         result = new_root.find_child_by_class(MockMarketExecutor)
         assert result is not None
-        assert result.name == "executor"
+        assert result.name == "new_executor"

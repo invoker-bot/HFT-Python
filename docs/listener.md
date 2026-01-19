@@ -152,7 +152,13 @@ class ExchangeBalanceListener(GroupListener):
 
     def create_dynamic_child(self, name: str, param: Any) -> Listener:
         """创建 child 实例（必须实现）"""
-        return ExchangeBalanceWatchListener(name=name, ccxt_instance_key=param["key"])
+        # Listener 构造函数不再接收运行时参数；推荐把参数编码到 name 中，或通过 root.config 查找。
+        # 这里示例把 key 写入 name：watch-{key}，child 通过解析 name 获取 key。
+        #
+        # 注意：实际实现应通过 get_or_create(cache, ...) 来确保：
+        # 1) 相同 (cls, name) 复用同一实例；2) child.name 被正确设置；3) parent/children 链接被重建。
+        child = get_or_create(cache=self.root.listener_cache, cls=ExchangeBalanceWatchListener, name=name, parent=self)
+        return child
 ```
 
 ### 同步逻辑
@@ -164,28 +170,74 @@ class ExchangeBalanceListener(GroupListener):
 # 3. 创建缺少的 children
 ```
 
-**重要**：`create_dynamic_child()` 的 `name` 参数必须传给子类，确保与 `sync_children_params()` 的 key 一致。
+**重要**：`create_dynamic_child()` 返回的 child 必须具备稳定的 `name`（与 `sync_children_params()` 的 key 一致），以保证：
 
-## 序列化
+- 与 Listener cache 的 key 对齐（可复用/可恢复）
+- 可用 `name` 作为配置查找键（常见：`self.root.config...get_id_map()[self.name]`）
 
-Listener 支持 pickle 序列化，用于状态持久化。
+## 持久化与恢复（Listener cache）
 
-### 排除项
+为降低耦合并支持“从 pickle 恢复运行态”，Listener 的持久化不再保存整棵树，而是保存一个**实例缓存**：
 
 ```python
-__pickle_exclude__ = ("_parent", "_background_task", "_alock", "_class_index", "root")
+# cache: {listener_key: listener_instance}
+cache = {f"{ClassName}-{name}": instance}
 ```
 
-### 恢复逻辑
+`cache` 的生命周期通常由 `AppCore` 管理；实现上可将其挂在 `AppCore`/`root` 上（例如 `root.listener_cache`），或由启动器显式传入。
+
+其中 `listener_key` 的生成必须稳定、无歧义。至少应包含：
+
+- Listener 的类型（类名；更稳妥可使用“全限定名”）
+- Listener 的 `name`（业务 ID；通常与配置 ID 对齐）
+
+### 为什么不持久化 children
+
+children 是运行时可推导结构（由配置与调度逻辑决定），持久化 children 会带来：
+
+- pickle 体积膨胀与循环引用风险
+- “恢复后结构滞后”：配置/代码变更后，旧 children 结构可能不再合法
+- 组件强耦合：构造函数必须携带大量依赖才能重建图结构
+
+因此：**pickle 只保存 Listener 实例的最小状态**，树结构在启动时重建。
+
+### `get_or_create(cache, cls, name, parent=None)` 语义
+
+`get_or_create` 是恢复/构建 Listener 树的唯一入口（核心要求：幂等 + O(1) 查找）：
+
+1. 根据 `(cls, name)` 生成 `listener_key`
+2. 若 `listener_key` 已存在于 `cache`：直接复用该实例
+3. 否则：`cls()` 创建新实例并放入 `cache`
+4. 若传入了 `parent`：设置 parent/children 关系（通常通过 `parent.add_child(child)`）
+5. 对于不可 pickle 的对象（锁、task、logger handler 等），应在 `initialize()` 或 `on_start()` 内重建
+
+### 恢复流程（严格顺序）
+
+1. 加载 AppConfig（`AppConfigPath.instance`）
+2. 若存在 pickle：加载得到 `cache`；否则 `cache = {}`
+3. `app_core = get_or_create(cache, AppCore, "app/<name>")`
+4. 将**唯一的** `AppConfig` 注入到 `app_core.config`
+5. 启动 AppCore，由 AppCore/GroupListener 在 `on_start()` 或 `on_tick()` 中用 `get_or_create` 重建 children
+6. 周期性将 `cache` 重新 pickle（不序列化树链接）
+
+### Listener 获取配置（禁止构造函数注入）
+
+除 `AppCore` 外，其他 Listener 不应持有“全局配置对象”；统一通过 `self.root.config` 获取：
+
+- Exchange Listener：通过 `self.root.config.exchanges.get_id_map(...)[self.name].instance` 获取 `ExchangeConfig`
+- Strategy/Executor Listener：通过 `self.root.config.strategy.instance` / `self.root.config.executor.instance` 获取配置
+
+出于性能考虑，允许在 Listener 内部使用 `cached_property` 缓存一次解析结果（需确保 name/配置不会在运行中变更）。
 
 ```python
-def __setstate__(self, state):
-    self.__dict__.update(state)
-    self.initialize()  # 重建不可序列化对象
-    # 恢复子节点的 parent 引用和类索引
-    for child in self._children.values():
-        child.parent = self
-        self._register_to_class_index(child, relative_depth=1)
+__pickle_exclude__ = (
+    "_parent",
+    "_children",         # 树结构运行时重建
+    "_background_task",
+    "_alock",
+    "_class_index",
+    "root",
+)
 ```
 
 ## 最佳实践
@@ -193,13 +245,12 @@ def __setstate__(self, state):
 ### 构造函数
 
 ```python
-# Good: 只接受配置或简单值
+# Good: 无参构造；运行时信息由 name/root.config 推导
 class MyListener(Listener):
-    def __init__(self, config: MyConfig):
-        super().__init__(config.name, config.interval)
-        self.config = config
+    def __init__(self):
+        super().__init__()
 
-# Bad: 传入其他 Listener
+# Bad: 在构造函数里传入其他 Listener（强耦合 + 不利于 pickle 恢复）
 class MyListener(Listener):
     def __init__(self, exchange: BaseExchange):  # 错误！
         self.exchange = exchange
@@ -208,7 +259,7 @@ class MyListener(Listener):
 ### 获取依赖
 
 ```python
-# Good: 通过树形结构获取
+# Good: 通过树形结构获取（parent/root），或通过 root.config 查找
 @property
 def exchange(self) -> "BaseExchange":
     return self.parent  # 或 self.root.exchange_group.get(name)

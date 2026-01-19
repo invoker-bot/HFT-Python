@@ -75,16 +75,23 @@ class ExchangeGroup(Listener):
     async def on_tick(self):
         # Placeholder for periodic tasks related to exchange groups
         app: 'AppCore' = self.root
+
+        # 获取当前应该存在的 exchange 配置 ID 映射
+        exchange_id_map = app.config.exchanges.get_id_map()
+
+        # 移除不再需要的 exchange
         for exchange in list(self.children.values()):
-            if exchange.name not in app.config.exchanges:
+            if exchange.name not in exchange_id_map:
                 await self.remove_exchange(exchange)
-        for exchange_name in app.config.exchanges:
-            if exchange_name not in self.children:
+
+        # 添加新的 exchange
+        for exchange_id, exchange_path in exchange_id_map.items():
+            if exchange_id not in self.children:
                 try:
-                    exchange_config = BaseExchangeConfig.load(exchange_name)
+                    exchange_config = exchange_path.instance
                     exchange_instance: BaseExchange = exchange_config.instance
                 except InvalidToken:
-                    self.logger.error("Failed to decrypt exchange config file for %s, you should check password or config file.", exchange_name)
+                    self.logger.error("Failed to decrypt exchange config file for %s, you should check password or config file.", exchange_id)
                     return True  # 配置文件解密失败，跳过加载该交易所
                 await self.add_exchange(exchange_instance)
 

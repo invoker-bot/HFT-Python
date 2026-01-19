@@ -100,6 +100,9 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
                 if isinstance(item, dict):
                     # 标准格式：已经是 dict，直接保留
                     normalized.append(item)
+                elif isinstance(item, ExecutorVarDefinition):
+                    # ExecutorVarDefinition 实例，转换为 dict
+                    normalized.append(item.model_dump())
                 elif isinstance(item, str):
                     # 简化格式：字符串 "name=value"
                     if '=' in item:

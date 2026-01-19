@@ -5,13 +5,13 @@ ConfigPath - 配置路径系统
 """
 import os
 from typing import ClassVar, Optional, TYPE_CHECKING, Any
-from functools import cached_property
+from functools import cached_property, lru_cache
 from pathlib import Path
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
 
 if TYPE_CHECKING:
-    from .config import BaseConfig
+    from ...config.base import BaseConfig
 
 
 class BaseConfigPath:
@@ -86,9 +86,17 @@ class BaseConfigPath:
         Returns:
             配置实例
         """
-        from .config import BaseConfig
+        import yaml
+        from ..config.base import BaseConfig
+
         file_path = self._get_file_path()
-        return BaseConfig.load(str(file_path))
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        class_name = data.pop("class_name")
+        data["path"] = self.name
+        constructor = BaseConfig.all_classes()[class_name]
+        return constructor(**data)
 
     def save(self, config: 'BaseConfig') -> None:
         """
@@ -97,10 +105,16 @@ class BaseConfigPath:
         Args:
             config: 配置实例
         """
+        import yaml
+
         file_path = self._get_file_path()
         # 确保目录存在
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        config.save(str(file_path))
+
+        data = config.model_dump(mode="json", exclude={"path"})
+        data["class_name"] = config.class_name
+        with open(file_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f)
 
     @cached_property
     def instance(self) -> 'BaseConfig':
@@ -136,25 +150,52 @@ class ExchangeConfigPath(BaseConfigPath):
     class_dir: ClassVar[str] = "conf/exchange/"
 
 
+@lru_cache(maxsize=1)
+def _scan_exchange_config_ids() -> tuple[str, ...]:
+    """
+    扫描 conf/exchange 目录，返回所有可用的 exchange 配置 ID
+
+    Returns:
+        配置 ID 元组（不含 .yaml 扩展名）
+    """
+    from glob import glob
+
+    root = os.getenv('HFT_ROOT_PATH', '.')
+    pattern = os.path.join(root, 'conf/exchange', '**', '*.yaml')
+    files = glob(pattern, recursive=True)
+
+    result = []
+    base_dir = os.path.join(root, 'conf/exchange')
+    for file in files:
+        # 获取相对于 conf/exchange 的路径，去掉 .yaml 扩展名
+        rel_path = os.path.relpath(file, base_dir)
+        config_id = os.path.splitext(rel_path)[0]
+        # 统一使用 / 作为路径分隔符
+        config_id = config_id.replace(os.sep, '/')
+        result.append(config_id)
+
+    return tuple(sorted(result))
+
+
 class ExchangeConfigPathGroup:
     """
     Exchange 配置路径组
 
     特性：
-    - 管理多个 Exchange 配置路径
-    - 支持基于 id_filter 的过滤
-    - 使用 younoyou 包实现过滤逻辑
+    - 支持 selector 语义（*、!、通配）
+    - 扫描并展开全部 exchange config id
+    - 支持运行时过滤和分组
     - 支持 Pydantic 验证
     """
 
-    def __init__(self, paths: list[str]):
+    def __init__(self, selectors: list[str]):
         """
         初始化配置路径组
 
         Args:
-            paths: 配置文件名列表
+            selectors: selector 列表，支持 *、!pattern、pattern
         """
-        self.paths = paths
+        self.selectors = selectors
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -186,58 +227,175 @@ class ExchangeConfigPathGroup:
         if isinstance(value, cls):
             return value
         if isinstance(value, list):
-            return cls(paths=value)
+            return cls(selectors=value)
         raise ValueError(f"Cannot convert {type(value)} to {cls.__name__}")
+
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _apply_selectors(selectors: tuple[str, ...]) -> frozenset[str]:
+        """
+        应用 selector 规则，返回匹配的配置 ID 集合
+
+        Args:
+            selectors: selector 元组（必须是 tuple 以支持缓存）
+
+        Returns:
+            匹配的配置 ID 集合
+        """
+        from fnmatch import fnmatch
+
+        # 获取所有可用的配置 ID
+        all_ids = set(_scan_exchange_config_ids())
+
+        # 规则 1: 空列表等价于 ["*"]
+        if not selectors:
+            return frozenset(all_ids)
+
+        # 规则 2: 全部为 exclude，等价于 ["*"] + selectors
+        if all(s.startswith("!") for s in selectors):
+            selectors = ("*",) + selectors
+
+        # 规则 3: 按顺序应用 selector
+        result = set()
+        for selector in selectors:
+            if selector.startswith("!"):
+                # exclude: 从结果集中移除
+                pattern = selector[1:]
+                to_remove = {id_ for id_ in result if fnmatch(id_, pattern)}
+                result -= to_remove
+            else:
+                # include: 加入结果集
+                pattern = selector
+                to_add = {id_ for id_ in all_ids if fnmatch(id_, pattern)}
+                result |= to_add
+
+        return frozenset(result)
 
     def get_id_map(self, id_filter: str = "") -> dict[str, ExchangeConfigPath]:
         """
         根据 id_filter 过滤并返回 exchange 配置路径映射
 
         Args:
-            id_filter: 过滤规则（逗号分隔）
-                - 空字符串: 匹配所有
-                - "*": 匹配所有
+            id_filter: 过滤规则（逗号分隔的 selector）
+                - 空字符串或 "*": 匹配所有
                 - "!xxx": 排除 xxx
-                - 可以组合: "okx,binance,!okx/test"
+                - 可以组合: "okx/*,binance/*,!okx/test"
 
         Returns:
-            {exchange_path: ExchangeConfigPath}
+            {exchange_config_id: ExchangeConfigPath}
         """
-        from functools import lru_cache
+        # 先应用 selectors 得到基础集合
+        base_ids = self._apply_selectors(tuple(self.selectors))
+
+        # 再应用 id_filter
+        if not id_filter:
+            id_filter = "*"
+
+        filter_selectors = tuple(s.strip() for s in id_filter.split(",") if s.strip())
+        filtered_ids = self._apply_selectors(filter_selectors)
+
+        # 取交集
+        final_ids = base_ids & filtered_ids
+
+        return {id_: ExchangeConfigPath(id_) for id_ in sorted(final_ids)}
+
+    def get_grouped_id_map(
+        self, id_filter: str = "", group_filter: str = ""
+    ) -> dict[str, list[str]]:
+        """
+        根据 id_filter 和 group_filter 过滤并返回分组的配置 ID 映射
+
+        Args:
+            id_filter: 配置 ID 过滤规则
+            group_filter: 分组过滤规则（应用于 exchange_class_id）
+
+        Returns:
+            {exchange_class_id: [exchange_config_id, ...]}
+        """
+        # 获取过滤后的配置 ID
+        id_map = self.get_id_map(id_filter)
+
+        # 按 exchange_class_id 分组
+        grouped: dict[str, list[str]] = {}
+        for config_id in id_map.keys():
+            exchange_class_id = config_id.split("/", 1)[0]
+            if exchange_class_id not in grouped:
+                grouped[exchange_class_id] = []
+            grouped[exchange_class_id].append(config_id)
+
+        # 应用 group_filter
+        if not group_filter:
+            group_filter = "*"
+
+        if group_filter == "*":
+            return grouped
+
+        filter_selectors = tuple(s.strip() for s in group_filter.split(",") if s.strip())
+
+        # 使用 _filter_ids，但应用于 group keys
+        all_groups = frozenset(grouped.keys())
+        result_groups = self._filter_ids(all_groups, filter_selectors)
+
+        return {k: v for k, v in grouped.items() if k in result_groups}
+
+    def get_grouped_map(
+        self, id_filter: str = "", group_filter: str = ""
+    ) -> dict[str, list[ExchangeConfigPath]]:
+        """
+        根据 id_filter 和 group_filter 过滤并返回分组的配置路径映射
+
+        Args:
+            id_filter: 配置 ID 过滤规则
+            group_filter: 分组过滤规则（应用于 exchange_class_id）
+
+        Returns:
+            {exchange_class_id: [ExchangeConfigPath, ...]}
+        """
+        grouped_id_map = self.get_grouped_id_map(id_filter, group_filter)
+        return {
+            k: [ExchangeConfigPath(id_) for id_ in v]
+            for k, v in grouped_id_map.items()
+        }
+
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _filter_ids(all_ids: frozenset[str], selectors: tuple[str, ...]) -> frozenset[str]:
+        """
+        对给定的 ID 集合应用 selector 过滤
+
+        Args:
+            all_ids: 所有可用的 ID 集合（frozenset 以支持缓存）
+            selectors: selector 元组（必须是 tuple 以支持缓存）
+
+        Returns:
+            过滤后的 ID 集合
+        """
         from fnmatch import fnmatch
 
-        @lru_cache(maxsize=128)
-        def _cached_get_id_map(filter_str: str) -> dict[str, ExchangeConfigPath]:
-            # 解析过滤规则
-            if not filter_str or filter_str == "*":
-                # 匹配所有
-                return {path: ExchangeConfigPath(path) for path in self.paths}
+        # 规则 1: 空列表等价于 ["*"]
+        if not selectors:
+            return all_ids
 
-            # 解析过滤规则
-            filters = [f.strip() for f in filter_str.split(",") if f.strip()]
-            includes = [f for f in filters if not f.startswith("!")]
-            excludes = [f[1:] for f in filters if f.startswith("!")]
+        # 规则 2: 全部为 exclude，等价于 ["*"] + selectors
+        if all(s.startswith("!") for s in selectors):
+            selectors = ("*",) + selectors
 
-            result = {}
-            for path in self.paths:
-                # 检查是否匹配 include 规则
-                if includes:
-                    matched = any(fnmatch(path, pattern) for pattern in includes)
-                    if not matched:
-                        continue
+        # 规则 3: 按顺序应用 selector
+        result = set()
+        for selector in selectors:
+            if selector.startswith("!"):
+                # exclude: 从结果集中移除
+                pattern = selector[1:]
+                to_remove = {id_ for id_ in result if fnmatch(id_, pattern)}
+                result -= to_remove
+            else:
+                # include: 加入结果集
+                pattern = selector
+                to_add = {id_ for id_ in all_ids if fnmatch(id_, pattern)}
+                result |= to_add
 
-                # 检查是否匹配 exclude 规则
-                if excludes:
-                    excluded = any(fnmatch(path, pattern) for pattern in excludes)
-                    if excluded:
-                        continue
-
-                result[path] = ExchangeConfigPath(path)
-
-            return result
-
-        return _cached_get_id_map(id_filter)
+        return frozenset(result)
 
     def __repr__(self) -> str:
-        return f"ExchangeConfigPathGroup(paths={self.paths!r})"
+        return f"ExchangeConfigPathGroup(selectors={self.selectors!r})"
 

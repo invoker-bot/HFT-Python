@@ -2,7 +2,7 @@
 缓存监听器模块
 
 提供应用状态的持久化功能：
-- 定期将应用状态序列化到磁盘
+- 定期将应用状态序列化到磁盘（cache dict 模式）
 - 支持从缓存文件恢复应用状态
 """
 import asyncio
@@ -10,10 +10,11 @@ import pickle
 from os import makedirs, path, replace
 from collections import Counter
 from functools import cached_property
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Dict, Any
 from rich.console import Console
 from ..._version import __version__
 from ..listener import Listener, ListenerState
+from ..listener_cache import ListenerCache, build_cache_key
 
 if TYPE_CHECKING:
     from .base import AppCore
@@ -23,12 +24,15 @@ class CacheListener(Listener):
     """
     缓存监听器
 
-    定期将整个应用状态（包括所有子监听器）保存到磁盘，
+    定期将应用状态（cache dict）保存到磁盘，
     支持在应用重启后从缓存恢复状态。
+
+    缓存格式为 {cache_key: state_dict}，每个 Listener 单独序列化，
+    不保存 children，由 get_or_create 机制重建树结构。
 
     缓存文件路径由 AppConfig.data_path 指定。
     """
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "cache_file")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "cache_file", "_listener_cache")
 
     def __init__(self, interval: float = 300.0):
         """
@@ -38,6 +42,11 @@ class CacheListener(Listener):
             interval: 保存间隔（秒），默认 5 分钟
         """
         super().__init__(interval=interval)
+        self._listener_cache = ListenerCache()
+
+    def initialize(self):
+        super().initialize()
+        self._listener_cache = ListenerCache()
 
     @cached_property
     def cache_file(self) -> str:
@@ -64,17 +73,24 @@ class CacheListener(Listener):
         异步保存当前状态到缓存文件
 
         优化策略：
-        1. 在主线程中序列化为 bytes（CPU 密集但通常较快）
-        2. 使用 asyncio.to_thread() 将文件 I/O 放到线程池
-        3. 使用临时文件 + 原子重命名，防止写入中断导致文件损坏
+        1. 收集所有 Listener 的状态到 cache dict（不含 children）
+        2. 序列化 cache dict 为 bytes
+        3. 使用 asyncio.to_thread() 将文件 I/O 放到线程池
+        4. 使用临时文件 + 原子重命名，防止写入中断导致文件损坏
         """
         try:
-            # 序列化（CPU 密集型，但通常比 I/O 快）
-            data = pickle.dumps(self.root, protocol=pickle.HIGHEST_PROTOCOL)
+            # 收集所有 Listener 状态
+            cache_dict = self._listener_cache.collect(self.root)
+
+            # 序列化 cache dict（CPU 密集型，但通常比 I/O 快）
+            data = pickle.dumps(cache_dict, protocol=pickle.HIGHEST_PROTOCOL)
 
             # 异步写入文件
             await asyncio.to_thread(self._write_cache_file, data)
-            self.logger.info("Cache saved to %s (%d bytes)", self.cache_file, len(data))
+            self.logger.info(
+                "Cache saved to %s (%d bytes, %d listeners)",
+                self.cache_file, len(data), len(cache_dict)
+            )
         except Exception as e:
             self.logger.error("Failed to save cache to %s: %s", self.cache_file, e, exc_info=True)
 
@@ -96,24 +112,23 @@ class CacheListener(Listener):
         replace(temp_file, cache_file)
 
     @classmethod
-    def load_cache(cls, cache_file: str) -> "AppCore":
+    def load_cache(cls, cache_file: str) -> Dict[str, Dict[str, Any]]:
         """
-        从缓存文件加载状态
+        从缓存文件加载状态字典
 
         Args:
             cache_file: 缓存文件路径
 
         Returns:
-            恢复的 AppCore 实例
+            缓存字典 {cache_key: state_dict}
 
         Raises:
             RuntimeError: 如果加载失败
         """
         try:
             with open(cache_file, 'rb') as f:
-                obj = pickle.load(f)
-            obj.logger.info("Cache loaded from %s", cache_file)
-            return obj
+                cache_dict = pickle.load(f)
+            return cache_dict
         except Exception as e:
             raise RuntimeError(f"Failed to load cache from {cache_file}: {e}") from e
 

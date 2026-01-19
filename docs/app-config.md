@@ -4,6 +4,17 @@
 
 App 配置是应用的入口配置文件，定义了运行时需要的所有组件。
 
+## 配置根目录：`HFT_ROOT_PATH`
+
+App/Exchange/Strategy/Executor 的配置文件统一从 `HFT_ROOT_PATH`（默认 `.`）下加载：
+
+- `conf/app/`
+- `conf/exchange/`
+- `conf/strategy/`
+- `conf/executor/`
+
+详见 [config-path.md](config-path.md)。
+
 ## 配置结构
 
 ```yaml
@@ -15,12 +26,11 @@ interval: 1.0
 health_check_interval: 60.0
 log_interval: 120.0
 
-# 组件引用（配置路径）
-exchanges:
-  - <exchange_config_path>
-strategies:
-  - <strategy_config_path>
-executor: <executor_config_path>
+# 组件引用（配置路径类型字段，见 config-path.md）
+exchanges:               # ExchangeConfigPathGroup（list[str] 选择器）
+  - <selector>
+strategy: <strategy_id>  # StrategyConfigPath（单条）
+executor: <executor_id>  # ExecutorConfigPath（单条）
 
 # 内联定义（运行时创建）
 indicators:
@@ -35,25 +45,40 @@ indicators:
 
 ### 配置路径（引用模式）
 
-**适用于**：exchanges, strategies, executor
+**适用于**：exchanges, strategy, executor
 
 这些组件有独立的配置文件，App 配置只需引用路径：
 
 ```yaml
 exchanges:
-  - okx/main        # → conf/exchange/okx/main.yaml
-  - binance/spot    # → conf/exchange/binance/spot.yaml
+  - okx/main        # → $HFT_ROOT_PATH/conf/exchange/okx/main.yaml
+  - binance/spot    # → $HFT_ROOT_PATH/conf/exchange/binance/spot.yaml
 
-strategies:
-  - keep_positions/btc   # → conf/strategy/keep_positions/btc.yaml
+strategy: keep_positions/btc   # → $HFT_ROOT_PATH/conf/strategy/keep_positions/btc.yaml
 
-executor: smart/default  # → conf/executor/smart/default.yaml
+executor: smart/default         # → $HFT_ROOT_PATH/conf/executor/smart/default.yaml
 ```
 
 **原因**：
 1. 配置复杂，需要独立文件管理
 2. 可复用，多个 App 可引用同一配置
 3. 有明确的类型和参数结构
+
+### exchanges 选择器（selector）
+
+`exchanges` 字段是 `ExchangeConfigPathGroup`（输入为 `list[str]`），支持选择器语义：
+
+```yaml
+exchanges:
+  - "*"           # 默认包含全部 exchange 配置
+  - "!okx/test"   # 排除
+  - "okx/main"    # 也可显式包含单个
+  - "binance/*"   # 支持通配
+```
+
+若只写排除规则（全部以 `!` 开头），语义等价于“先 `*` 再排除”。
+
+selector 的严格语义与缓存建议见 [config-path.md](config-path.md)。
 
 ### 内联定义（声明模式）
 
@@ -102,8 +127,7 @@ exchanges:
   - okx/spot_main
   - okx/spot_backup
 
-strategies:
-  - stablecoin/grid_positions
+strategy: stablecoin/grid_positions
 
 executor: stablecoin/grid_executor
 
@@ -141,5 +165,13 @@ ready_condition: "timeout < 60 and cv < 0.8 and range > 0.6"
 ## 相关文档
 
 - [architecture.md](architecture.md) - 整体架构
+- [config-path.md](config-path.md) - ConfigPath 类型、ExchangeConfigPathGroup 选择器与缓存
 - [indicator.md](indicator.md) - Indicator 模块
 - [executor.md](executor.md) - Executor 配置
+
+## 兼容性与迁移提示
+
+`strategies:`（列表）已被 `strategy:`（单条）取代；如需从旧配置迁移：
+
+- 将 `strategies: [a/b]` 改为 `strategy: a/b`
+- 若旧配置包含多条策略，需先合并/收敛为单条策略入口（保持 Executor 的 `strategies` namespace 仍使用列表聚合语义）

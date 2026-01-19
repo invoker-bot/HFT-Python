@@ -149,3 +149,64 @@ fair_price_min, fair_price_max，并且score = fair_price_max - fair_price_min
   ratio(Price_min) -= /delta ratio, ratio(Price_max) += /delta ratio。因此满足了ratio(Price_min) - ratio(Price_max) = 2，这样group内的所有target的ratio就被确定了，因此ratio这个变量就当成trading class的var，由于executor执行在trading class level或者trading instance level因此executor能够访问。
   
 现在根据计算出来的选中的所有group，展开得到target_pairs，最后再和之前一样展开target传回executor。
+
+现在是真正关于scope的重构规则，原则：不要改动我的任何设计，除非我显示同意。类似像yaml中的instance_id这种字段，我根本没有说过，是完完全全的错误！！！
+
+你根本不懂yaml有app、strategy、executor、exchange等等，你就用一个 ```yaml 来笼统代替，你都不知道放同yaml含义完全不同
+
+ChainMap 继承的链就是links中的顺序，我看这些机制你一点儿不理解
+
+  首先
+  >scopes:  # 注明这个字段只有app conf中才支持！！
+  >  g:  # 这个就是用户取的名字而已
+  >    class: GlobalScope (instance_id的生成方法是类自己定义的，Scope其实存储了一个类似重载机制的类方法 get_all_instance_ids<ParentScopeClass,ScopeClass>(app_core) -> list[str]:  # 根据app core的当前拓扑状态计算，在自定义中，还可以实现自定义的装饰器，将函数注册上去 @register_get_all_instance_ids(ParentScopeClass,ScopeClass)
+  >    vars:... # app中的，是scope创建时的初值
+   
+  现在讲返回的一些默认情况 ！注意为了方便scope实现中还有特殊变量，instance_id是每个scope都有的特殊变量,例如global中有特殊变量app_core，就是创建scope的时候就有，不需要vars中定义
+  (None, GlobalScope)  ["global"]  # none对于任意都只返回1个，表明是父域， 特殊变量：app_core
+  (GlobalScope, ExchangeClassScope)  ["okx","binance"]  # 由appcore的exchanges的groups决定, 特殊变量：exchange_class: str
+  (ExchangeClassScope, ExchangeScope) ["okx/a","okx/b"]  # 由appcore决定 特殊变量: exchange_id，exchange
+  (ExchangeScope, TradingPairScope) ["okx/a-ETH/USDT", "okx/b-BTC/USDT:USDT"] 特殊变量：exchange_id，symbol (典型值：ETH/USDT)
+  还有另一条路
+  (ExchangeClassScope, TradingPairClassScope)  ["okx-ETH/USDT"], 特殊变量symbol，exchange
+  (TradingPairClassScope, TradingPairScope)  ["okx/a-ETH/USDT", "okx/b-BTC/USDT:USDT"]，特殊变量exchange_id，symbol
+
+  于是在strategy文件中，开始从前往后get or create scopes
+
+  其中定义了
+
+  >links:
+  >  - id: ...
+  >    value:
+  >      - "g"
+  >      - ...  # (每个link逻辑上形成了一个LinkTree，节点是LinkNode)，从前往后遍历的时候，依次触发get_all_instance_ids，然后strategy中再次进行filter，只计算筛选出的instance_ids，所以
+  LinkNode上存放了一个 (scope_class_id,
+  scope_instance_id)，再触发全局的ScopeManager.get_or_create(...)，并根据前后顺序构建ChainMap（chainmap其实也可以是scope的cached_property），注入parent和children
+  scope，所以这才是tree的拓扑结构，每一个link才是定义了一个真实的tree。links中的link从前往后计算，并且每个link的计算tick过程有三遍：第一遍，注入所有的requires的indicator定义的变量，对于每个requires的indicator所在的ScopeClass，对于所有scopes，其Class与indicator所定义注入的Class相同的情况下，调用app_core.query_indicator(scope_vars) (就是支持indicator智能释放那个，只不过它可以通过dict，智能查找它所需要的缓存id，也是进行get or create的逻辑，还支持智能释放);第二遍，从前往后计算post为False的那些vars (定义vars的时候还增加一个参数 post: False，这个值默认是False)；第三遍，从前往后计算post为True的那些vars。注意：类似于广度优先，相同的scope只计算一次，并非每个不同child，parent都要算一次。
+
+  现在从前往后的计算就通了？
+  在strategy计算完成之后，在links的最后一个所留下来的linktree残留的scope上，计算target展开。
+  换句话说，target在trading pair instance level上展开，因此根据特殊变量它知道它对应的exchange id和symbol。因此strategy的最后一个link的最后一个scope必须是TradingPairScope类型。
+  
+  内置支持的类有GlobalScope， ExchangeClassScope， ExchangeScope， TradingPairClassScope，
+  TradingPairScope。
+
+  现在终于可以和前面一样讨论executor中的情况了（其实strategy不主动执行，上述这些scope创建的过程均来自executor的调用）由于已经是单例strategy了，因此没有必要聚合，我们知道executor拿到了strategy的执行结果，
+  其实来自target定义，是这样的
+  target:
+    vars: ...
+    condition: ...
+  收集condition为True的所有scope，在最后一条link的最后一个scope上计算vars一次，最后整个scope转给executor进行操作。
+
+  此时进入executor计算，一个明确的行为是，executor只会执行strategy传递给它的scope，然后在最后一个link的最后一个scope上执行一次和strategy相同的过程，indicator注入，vars的计算。但不同的是，对indicator注入的，计算，只计算包含返回的那些target涉及的TradingPairScope的及其祖先，例如
+  
+  -> a0 -> b0 -> c0
+  .  |      | -> c1
+  .  |
+  .  ------ b1 -> c2
+  如果仅c2被strategy传入，那么只计算(a0, b1, c2)，其它节点就不进行query indicator了，这对于节约资源，非常重要，你可以看作处理indicator是一笔不小的开销。
+
+  另外，vars的计算只在strategy返回的且Class为TradingPairScope上，也就是只有scope c2上需要计算executor的vars，由于只有一层，所以executor中的post参数是没有影响的，正如前面一样这里顶层的config直接定义了
+  vars:
+    ...
+  然后执行orders展开。

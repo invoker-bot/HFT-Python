@@ -587,9 +587,10 @@ class TestGroup2AppTick:
         config = AppConfig.load(app_config_path, cwd=str(PROJECT_ROOT))
 
         # 验证使用 demo 交易所
-        for ex_path in config.exchanges:
-            if not ex_path.startswith("demo/"):
-                pytest.skip(f"App uses non-demo exchange: {ex_path}")
+        exchange_id_map = config.exchanges.get_id_map()
+        for ex_id in exchange_id_map.keys():
+            if not ex_id.startswith("demo/"):
+                pytest.skip(f"App uses non-demo exchange: {ex_id}")
 
         # 创建 app 实例
         app = config.instance

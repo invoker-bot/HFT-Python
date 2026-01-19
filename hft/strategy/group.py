@@ -109,14 +109,22 @@ class StrategyGroup(Listener):
     async def on_start(self):
         """启动时加载配置的策略"""
         app: 'AppCore' = self.root
+
+        # 获取策略配置路径
+        strategy_path = app.config.strategy
+        strategy_name = strategy_path.name
+
+        # 移除不需要的策略
         for strategy in list(self.children.values()):
-            if strategy.name not in app.config.strategies:
+            if strategy.name != strategy_name:
                 await self.remove_strategy(strategy)
-        for strategy_name in app.config.strategies:
-            if strategy_name not in self.children:
-                strategy_config = BaseStrategyConfig.load(strategy_name)
-                strategy_instance: BaseStrategy = strategy_config.instance
-                await self.add_strategy(strategy_instance)
+
+        # 添加配置的策略
+        if strategy_name not in self.children:
+            strategy_config = strategy_path.instance
+            strategy_instance: BaseStrategy = strategy_config.instance
+            await self.add_strategy(strategy_instance)
+
         self._initialized = True  # 标记已完成初始化
 
     @property

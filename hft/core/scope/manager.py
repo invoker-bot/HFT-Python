@@ -30,6 +30,11 @@ class ScopeManager:
         # Scope 实例缓存：{scope_path: scope_instance}
         # scope_path 包含从根到当前节点的完整路径
         # 格式："scope_class_id:scope_instance_id/parent_path"
+        #
+        # 注意：虽然文档说缓存 key 是 (scope_class_id, scope_instance_id)，
+        # 但由于 ChainMap 继承机制，scope.parent 必须是唯一的，
+        # 因此实际缓存 key 必须包含 parent 信息
+        #
         # 例如：
         # - "global:global"
         # - "exchange:okx/main/global:global"

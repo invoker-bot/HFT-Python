@@ -88,6 +88,9 @@ class ScopeConfig(BaseModel):
                 if isinstance(item, dict):
                     # 标准格式：已经是 dict，直接保留
                     normalized.append(item)
+                elif isinstance(item, ScopeVarDefinition):
+                    # ScopeVarDefinition 实例，转换为 dict
+                    normalized.append(item.model_dump())
                 elif isinstance(item, str):
                     # 简化格式：字符串 "name=value"
                     if '=' in item:
@@ -182,6 +185,10 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
         default_factory=list,
         description="依赖的 Indicator ID 列表"
     )
+    vars: Union[list[VarDefinition], dict[str, str], list[str]] = Field(
+        default_factory=list,
+        description="变量列表（支持三种格式：1. list[VarDefinition] 标准格式，2. dict[str, str] 简化格式（计算顺序不确定），3. list[str] 'name=value' 格式）"
+    )
     targets: list[TargetDefinition] = Field(
         default_factory=list,
         description="目标定义列表（Feature 0008 Phase 4）"
@@ -214,6 +221,66 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
         default_factory=list,
         description="排除的交易对列表"
     )
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_vars(cls, data: Any) -> Any:
+        """
+        将 vars 的简化格式转换为标准格式
+
+        支持三种格式：
+        1. list[VarDefinition] - 标准格式（不转换）
+        2. dict[str, str] - 简化格式：{name: value}（计算顺序不确定）
+        3. list[str] - 简化格式：["name=value"]
+
+        支持混合格式：list 中可以混合标准格式和简化格式
+        """
+        if not isinstance(data, dict):
+            return data
+
+        vars_value = data.get('vars')
+        if vars_value is None:
+            return data
+
+        # 格式 2: dict[str, str] - {name: value}
+        if isinstance(vars_value, dict):
+            normalized = []
+            for name, value in vars_value.items():
+                normalized.append({
+                    'name': name,
+                    'value': str(value)
+                })
+            data['vars'] = normalized
+            return data
+
+        # 格式 1 和 3: list 格式（可能混合）
+        if isinstance(vars_value, list) and len(vars_value) > 0:
+            normalized = []
+            for item in vars_value:
+                if isinstance(item, dict):
+                    # 标准格式：已经是 dict，直接保留
+                    normalized.append(item)
+                elif isinstance(item, VarDefinition):
+                    # VarDefinition 实例，转换为 dict
+                    normalized.append(item.model_dump())
+                elif isinstance(item, str):
+                    # 简化格式：字符串 "name=value"
+                    if '=' in item:
+                        name, value = item.split('=', 1)
+                        normalized.append({
+                            'name': name.strip(),
+                            'value': value.strip()
+                        })
+                    else:
+                        # 格式错误，跳过
+                        continue
+                else:
+                    # 未知格式，跳过
+                    continue
+            data['vars'] = normalized
+            return data
+
+        return data
 
     @classmethod
     def get_class_type(cls) -> Type["BaseStrategy"]:

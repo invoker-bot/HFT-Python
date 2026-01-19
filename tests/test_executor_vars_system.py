@@ -2,7 +2,7 @@
 Feature 0010: Executor vars 系统 - 单元测试
 
 测试内容：
-1. ExecutorVarDefinition / ExecutorConditionalVarDefinition 配置类
+1. ExecutorVarDefinition 配置类（包含条件支持）
 2. vars 列表语义（按顺序计算）
 3. vars 条件触发
 4. duration 变量
@@ -11,10 +11,7 @@ Feature 0010: Executor vars 系统 - 单元测试
 import pytest
 import time
 from unittest.mock import MagicMock, patch
-from hft.executor.config import (
-    ExecutorVarDefinition,
-    ExecutorConditionalVarDefinition,
-)
+from hft.executor.config import ExecutorVarDefinition
 from hft.executor.market_executor.config import MarketExecutorConfig
 
 
@@ -35,28 +32,24 @@ class TestExecutorVarDefinition:
         with pytest.raises(Exception):
             ExecutorVarDefinition(value="expr")  # 缺少 name
 
-
-class TestExecutorConditionalVarDefinition:
-    """ExecutorConditionalVarDefinition 配置类测试"""
-
-    def test_basic_creation(self):
-        """测试基本创建"""
-        var = ExecutorConditionalVarDefinition(
+    def test_conditional_fields(self):
+        """测试条件字段"""
+        var = ExecutorVarDefinition(
+            name="center_price",
             value="mid_price",
             on="speed > 0.5",
-            default=100.0,
+            initial_value=100.0,
         )
+        assert var.name == "center_price"
         assert var.value == "mid_price"
         assert var.on == "speed > 0.5"
-        assert var.default == 100.0
+        assert var.initial_value == 100.0
 
-    def test_default_value_none(self):
-        """测试默认值为 None"""
-        var = ExecutorConditionalVarDefinition(
-            value="mid_price",
-            on="speed > 0.5",
-        )
-        assert var.default is None
+    def test_default_conditional_fields(self):
+        """测试条件字段默认值"""
+        var = ExecutorVarDefinition(name="test", value="1")
+        assert var.on is None
+        assert var.initial_value is None
 
 
 class TestExecutorConfigWithVars:
@@ -71,8 +64,9 @@ class TestExecutorConfigWithVars:
                 "target": "ratio * notional",
             },
         )
-        assert isinstance(config.vars, dict)
-        assert config.vars["ratio"] == "0.5"
+        # dict 格式会被转换为 list
+        assert isinstance(config.vars, list)
+        assert len(config.vars) == 2
 
     def test_vars_list_format(self):
         """测试 vars list 格式（新格式）"""
@@ -87,20 +81,21 @@ class TestExecutorConfigWithVars:
         assert len(config.vars) == 2
         assert config.vars[0].name == "ratio"
 
-    def test_vars(self):
-        """测试 vars"""
+    def test_vars_with_conditional(self):
+        """测试带条件的 vars"""
         config = MarketExecutorConfig(
             per_order_usd=100,
-            vars={
-                "center_price": ExecutorConditionalVarDefinition(
+            vars=[
+                ExecutorVarDefinition(
+                    name="center_price",
                     value="mid_price",
                     on="speed > 0.8",
-                    default=100.0,
+                    initial_value=100.0,
                 ),
-            },
+            ],
         )
-        assert "center_price" in config.vars
-        assert config.vars["center_price"].on == "speed > 0.8"
+        assert len(config.vars) == 1
+        assert config.vars[0].on == "speed > 0.8"
 
 
 class TestExecutorCollectContextVars:
@@ -190,19 +185,20 @@ class TestExecutorCollectContextVars:
         assert context["b"] == 20  # 10 * 2
         assert context["c"] == 30  # 20 + 10
 
-    def test_vars_triggered(self):
-        """测试 vars 触发"""
+    def test_conditional_vars_triggered(self):
+        """测试条件 vars 触发"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            vars={
-                "signal": ExecutorConditionalVarDefinition(
+            vars=[
+                ExecutorVarDefinition(
+                    name="signal",
                     value="1",
                     on="speed > 0.5",  # 条件满足
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()
@@ -218,19 +214,20 @@ class TestExecutorCollectContextVars:
 
         assert context["signal"] == 1
 
-    def test_vars_not_triggered(self):
-        """测试 vars 未触发"""
+    def test_conditional_vars_not_triggered(self):
+        """测试条件 vars 未触发"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            vars={
-                "signal": ExecutorConditionalVarDefinition(
+            vars=[
+                ExecutorVarDefinition(
+                    name="signal",
                     value="1",
                     on="speed > 0.5",  # 条件不满足
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()
@@ -244,21 +241,22 @@ class TestExecutorCollectContextVars:
             notional=1000.0,
         )
 
-        assert context["signal"] == 0  # 使用默认值
+        assert context["signal"] == 0  # 使用初始值
 
-    def test_vars_state_persistence(self):
-        """测试 vars 状态持久化"""
+    def test_conditional_vars_state_persistence(self):
+        """测试条件 vars 状态持久化"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            vars={
-                "center_price": ExecutorConditionalVarDefinition(
+            vars=[
+                ExecutorVarDefinition(
+                    name="center_price",
                     value="notional",  # 使用 notional 作为值
                     on="speed > 0.5",
-                    default=None,
+                    initial_value=None,
                 ),
-            },
+            ],
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()
@@ -282,22 +280,23 @@ class TestExecutorCollectContextVars:
             speed=0.3,  # 不触发
             notional=2000.0,  # 不同的 notional
         )
-        # 应该保持上次的值 1000.0，而不是使用 default 或新值
+        # 应该保持上次的值 1000.0，而不是使用 initial_value 或新值
         assert context2["center_price"] == 1000.0
 
-    def test_vars_duration(self):
-        """测试 vars 中的 duration 变量"""
+    def test_conditional_vars_duration(self):
+        """测试条件 vars 中的 duration 变量"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
-            vars={
-                "reset_signal": ExecutorConditionalVarDefinition(
+            vars=[
+                ExecutorVarDefinition(
+                    name="reset_signal",
                     value="1",
                     on="duration > 1",  # 使用 duration
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()
@@ -355,22 +354,21 @@ class TestExecutorCollectContextVars:
         assert context["strategies"] == strategies_data
         assert context["total_position"] == 600.0  # sum([100, 200, 300])
 
-    def test_vars_and_vars_combined(self):
-        """测试 vars 和 vars 组合使用"""
+    def test_vars_and_conditional_vars_combined(self):
+        """测试普通 vars 和条件 vars 组合使用"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
             vars=[
                 ExecutorVarDefinition(name="threshold", value="0.5"),
-            ],
-            vars={
-                "signal": ExecutorConditionalVarDefinition(
+                ExecutorVarDefinition(
+                    name="signal",
                     value="direction",
                     on="speed > threshold",  # 引用 vars 中的 threshold
-                    default=0,
+                    initial_value=0,
                 ),
-            },
+            ],
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()

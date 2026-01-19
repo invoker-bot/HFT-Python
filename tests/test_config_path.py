@@ -93,30 +93,33 @@ class TestExchangeConfigPathGroup:
 
     def test_init(self):
         """测试初始化"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "binance/spot"])
-        assert group.paths == ["okx/main", "binance/spot"]
+        group = ExchangeConfigPathGroup(selectors=["okx/main", "binance/spot"])
+        assert group.selectors == ["okx/main", "binance/spot"]
 
-    def test_get_id_map_no_filter(self):
-        """测试获取所有配置（无过滤）"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "okx/test", "binance/spot"])
+    def test_get_id_map_with_wildcard_selector(self):
+        """测试通配符 selector（扫描所有配置）"""
+        group = ExchangeConfigPathGroup(selectors=["*"])
         result = group.get_id_map("")
 
-        assert len(result) == 3
+        # 应该包含我们创建的测试配置文件
+        assert "binance/spot" in result
         assert "okx/main" in result
         assert "okx/test" in result
-        assert "binance/spot" in result
         assert isinstance(result["okx/main"], ExchangeConfigPath)
 
-    def test_get_id_map_with_wildcard(self):
-        """测试通配符过滤"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "okx/test", "binance/spot"])
-        result = group.get_id_map("*")
+    def test_get_id_map_with_include_selector(self):
+        """测试包含 selector"""
+        group = ExchangeConfigPathGroup(selectors=["okx/*"])
+        result = group.get_id_map("")
 
-        assert len(result) == 3
+        assert len(result) == 2
+        assert "okx/main" in result
+        assert "okx/test" in result
+        assert "binance/spot" not in result
 
-    def test_get_id_map_with_include(self):
-        """测试包含过滤"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "okx/test", "binance/spot"])
+    def test_get_id_map_with_id_filter(self):
+        """测试 id_filter 过滤"""
+        group = ExchangeConfigPathGroup(selectors=["*"])
         result = group.get_id_map("okx/*")
 
         assert len(result) == 2
@@ -124,19 +127,18 @@ class TestExchangeConfigPathGroup:
         assert "okx/test" in result
         assert "binance/spot" not in result
 
-    def test_get_id_map_with_exclude(self):
-        """测试排除过滤"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "okx/test", "binance/spot"])
-        result = group.get_id_map("!okx/test")
+    def test_get_id_map_with_exclude_selector(self):
+        """测试排除 selector"""
+        group = ExchangeConfigPathGroup(selectors=["*", "!okx/test"])
+        result = group.get_id_map("")
 
-        assert len(result) == 2
         assert "okx/main" in result
         assert "binance/spot" in result
         assert "okx/test" not in result
 
     def test_get_id_map_with_include_and_exclude(self):
-        """测试组合过滤（包含 + 排除）"""
-        group = ExchangeConfigPathGroup(paths=["okx/main", "okx/test", "binance/spot"])
+        """测试组合过滤（selector + id_filter）"""
+        group = ExchangeConfigPathGroup(selectors=["*"])
         result = group.get_id_map("okx/*,!okx/test")
 
         assert len(result) == 1
@@ -144,7 +146,38 @@ class TestExchangeConfigPathGroup:
         assert "okx/test" not in result
         assert "binance/spot" not in result
 
+    def test_get_grouped_id_map(self):
+        """测试分组 ID 映射"""
+        group = ExchangeConfigPathGroup(selectors=["*"])
+        result = group.get_grouped_id_map("")
+
+        # 验证分组结构
+        assert "okx" in result
+        assert "binance" in result
+        assert "demo" in result
+
+        # 验证 okx 组包含预期的配置
+        assert "okx/main" in result["okx"]
+        assert "okx/test" in result["okx"]
+
+        # 验证 binance 组包含预期的配置
+        assert "binance/spot" in result["binance"]
+
+    def test_get_grouped_map(self):
+        """测试分组配置路径映射"""
+        group = ExchangeConfigPathGroup(selectors=["*"])
+        result = group.get_grouped_map("")
+
+        # 验证分组结构
+        assert "okx" in result
+        assert "binance" in result
+        assert "demo" in result
+
+        # 验证返回的是 ExchangeConfigPath 对象
+        assert all(isinstance(path, ExchangeConfigPath) for path in result["okx"])
+        assert all(isinstance(path, ExchangeConfigPath) for path in result["binance"])
+
     def test_repr(self):
         """测试字符串表示"""
-        group = ExchangeConfigPathGroup(paths=["okx/main"])
-        assert repr(group) == "ExchangeConfigPathGroup(paths=['okx/main'])"
+        group = ExchangeConfigPathGroup(selectors=["okx/main"])
+        assert repr(group) == "ExchangeConfigPathGroup(selectors=['okx/main'])"

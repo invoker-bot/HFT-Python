@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ..base_config import BaseExecutorConfig
 from ..base import BaseExecutor
+from ...core.config_path import ExecutorConfigPath
 
 
 class RouteConfig(BaseModel):
@@ -104,9 +105,9 @@ class SmartExecutorConfig(BaseExecutorConfig):
     trades_window_seconds: float = Field(300.0, description="trades 分析窗口（秒）")
     min_trades: int = Field(50, description="最少成交笔数")
     default_executor: str = Field("as", description="默认执行器 key")
-    children: dict[str, str] = Field(
+    children: dict[str, ExecutorConfigPath] = Field(
         default_factory=dict,
-        description="子执行器配置路径 {key: config_path}",
+        description="子执行器配置路径 {key: ExecutorConfigPath}",
     )
     routes: list[RouteConfig] = Field(
         default_factory=list,

@@ -223,12 +223,10 @@ class SmartExecutor(BaseExecutor):
 
     async def _load_child_executors(self) -> None:
         """加载并初始化子执行器"""
-        from ..config import BaseExecutorConfig
-
         for key, config_path in self.config.children.items():
             try:
-                # 加载配置并创建实例
-                child_config = BaseExecutorConfig.load(config_path)
+                # 加载配置并创建实例（config_path 现在是 ExecutorConfigPath）
+                child_config = config_path.instance
                 child = child_config.instance
 
                 # 设置为 lazy_start，不独立 tick
@@ -239,7 +237,7 @@ class SmartExecutor(BaseExecutor):
                 self.add_child(child)
                 self._child_executors[key] = child
 
-                self.logger.info("Loaded child executor: %s -> %s", key, config_path)
+                self.logger.info("Loaded child executor: %s -> %s", key, config_path.name)
             except Exception as e:
                 self.logger.error("Failed to load child executor %s: %s", key, e)
 

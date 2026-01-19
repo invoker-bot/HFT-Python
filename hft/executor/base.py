@@ -745,16 +745,56 @@ class BaseExecutor(Listener):
                             var_name, e
                         )
             elif isinstance(config_vars, list):
-                # 新格式：list 格式（按顺序计算）
+                # 新格式：list 格式（按顺序计算，支持条件变量）
+                now = time.time()
                 for var_def in config_vars:
+                    var_name = var_def.name
                     try:
-                        value = self._safe_eval(var_def.value, context)
-                        if value is not None:
-                            context[var_def.name] = value
+                        # 检查是否有条件（on 字段）
+                        var_on = getattr(var_def, 'on', None)
+                        if var_on:
+                            # 条件变量
+                            state_key = (exchange_class, symbol, var_name)
+                            initial_value = getattr(var_def, 'initial_value', None)
+
+                            # 获取当前状态
+                            current_value, last_update = self._conditional_var_states.get(
+                                state_key, (initial_value, 0.0)
+                            )
+
+                            # 计算 duration（距上次更新的秒数）
+                            duration = now - last_update if last_update > 0 else float('inf')
+
+                            # 构建求值上下文（包含 duration）
+                            eval_context = {**context, "duration": duration}
+
+                            # 检查条件
+                            try:
+                                condition_met = self._safe_eval_bool(var_on, eval_context)
+                            except Exception as e:
+                                self.logger.warning(
+                                    "Failed to evaluate condition for %s: %s",
+                                    var_name, e
+                                )
+                                condition_met = False
+
+                            if condition_met:
+                                # 条件满足，更新值
+                                value = self._safe_eval(var_def.value, eval_context)
+                                self._conditional_var_states[state_key] = (value, now)
+                                context[var_name] = value
+                            else:
+                                # 条件不满足，保持当前值
+                                context[var_name] = current_value
+                        else:
+                            # 普通变量：每次都计算
+                            value = self._safe_eval(var_def.value, context)
+                            if value is not None:
+                                context[var_name] = value
                     except Exception as e:
                         self.logger.warning(
                             "Failed to compute var %s: %s",
-                            var_def.name, e
+                            var_name, e
                         )
 
         # Feature 0010 Phase 2: 计算条件变量

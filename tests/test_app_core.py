@@ -15,6 +15,8 @@ from hft.core.app.config import AppConfig
 from hft.core.listener import Listener, ListenerState
 from hft.executor.base import BaseExecutor
 from hft.executor.config import MarketExecutorConfig
+from hft.strategy.base import BaseStrategy
+from hft.strategy.config import BaseStrategyConfig
 from tests.conftest import MockListener
 
 
@@ -38,20 +40,57 @@ class MockExecutor(BaseExecutor):
         pass
 
 
+class MockStrategy(BaseStrategy):
+    """Mock strategy for testing."""
+
+    def __init__(self, name="test_strategy"):
+        # Create a minimal config
+        config = MagicMock(spec=BaseStrategyConfig)
+        config.name = name
+        config.path = "mock/strategy"
+        config.interval = 1.0
+        config.debug = True
+        config.requires = []
+        config.vars = []
+        config.targets = []
+        super().__init__(config)
+
+    def get_target_positions_usd(self):
+        return {}
+
+    async def on_tick(self):
+        """Mock on_tick implementation."""
+        pass
+
+
 def create_mock_app_config(**kwargs):
     """Create a mock AppConfig for testing."""
+    # Create a mock ExecutorConfigPath with instance property
+    mock_executor_path = MagicMock()
+    mock_executor_config = MagicMock()
+    mock_executor_config.instance = MockExecutor()
+    mock_executor_path.instance = mock_executor_config
+
+    # Create a mock StrategyConfigPath with proper instance chain
+    mock_strategy_path = MagicMock()
+    mock_strategy_path.name = "test_strategy"
+    mock_strategy_config = MagicMock()
+    mock_strategy_config.instance = MockStrategy()
+    mock_strategy_path.instance = mock_strategy_config
+
     defaults = {
         "interval": 0.1,
         "health_check_interval": 0.1,
         "log_interval": 0.1,
         "cache_interval": 0.1,
-        "strategies": [],
-        "exchanges": [],
-        "executor": "market/default",
+        "strategy": mock_strategy_path,  # StrategyConfigPath mock with proper instance
+        "exchanges": MagicMock(),  # ExchangeConfigPathGroup mock
+        "executor": mock_executor_path,  # ExecutorConfigPath mock
         "database_url": None,
         "debug": True,
         "max_duration": None,
         "path": "test/app",
+        "data_path": "/tmp/test_cache",  # Real path for cache tests
         "indicators": {},  # Feature 0006: indicator 配置
     }
     defaults.update(kwargs)
@@ -74,54 +113,38 @@ class TestAppCoreLifecycle:
     async def test_appcore_initializes_with_children(self):
         """AppCore should initialize with expected children."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        # Mock the executor config loading
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
-
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            # Should have 7 children: 3 utility listeners + 4 core components
-            assert len(app_core.children) >= 3
-            assert 'StateLogListener' in app_core.children
-            assert 'UnhealthyRestartListener' in app_core.children
-            assert 'CacheListener' in app_core.children
+        # Should have 7 children: 3 utility listeners + 4 core components
+        assert len(app_core.children) >= 3
+        assert 'StateLogListener' in app_core.children
+        assert 'UnhealthyRestartListener' in app_core.children
+        assert 'CacheListener' in app_core.children
 
     @pytest.mark.asyncio
     async def test_appcore_start_transitions_to_running(self):
         """AppCore start should transition state to RUNNING."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        await app_core.start(recursive=False)
+        await app_core.tick()  # STARTING -> RUNNING
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
+        assert app_core.state == ListenerState.RUNNING
 
-            await app_core.start(recursive=False)
-            await app_core.tick()  # STARTING -> RUNNING
-
-            assert app_core.state == ListenerState.RUNNING
-
-            await app_core.stop(recursive=False)
+        await app_core.stop(recursive=False)
 
     @pytest.mark.asyncio
     async def test_appcore_stop_transitions_to_stopped(self):
         """AppCore stop should transition state to STOPPED."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        await app_core.start(recursive=False)
+        await app_core.tick()  # STARTING -> RUNNING
+        await app_core.stop(recursive=False)
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            await app_core.start(recursive=False)
-            await app_core.tick()  # STARTING -> RUNNING
-            await app_core.stop(recursive=False)
-
-            assert app_core.state == ListenerState.STOPPED
+        assert app_core.state == ListenerState.STOPPED
 
 
 class TestAppCoreRunTicks:
@@ -131,51 +154,36 @@ class TestAppCoreRunTicks:
     async def test_run_ticks_with_duration_stops_after_time(self):
         """run_ticks with positive duration should stop after specified time."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        start_time = asyncio.get_event_loop().time()
+        await app_core.run_ticks(duration=0.2, initialize=True, finalize=True)
+        elapsed = asyncio.get_event_loop().time() - start_time
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            start_time = asyncio.get_event_loop().time()
-            await app_core.run_ticks(duration=0.2, initialize=True, finalize=True)
-            elapsed = asyncio.get_event_loop().time() - start_time
-
-            assert elapsed >= 0.15  # Allow some tolerance
-            assert elapsed < 1.0
-            assert app_core.state == ListenerState.STOPPED
+        assert elapsed >= 0.15  # Allow some tolerance
+        assert elapsed < 1.0
+        assert app_core.state == ListenerState.STOPPED
 
     @pytest.mark.asyncio
     async def test_run_ticks_initializes_when_specified(self):
         """run_ticks should call start when initialize=True."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        await app_core.run_ticks(duration=0.1, initialize=True, finalize=True)
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            await app_core.run_ticks(duration=0.1, initialize=True, finalize=True)
-
-            # After finalize, should be stopped
-            assert app_core.state == ListenerState.STOPPED
+        # After finalize, should be stopped
+        assert app_core.state == ListenerState.STOPPED
 
     @pytest.mark.asyncio
     async def test_run_ticks_finalizes_when_specified(self):
         """run_ticks should call stop when finalize=True."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        await app_core.run_ticks(duration=0.1, initialize=True, finalize=True)
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            await app_core.run_ticks(duration=0.1, initialize=True, finalize=True)
-
-            assert app_core.state == ListenerState.STOPPED
+        assert app_core.state == ListenerState.STOPPED
 
 
 class TestAppCoreWithMockChildren:
@@ -185,36 +193,31 @@ class TestAppCoreWithMockChildren:
     async def test_multiple_children_all_managed(self):
         """Multiple children should all be started and stopped."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        children = [
+            MockListener(name=f"test_child_{i}", interval=0.05)
+            for i in range(3)
+        ]
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
+        for child in children:
+            app_core.add_child(child)
 
-            children = [
-                MockListener(name=f"test_child_{i}", interval=0.05)
-                for i in range(3)
-            ]
+        await app_core.start(recursive=True)
 
-            for child in children:
-                app_core.add_child(child)
+        # Tick all children to transition to RUNNING
+        for child in app_core.children.values():
+            if child.state == ListenerState.STARTING:
+                await child.tick()
 
-            await app_core.start(recursive=True)
+        # Check children are in STARTING or RUNNING state
+        for child in children:
+            assert child.state in (ListenerState.STARTING, ListenerState.RUNNING)
 
-            # Tick all children to transition to RUNNING
-            for child in app_core.children.values():
-                if child.state == ListenerState.STARTING:
-                    await child.tick()
+        await app_core.stop(recursive=True)
 
-            # Check children are in STARTING or RUNNING state
-            for child in children:
-                assert child.state in (ListenerState.STARTING, ListenerState.RUNNING)
-
-            await app_core.stop(recursive=True)
-
-            for child in children:
-                assert child.state == ListenerState.STOPPED
+        for child in children:
+            assert child.state == ListenerState.STOPPED
 
 
 class TestStateLogListenerIntegration:
@@ -224,35 +227,25 @@ class TestStateLogListenerIntegration:
     async def test_state_logger_exists(self):
         """StateLogListener should be a child of AppCore."""
         config = create_mock_app_config(log_interval=0.05)
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
-
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            assert 'StateLogListener' in app_core.children
+        assert 'StateLogListener' in app_core.children
 
     @pytest.mark.asyncio
     async def test_state_logger_can_tick(self):
         """StateLogListener on_tick should execute without error."""
         config = create_mock_app_config(log_interval=0.05)
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        state_logger = app_core.children['StateLogListener']
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
+        await app_core.start(recursive=False)
+        await app_core.tick()  # STARTING -> RUNNING
 
-            state_logger = app_core.children['StateLogListener']
+        # on_tick should not raise
+        await state_logger.on_tick()
 
-            await app_core.start(recursive=False)
-            await app_core.tick()  # STARTING -> RUNNING
-
-            # on_tick should not raise
-            await state_logger.on_tick()
-
-            await app_core.stop(recursive=False)
+        await app_core.stop(recursive=False)
 
 
 class TestAppCoreCancellation:
@@ -262,27 +255,22 @@ class TestAppCoreCancellation:
     async def test_cancelled_error_breaks_loop_gracefully(self):
         """CancelledError should break the loop gracefully."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
+        async def run_and_cancel():
+            task = asyncio.create_task(
+                app_core.run_ticks(duration=-1, initialize=True, finalize=True)
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
+        await run_and_cancel()
 
-            async def run_and_cancel():
-                task = asyncio.create_task(
-                    app_core.run_ticks(duration=-1, initialize=True, finalize=True)
-                )
-                await asyncio.sleep(0.1)
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-            await run_and_cancel()
-
-            assert app_core.state == ListenerState.STOPPED
+        assert app_core.state == ListenerState.STOPPED
 
 
 class TestAppCoreComponents:
@@ -292,40 +280,25 @@ class TestAppCoreComponents:
     async def test_has_exchange_group(self):
         """AppCore should have an ExchangeGroup."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
-
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            assert hasattr(app_core, 'exchange_group')
-            assert app_core.exchange_group is not None
+        assert hasattr(app_core, 'exchange_group')
+        assert app_core.exchange_group is not None
 
     @pytest.mark.asyncio
     async def test_has_strategy_group(self):
         """AppCore should have a StrategyGroup."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
-
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            assert hasattr(app_core, 'strategy_group')
-            assert app_core.strategy_group is not None
+        assert hasattr(app_core, 'strategy_group')
+        assert app_core.strategy_group is not None
 
     @pytest.mark.asyncio
     async def test_has_executor(self):
         """AppCore should have an Executor."""
         config = create_mock_app_config()
+        app_core = AppCore(config)
 
-        mock_executor_config = MagicMock()
-        mock_executor_config.instance = MockExecutor()
-
-        with patch('hft.core.app.base.BaseExecutorConfig.load', return_value=mock_executor_config):
-            app_core = AppCore(config)
-
-            assert hasattr(app_core, 'executor')
-            assert app_core.executor is not None
+        assert hasattr(app_core, 'executor')
+        assert app_core.executor is not None

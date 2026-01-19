@@ -69,19 +69,33 @@ class AppConfig(BaseConfig[AppCore]):
     @classmethod
     def load_from_path(cls, app: str) -> "AppConfig":
         """
-        获取或恢复应用实例
-     
-        如果存在缓存文件，从缓存恢复；否则创建新实例。
+        加载应用配置
+
+        注意：缓存恢复逻辑已移至 AppCore 层面。
+        此方法仅负责加载配置，不处理缓存。
+
+        旧版缓存文件（pickle 整个 AppCore）不再支持，
+        新版缓存格式为 cache dict，由 AppCore 在启动时使用 get_or_create 恢复。
+
+        Args:
+            app: 应用配置路径（如 "app"）
+
+        Returns:
+            AppConfig 实例
         """
+        # 检查是否存在旧版缓存文件，给出警告
         data_path = path.join(cls.data_dir, f"{app}.pkl")
         if path.exists(data_path):
-            app: 'AppCore' = CacheListener.load_cache(data_path)
-            # logger.info("load app from cache: %s", data_path)
-            return app.config
-        else:
-            config = cls.load(app)
-            logger.info("create new app: %s", app)
-            return config
+            logger.warning(
+                "Found legacy cache file at %s. "
+                "The old cache format (pickled AppCore) is no longer supported. "
+                "Please delete this file to use the new cache format.",
+                data_path
+            )
+
+        config = cls.load(app)
+        logger.info("Loaded app config: %s", app)
+        return config
 
     interval: float = Field(1.0, description="主循环间隔（秒）")
     health_check_interval: float = Field(60.0, description="健康检查间隔（秒）")
