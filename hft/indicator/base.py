@@ -23,10 +23,11 @@ calculate_vars 用途：
 - 供 Strategy 决策使用
 - 不用于 ready_condition 求值
 """
+import re
 import time
 import asyncio
 from abc import abstractmethod
-from typing import Optional, Any, Generic, TypeVar, Callable, TYPE_CHECKING
+from typing import Optional, Any, Generic, TypeVar, Callable, TYPE_CHECKING, Union
 
 from pyee.asyncio import AsyncIOEventEmitter
 

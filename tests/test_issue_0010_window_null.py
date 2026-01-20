@@ -3,8 +3,12 @@ Issue 0010: Indicator window null 归一化测试
 
 测试 window=None 与 window=0 的等价性
 """
-import pytest
 import time
+
+import pytest
+
+# pylint: disable=protected-access
+
 from hft.indicator.base import BaseIndicator
 
 
@@ -12,7 +16,7 @@ class DummyIndicator(BaseIndicator[float]):
     """测试用的简单 Indicator"""
 
     def calculate_vars(self, direction: int = 1) -> dict:
-        return {"value": self.latest}
+        return {"value": self.data.latest}
 
 
 class TestWindowNullNormalization:

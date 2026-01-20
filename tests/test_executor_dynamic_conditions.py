@@ -7,10 +7,10 @@ Tests cover:
 - MarketExecutor: dynamic per_order_usd support
 - SmartExecutor: indicator variable injection in route context
 """
-import pytest
-from unittest.mock import MagicMock, patch
+# pylint: disable=import-outside-toplevel,protected-access
+from unittest.mock import patch
 
-from hft.executor.base import BaseExecutor, ExecutionResult, ExecutorState
+from hft.executor.base import BaseExecutor, ExecutionResult
 from hft.executor.config import BaseExecutorConfig
 from hft.executor.market_executor import MarketExecutor
 from hft.executor.market_executor.config import MarketExecutorConfig
@@ -891,8 +891,6 @@ class TestExecutorContextVarCollisions:
 
     def test_reserved_vars_constant_defined(self):
         """Issue 0005: RESERVED_CONTEXT_VARS should be defined with expected vars."""
-        from hft.executor.base import BaseExecutor
-
         expected_reserved = {
             "direction", "buy", "sell", "speed", "notional",
             "target_notional", "trades_notional",
@@ -1119,7 +1117,6 @@ class TestComputedIndicatorsReadyState:
     def test_computed_indicator_lazy_cache(self):
         """Computed indicators should use lazy caching when not required."""
         from hft.indicator.computed.volume_indicator import VolumeIndicator
-        import time
 
         indicator = VolumeIndicator(
             exchange_class="okx",

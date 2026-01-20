@@ -3,8 +3,9 @@ ConfigPath - 配置路径系统
 
 提供基于路径的配置加载和缓存机制。
 """
+# pylint: disable=import-outside-toplevel
 import os
-from typing import ClassVar, Optional, TYPE_CHECKING, Any
+from typing import ClassVar, TYPE_CHECKING, Any
 from functools import cached_property, lru_cache
 from pathlib import Path
 from pydantic import GetCoreSchemaHandler
@@ -398,4 +399,3 @@ class ExchangeConfigPathGroup:
 
     def __repr__(self) -> str:
         return f"ExchangeConfigPathGroup(selectors={self.selectors!r})"
-

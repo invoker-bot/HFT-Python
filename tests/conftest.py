@@ -1,9 +1,10 @@
-import pytest
 import asyncio
 from typing import Optional
 from unittest.mock import AsyncMock
 
-from hft.core.listener import Listener, ListenerState
+import pytest
+
+from hft.core.listener import Listener
 
 
 class MockListener(Listener):

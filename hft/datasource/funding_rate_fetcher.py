@@ -11,7 +11,7 @@ GlobalFundingRateFetcher - 全局资金费率获取器
 - 集中获取、分散存储
 - 作为 DataSourceGroup 的子节点，享受统一生命周期管理
 """
-import asyncio
+# pylint: disable=import-outside-toplevel,protected-access
 from typing import TYPE_CHECKING, Optional
 from ..core.listener import Listener
 from ..plugin import pm

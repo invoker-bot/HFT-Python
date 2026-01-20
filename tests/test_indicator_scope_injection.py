@@ -3,8 +3,6 @@ Indicator Scope 注入单元测试
 
 测试 Indicator 变量注入到 Scope 的功能
 """
-import pytest
-from unittest.mock import Mock
 from hft.indicator.datasource.ticker_datasource import TickerDataSource
 from hft.indicator.datasource.equation_datasource import MedalEquationDataSource
 

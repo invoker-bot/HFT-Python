@@ -69,15 +69,20 @@ class SampleArray(Generic[T]):
         return cv
 
     def get_range(self, start_timestamp, end_timestamp, min_points=3) -> float | None:
-        start_pos = bisect.bisect_left(self.history, start_timestamp, key=lambda x: x[0])
-        end_pos = bisect.bisect_right(self.history, end_timestamp, key=lambda x: x[0])
-        history = self.history[start_pos:end_pos]
+        history = self.data
+        start_pos = bisect.bisect_left(history, start_timestamp, key=lambda x: x[0])
+        end_pos = bisect.bisect_right(history, end_timestamp, key=lambda x: x[0])
+        history = history[start_pos:end_pos]
         if len(history) < min_points:
             return None
         return abs(history[-1][0] - history[0][0]) / abs(end_timestamp - start_timestamp)
 
     def get_interpolate(self, start_time, end_time, num_points, data_fn = lambda x: x) -> np.ndarray:
-        history = np.array(self.history, dtype=float)
+        # NOTE: This module is deprecated; keep behavior minimal and consistent with TickHistory.
+        timestamps = np.linspace(start_time, end_time, num_points, dtype=float)
+        history = np.array([(ts, data_fn(v)) for ts, v in self.data], dtype=float)
+        if history.size == 0:
+            return np.array([], dtype=float)
         return np.interp(timestamps, history[:, 0], history[:, 1])
 
 

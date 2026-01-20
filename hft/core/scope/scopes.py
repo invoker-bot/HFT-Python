@@ -9,7 +9,7 @@
 - TradingPairClassScope: symbol, exchange_class（继承）
 - TradingPairScope: exchange_id, symbol
 """
-from typing import Optional, Any, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from .base import BaseScope
 
 if TYPE_CHECKING:

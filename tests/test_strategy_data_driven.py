@@ -8,8 +8,11 @@ Feature 0008: Strategy 数据驱动增强 - 单元测试
 4. 表达式求值
 5. 多 Exchange 目标匹配
 """
+# pylint: disable=protected-access
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+
 from hft.strategy.config import (
     VarDefinition,
     TargetDefinition,
@@ -18,7 +21,6 @@ from hft.strategy.static_positions import (
     StaticPositionsStrategy,
     StaticPositionsStrategyConfig,
 )
-from hft.strategy.base import TargetPositions, StrategyOutput
 
 
 class TestVarDefinition:
@@ -540,21 +542,15 @@ class TestStaticPositionsStrategy:
 
     def test_static_positions_import(self):
         """测试新模块导入"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         assert StaticPositionsStrategy is not None
         assert StaticPositionsStrategyConfig is not None
 
     def test_class_name(self):
         """测试 class_name 是 static_positions"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         assert StaticPositionsStrategyConfig.class_name == "static_positions"
 
     def test_basic_config(self):
         """测试基本配置"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test_static",
             targets=[
@@ -570,7 +566,6 @@ class TestTargetPairsExpansion:
 
     def test_string_shorthand(self):
         """测试 string 简写格式"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=["BTC/USDT", "ETH/USDT"],
@@ -591,7 +586,6 @@ class TestTargetPairsExpansion:
 
     def test_dict_format(self):
         """测试 dict 格式"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=[
@@ -614,7 +608,6 @@ class TestTargetPairsExpansion:
 
     def test_mixed_format(self):
         """测试混合格式"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=[
@@ -632,7 +625,6 @@ class TestTargetPairsExpansion:
 
     def test_target_pairs_with_existing_targets(self):
         """测试 target_pairs + targets 混合写法"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=["BTC/USDT"],
@@ -651,7 +643,6 @@ class TestTargetPairsExpansion:
 
     def test_target_pairs_override(self):
         """测试 target_pairs 中的值覆盖 target 中的值"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=[
@@ -672,7 +663,6 @@ class TestBackwardCompatibility:
 
     def test_legacy_format_still_works(self):
         """测试旧格式仍然有效"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             exchange_path="okx/main",
@@ -690,7 +680,6 @@ class TestStrategyCondition:
 
     def test_target_condition_field_exists(self):
         """测试 TargetDefinition 有 condition 字段"""
-        from hft.strategy.config import TargetDefinition
         target = TargetDefinition(
             symbol="BTC/USDT",
             condition="rsi < 30"
@@ -699,13 +688,11 @@ class TestStrategyCondition:
 
     def test_target_condition_default_none(self):
         """测试 condition 默认为 None"""
-        from hft.strategy.config import TargetDefinition
         target = TargetDefinition(symbol="BTC/USDT")
         assert target.condition is None
 
     def test_global_condition_field_exists(self):
         """测试 BaseStrategyConfig 有 condition 字段"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             condition="equation_usd > 1000",
@@ -715,7 +702,6 @@ class TestStrategyCondition:
 
     def test_global_condition_default_none(self):
         """测试全局 condition 默认为 None"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -724,7 +710,6 @@ class TestStrategyCondition:
 
     def test_target_pairs_with_condition_in_target(self):
         """测试 target_pairs 展开时 condition 从 target 模板继承"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=["BTC/USDT", "ETH/USDT"],
@@ -741,7 +726,6 @@ class TestStrategyCondition:
 
     def test_target_pairs_condition_override(self):
         """测试 target_pairs 单项可以覆盖 condition"""
-        from hft.strategy.static_positions import StaticPositionsStrategyConfig
         config = StaticPositionsStrategyConfig(
             name="test",
             target_pairs=[
@@ -762,10 +746,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_none_returns_true(self):
         """测试 _evaluate_condition(None) 返回 True"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -777,10 +757,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_true_expression(self):
         """测试 condition 求值为 True"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -792,10 +768,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_false_expression(self):
         """测试 condition 求值为 False"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -807,10 +779,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_with_context(self):
         """测试 condition 使用上下文变量"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -826,10 +794,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_exception_returns_false(self):
         """测试 condition 求值异常时返回 False"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]
@@ -842,10 +806,6 @@ class TestStrategyCondition:
 
     def test_evaluate_condition_none_result_returns_false(self):
         """测试 condition 求值结果为 None 时返回 False"""
-        from hft.strategy.static_positions import (
-            StaticPositionsStrategy,
-            StaticPositionsStrategyConfig,
-        )
         config = StaticPositionsStrategyConfig(
             name="test",
             targets=[{"symbol": "BTC/USDT", "position_usd": "1000"}]

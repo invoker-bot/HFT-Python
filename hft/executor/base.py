@@ -16,11 +16,12 @@ Executor 执行器基类
         - delta > per_order_usd 时才执行
         - 这避免了频繁的小额交易
 
-Feature 0008: Strategy 数据驱动增强
-    - strategies_data: {"字段名": [值列表], ...} 格式
-    - Executor 可通过 strategies["字段名"] 访问聚合列表
-    - 支持 sum(strategies["position_usd"]) 等聚合表达式
+Issue 0013: Strategy 数据驱动增强（单策略标量化）
+    - strategies_data: {"字段名": 值, ...} 格式（不再是列表）
+    - Executor 可通过 strategies["字段名"] 直接访问值
+    - 单策略场景，不需要 sum/avg 聚合
 """
+# pylint: disable=import-outside-toplevel,protected-access
 from abc import abstractmethod
 from enum import Enum
 from dataclasses import dataclass, field
@@ -667,14 +668,14 @@ class BaseExecutor(Listener):
         direction: int,
         speed: float,
         notional: float,
-        strategies_data: Optional[dict[str, list[Any]]] = None,
+        strategies_data: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """
         收集条件求值所需的所有变量
 
         计算顺序（Feature 0010）：
         1. 内置变量（direction, buy, sell, speed, notional）
-        2. strategies namespace（Feature 0008）
+        2. strategies namespace（Issue 0013: 单策略标量化）
         3. requires 中声明的 indicator 提供的变量
         4. vars 列表（按顺序计算，包括条件变量）
 
@@ -686,7 +687,7 @@ class BaseExecutor(Listener):
             direction: 交易方向（1=买，-1=卖）
             speed: 执行紧急度
             notional: 目标仓位的 USD 价值（绝对值）
-            strategies_data: Strategy 聚合数据（Feature 0008）
+            strategies_data: Strategy 聚合数据（Issue 0013: 单策略标量化，不再是列表）
 
         Returns:
             变量字典
@@ -702,9 +703,8 @@ class BaseExecutor(Listener):
             "notional": notional,
         }
 
-        # Feature 0008: 注入 strategies namespace
-        # Executor 可以通过 strategies["position_usd"] 访问聚合列表
-        # 可以用 sum(strategies["position_usd"]) 等表达式聚合
+        # Issue 0013: 注入 strategies namespace（单策略标量化）
+        # Executor 可以通过 strategies["position_usd"] 直接访问值（不再是列表）
         if strategies_data is not None:
             context["strategies"] = strategies_data
 
@@ -1021,7 +1021,7 @@ class BaseExecutor(Listener):
         self,
         exchange: "BaseExchange",
         symbol: str,
-        strategies_data: dict[str, list[Any]],
+        strategies_data: dict[str, Any],
     ) -> Optional[ExecutionResult]:
         """
         处理单个目标仓位
@@ -1029,32 +1029,23 @@ class BaseExecutor(Listener):
         Args:
             exchange: 交易所实例
             symbol: 交易对
-            strategies_data: Strategy 聚合数据 {"字段名": [值列表], ...}
-                           (Feature 0008 新格式)
+            strategies_data: Strategy 聚合数据 {"字段名": 值, ...}
+                           (Issue 0013: 单策略标量化，不再是列表)
 
         Returns:
             执行结果，如果未执行则返回 None
         """
-        # 从 strategies_data 提取 target_usd 和 speed（向后兼容）
-        # 默认聚合方式：position_usd 求和，speed 加权平均
-        position_list = strategies_data.get("position_usd", [])
-        speed_list = strategies_data.get("speed", [])
+        # 从 strategies_data 提取 target_usd 和 speed
+        # Issue 0013: 直接取值（不再是列表）
+        position_usd = strategies_data.get("position_usd")
+        speed = strategies_data.get("speed")
 
-        if not position_list:
+        if position_usd is None:
             return None
 
-        # 计算聚合值（向后兼容旧逻辑）
-        target_usd = sum(position_list)
-        if speed_list and position_list:
-            total_weight = sum(abs(p) for p in position_list)
-            if total_weight > 0:
-                speed = sum(
-                    abs(p) * s for p, s in zip(position_list, speed_list)
-                ) / total_weight
-            else:
-                speed = 0.5
-        else:
-            speed = 0.5
+        # 使用单策略的值（不再需要聚合）
+        target_usd = position_usd
+        speed = speed if speed is not None else 0.5
 
         # 1. 获取当前价格
         try:

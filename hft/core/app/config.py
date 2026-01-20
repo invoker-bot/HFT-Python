@@ -13,7 +13,6 @@ from typing import ClassVar, Type
 from pydantic import Field, ClickHouseDsn, BaseModel
 from ...config.base import BaseConfig
 from .base import AppCore
-from .listeners import CacheListener
 from ..config_path import (
     ExchangeConfigPathGroup,
     StrategyConfigPath,

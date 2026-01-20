@@ -24,6 +24,7 @@ Feature 0008: Strategy 数据驱动增强
 - 向后兼容旧格式（TargetPositions）
 - 支持 requires、vars、conditional_vars
 """
+# pylint: disable=import-outside-toplevel,protected-access
 import time
 from abc import abstractmethod
 from typing import Optional, Any, Union, TYPE_CHECKING

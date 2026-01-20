@@ -3,10 +3,11 @@ IndicatorGroup 单元测试
 
 Feature 0006: Indicator 与 DataSource 统一架构
 """
+# pylint: disable=protected-access
 import time
+from typing import Any
+
 import pytest
-import asyncio
-from typing import Any, Optional
 
 from hft.indicator.base import BaseIndicator, GlobalIndicator
 from hft.indicator.group import (
@@ -14,7 +15,6 @@ from hft.indicator.group import (
     TradingPairIndicators,
     GlobalIndicators,
 )
-from hft.core.listener import ListenerState
 
 
 class SimpleTestIndicator(BaseIndicator[float]):

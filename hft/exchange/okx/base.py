@@ -1,7 +1,6 @@
 """
 OKX 交易所实现
 """
-import time
 import logging
 from typing import ClassVar
 from cachetools import TTLCache

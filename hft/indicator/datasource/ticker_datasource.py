@@ -5,7 +5,7 @@ Feature 0006: Indicator 与 DataSource 统一架构
 """
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from ..base import BaseDataSource
 

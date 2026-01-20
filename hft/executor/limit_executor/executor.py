@@ -6,7 +6,7 @@ LimitExecutor - 限价单执行器
 
 Feature 0005: 支持动态参数（表达式或字面量）
 """
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..base import BaseExecutor, ExecutionResult, OrderIntent
 

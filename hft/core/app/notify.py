@@ -12,6 +12,7 @@
     await self.notify.error("转账失败", "USDT 转账超时未到账")
     await self.notify.warning("价格异常", "BTC 价格波动超过 5%")
 """
+# pylint: disable=import-outside-toplevel
 import logging
 import asyncio
 from typing import Optional, TYPE_CHECKING

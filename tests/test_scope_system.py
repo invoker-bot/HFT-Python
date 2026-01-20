@@ -1,16 +1,8 @@
 """
 Scope 系统单元测试
 """
-import pytest
 from hft.core.scope import BaseScope, ScopeManager, VirtualMachine
-from hft.core.scope.scopes import (
-    GlobalScope,
-    ExchangeClassScope,
-    ExchangeScope,
-    TradingPairClassScope,
-    TradingPairScope,
-    TradingPairClassGroupScope,
-)
+from hft.core.scope.scopes import GlobalScope
 
 
 class TestBaseScope:

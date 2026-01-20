@@ -8,7 +8,6 @@ vars 简化格式支持 - 单元测试
 4. TargetDefinition vars 的三种格式
 5. 混合格式支持
 """
-import pytest
 from hft.strategy.config import (
     BaseStrategyConfig,
     ScopeConfig,

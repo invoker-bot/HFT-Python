@@ -7,8 +7,7 @@
 - MarketNeutralPositionsStrategy 策略
 - TradingPairClassGroupScope 分组 Scope
 """
-import pytest
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+# pylint: disable=import-outside-toplevel,protected-access
 import time
 
 
@@ -392,12 +391,12 @@ class TestIndicatorFactoryRegistration:
         """测试 FairPriceIndicator 已注册"""
         from hft.indicator.factory import IndicatorFactory
 
-        classes = IndicatorFactory._get_builtin_classes()
+        classes: dict[str, type] = IndicatorFactory._get_builtin_classes()
         assert "FairPriceIndicator" in classes
 
     def test_medal_amount_datasource_registered(self):
         """测试 MedalAmountDataSource 已注册"""
         from hft.indicator.factory import IndicatorFactory
 
-        classes = IndicatorFactory._get_builtin_classes()
+        classes: dict[str, type] = IndicatorFactory._get_builtin_classes()
         assert "MedalAmountDataSource" in classes

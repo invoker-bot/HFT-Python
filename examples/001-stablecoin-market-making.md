@@ -16,7 +16,7 @@
 │  conf/app/stablecoin/main.yaml                              │
 │  ├── exchanges:                                             │
 │  │   └── okx (现货账户)                                      │
-│  ├── strategy: keep_positions (维持目标仓位)                 │
+│  ├── strategy: static_positions (维持目标仓位)               │
 │  ├── executor: grid/rebalance/pca (可选不同执行器)           │
 │  └── indicators:                                            │
 │      └── ticker (价格数据)                                   │
@@ -51,12 +51,12 @@ indicators:
   ticker:
     class: TickerDataSource
     params:
-      window: 60 # (或者写60s)
+      window: 60.0
     ready_condition: "timeout < 5"
   equation:
     class: MedalEquationDataSource
     params:
-      window: null  
+      window: null  # None 等价于 0（仅保留最新点）
     ready_condition: "timeout < 15"
 ```
 
@@ -64,7 +64,7 @@ indicators:
 
 ```yaml
 # conf/strategy/stablecoin/grid_positions.yaml
-class_name: keep_positions
+class_name: static_positions
 requires:
   - equation
 # 目标仓位：USDG 占 60%
@@ -202,7 +202,7 @@ App 配置与方案一类似，主要区别在 Strategy 和 Executor 配置。
 
 ```yaml
 # conf/strategy/stablecoin/rebalance_positions.yaml
-class_name: keep_positions
+class_name: static_positions
 requires:
   - equation
 
@@ -250,7 +250,7 @@ Price Cost Averaging（价格成本平均）策略：
 
 ---
 
-### 方式一：keep_positions + PCAExecutor
+### 方式一：static_positions + PCAExecutor
 
 Strategy 始终返回目标仓位 0，由 PCAExecutor 自主管理入场/出场逻辑。
 
@@ -275,14 +275,13 @@ indicators:
     class: RSIIndicator
     params:
       period: 14
-    ready_condition: "len(data) >= 14"
 ```
 
 #### Strategy 配置
 
 ```yaml
 # conf/strategy/stablecoin/pca_zero_position.yaml
-class_name: keep_positions
+class_name: static_positions
 
 targets:
   - symbol: USDG/USDT
@@ -349,7 +348,7 @@ exit_order:
 
 ---
 
-### 方式二：keep_positions + LimitExecutor
+### 方式二：static_positions + LimitExecutor
 
 由 Strategy 利用 `vars` 变量系统计算动态目标仓位，Executor 只负责执行。
 
@@ -360,7 +359,7 @@ exit_order:
 
 ```yaml
 # conf/strategy/stablecoin/pca_dynamic.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - ticker
@@ -403,7 +402,7 @@ requires:
 
 vars:
   - name: position_amount
-    value: 'sum(strategies["position_amount"])'
+    value: 'strategies["position_amount"]'
   - name: delta_amount
     value: 'position_amount - current_position_amount'
 
@@ -421,7 +420,7 @@ order:
 
 ### 两种方式对比
 
-| 特性 | 方式一 (PCAExecutor) | 方式二 (keep_positions) |
+| 特性 | 方式一 (PCAExecutor) | 方式二 (static_positions) |
 |------|---------------------|------------------------|
 | 状态管理 | Executor 内部 | Strategy 条件变量 |
 | 复杂度 | 高（专用 Executor） | 低（复用 LimitExecutor） |
@@ -499,7 +498,7 @@ scopes:
 
 ```yaml
 # conf/strategy/stablecoin/grid_positions_scope.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - equation
@@ -545,7 +544,7 @@ scopes:
 
 ```yaml
 # conf/strategy/stablecoin/dynamic_scope.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - equation
@@ -628,7 +627,7 @@ scopes:
 
 ```yaml
 # conf/strategy/stablecoin/multi_exchange_scope.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - equation
@@ -693,7 +692,7 @@ scopes:
 
 ```yaml
 # conf/strategy/stablecoin/pca_scope.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - ticker

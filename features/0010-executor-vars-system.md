@@ -59,7 +59,7 @@ Executor 通过 `strategies` namespace 接收 Strategy 输出的 list 口径：
 ```yaml
 vars:
   - name: position_amount
-    value: sum(strategies["position_amount"])
+    value: strategies["position_amount"]
   - name: total_speed
     value: max(strategies["speed"])
 ```

@@ -21,9 +21,11 @@
 """
 import math
 import time
-import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Any, TYPE_CHECKING
+
+import numpy as np
+
 from .lazy_indicator import LazyIndicator
 
 if TYPE_CHECKING:

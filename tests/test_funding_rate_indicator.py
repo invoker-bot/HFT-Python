@@ -5,9 +5,11 @@ Tests cover:
 - GlobalFundingRateIndicator: 全局资金费率获取和分发
 - FundingRateIndicator: 交易对级资金费率订阅
 """
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+# pylint: disable=protected-access
+from unittest.mock import MagicMock
 from dataclasses import dataclass
+
+import pytest
 
 from hft.indicator.datasource.funding_rate_datasource import (
     GlobalFundingRateIndicator,

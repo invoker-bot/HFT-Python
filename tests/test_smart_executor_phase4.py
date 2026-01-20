@@ -7,11 +7,13 @@ Tests cover:
 - 多 symbol 并发执行
 - 性能测试：缓存效果验证
 """
+# pylint: disable=protected-access
 import asyncio
 import time
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from hft.executor.base import ExecutionResult
 from hft.executor.smart_executor.executor import SmartExecutor

@@ -22,6 +22,7 @@ AppCore 是整个 HFT 系统的入口，负责：
 2. StrategyGroup.is_finished 变为 True -> StrategyGroup.on_tick() 返回 True
 3. AppCore.on_tick() 检测到策略组完成 -> 返回 True -> 程序正常退出
 """
+# pylint: disable=import-outside-toplevel,protected-access
 import asyncio
 from functools import cached_property
 from typing import Optional, TYPE_CHECKING
@@ -30,7 +31,6 @@ from ...exchange.group import ExchangeGroup
 from ...indicator.group import IndicatorGroup
 from ...indicator.base import BaseIndicator
 from ...strategy.group import StrategyGroup
-from ...executor.config import BaseExecutorConfig
 from ...executor.base import BaseExecutor
 from ...plugin import pm
 from ..listener import Listener

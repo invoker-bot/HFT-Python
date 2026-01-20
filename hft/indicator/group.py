@@ -22,13 +22,12 @@ Feature 0008: Strategy 数据驱动增强 - Indicator 层级体系
 - touch 更新：防止过期停止
 - ready 检查：根据 ready_condition 判断
 """
-import time
 import asyncio
 from collections import defaultdict
-from typing import Any, Optional, Type, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from ..core.listener import Listener, GroupListener, ListenerState
-from .base import BaseIndicator, GlobalIndicator, T
+from .base import BaseIndicator, GlobalIndicator
 
 if TYPE_CHECKING:
     from ..core.app.core import AppCore

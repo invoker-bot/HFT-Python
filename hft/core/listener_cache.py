@@ -5,6 +5,7 @@ Listener 缓存管理模块
 - get_or_create: 从缓存获取或创建 Listener 实例
 - ListenerCache: 收集和管理 Listener 状态缓存
 """
+# pylint: disable=import-outside-toplevel,protected-access
 from typing import Type, Optional, TypeVar, Dict, Any
 
 T = TypeVar('T', bound='Listener')

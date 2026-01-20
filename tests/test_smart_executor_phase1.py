@@ -6,9 +6,10 @@ Tests cover:
 - 边界情况：新单失败保持旧状态，旧单取消失败只记录警告
 - Listener 树集成：children 禁用自动 tick
 """
+# pylint: disable=protected-access
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from dataclasses import dataclass
 
 from hft.executor.base import BaseExecutor, ExecutionResult
 from hft.executor.smart_executor.executor import SmartExecutor

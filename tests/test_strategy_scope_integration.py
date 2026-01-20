@@ -3,12 +3,8 @@ Strategy Scope 集成单元测试
 
 测试 BaseStrategy 与 Scope 系统的集成功能
 """
-import pytest
-from unittest.mock import Mock, MagicMock
 from hft.strategy.base import BaseStrategy
-from hft.strategy.config import BaseStrategyConfig, TargetDefinition
-from hft.core.scope import ScopeManager
-from hft.core.scope.scopes import GlobalScope, ExchangeScope, TradingPairScope
+from hft.strategy.config import BaseStrategyConfig
 
 
 class DummyStrategy(BaseStrategy):

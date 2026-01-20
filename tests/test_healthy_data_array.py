@@ -2,7 +2,6 @@
 HealthyDataArray 单元测试
 """
 import time
-import pytest
 from hft.core.healthy_data import HealthyDataArray
 
 

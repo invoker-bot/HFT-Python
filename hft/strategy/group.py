@@ -26,11 +26,9 @@ Feature 0008: Strategy 数据驱动增强
 - 聚合结果返回新格式 AggregatedTargets
 """
 from typing import Any, TYPE_CHECKING
-from collections import defaultdict
 from ..core.listener import Listener, ListenerState
 from ..plugin import pm
 from .base import BaseStrategy, TargetPositions, StrategyOutput
-from .config import BaseStrategyConfig
 
 if TYPE_CHECKING:
     from ..core.app import AppCore
@@ -134,22 +132,19 @@ class StrategyGroup(Listener):
 
     def get_aggregated_targets(self) -> AggregatedTargets:
         """
-        聚合所有策略的目标仓位（Feature 0008 新格式）
+        聚合所有策略的目标仓位（Issue 0013：单策略标量化）
 
-        聚合规则：
-        - 所有字段聚合为列表
-        - Executor 通过 strategies["字段名"] 访问列表
-        - Executor 的 vars 表达式可以用 sum(strategies["position_usd"]) 等聚合
+        聚合规则（单策略场景）：
+        - 当前仅支持单策略，所有字段直接是标量值（不再是列表）
+        - Executor 通过 strategies["字段名"] 直接访问值（不需要 sum/avg）
 
         Returns:
-            {(exchange_path, symbol): {"字段名": [值列表], ...}}
+            {(exchange_path, symbol): {"字段名": 值, ...}}
         """
-        # 临时存储: (exchange_path, symbol) -> {"字段名": [值列表], ...}
-        temp: dict[tuple[str, str], dict[str, list[Any]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
+        # 临时存储: (exchange_path, symbol) -> {"字段名": 值, ...}
+        temp: dict[tuple[str, str], dict[str, Any]] = {}
 
-        # 收集所有策略的目标
+        # 收集所有策略的目标（当前只支持单策略）
         for strategy in self.strategies:
             try:
                 raw_targets = strategy.get_target_positions_usd()
@@ -159,22 +154,22 @@ class StrategyGroup(Listener):
                 pm.hook.on_strategy_targets_calculated(strategy=strategy, targets=targets)
 
                 for key, fields in targets.items():
-                    for field_name, field_value in fields.items():
-                        temp[key][field_name].append(field_value)
+                    # Issue 0013: 单策略场景，直接使用值（不聚合为列表）
+                    if key in temp:
+                        self.logger.warning(
+                            "Multiple strategies targeting same key %s, using last value",
+                            key
+                        )
+                    temp[key] = dict(fields)
             except Exception as e:
                 self.logger.warning(
                     "Error getting targets from %s: %s", strategy.name, e
                 )
 
-        # 转换为普通 dict（去掉 defaultdict）
-        result: AggregatedTargets = {}
-        for key, fields in temp.items():
-            result[key] = dict(fields)
-
         # 插件钩子：目标聚合完成
-        pm.hook.on_targets_aggregated(strategy_group=self, targets=result)
+        pm.hook.on_targets_aggregated(strategy_group=self, targets=temp)
 
-        return result
+        return temp
 
     @property
     def is_finished(self) -> bool:

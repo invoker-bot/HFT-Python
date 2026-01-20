@@ -6,8 +6,8 @@ Tests cover:
 - get_or_create: 从缓存获取或创建
 - ListenerCache: 收集和恢复状态
 """
-import pytest
-from hft.core.listener import Listener, ListenerState
+# pylint: disable=protected-access
+from hft.core.listener import Listener
 from hft.core.listener_cache import ListenerCache, build_cache_key, get_or_create
 
 

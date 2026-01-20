@@ -3,7 +3,6 @@ AppCore Scope 初始化单元测试
 
 测试 AppCore 与 Scope 系统的集成
 """
-import pytest
 from hft.core.scope import ScopeManager
 
 

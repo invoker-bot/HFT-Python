@@ -8,9 +8,11 @@ Tests cover:
 - Fallback fetch functionality
 - Edge cases (no data, expired data, fetch failures)
 """
-import pytest
+# pylint: disable=protected-access
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
+
+import pytest
 
 from hft.core.healthy_data import HealthyData, HealthyDataWithFallback, UnhealthyDataError
 

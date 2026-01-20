@@ -6,10 +6,11 @@ Tests cover:
 - MarketExecutor: execute_delta logic
 - ExecutionResult: dataclass creation
 """
-import pytest
+# pylint: disable=protected-access
 import time
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
+from unittest.mock import AsyncMock
+
+import pytest
 
 from hft.executor.base import BaseExecutor, ExecutionResult, ExecutorState, OrderIntent, ActiveOrder
 from hft.executor.market_executor import MarketExecutor

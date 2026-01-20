@@ -1,8 +1,8 @@
 """
 测试配置路径系统
 """
+# pylint: disable=protected-access
 import os
-import pytest
 from pathlib import Path
 from hft.core.config_path import (
     BaseConfigPath,

@@ -6,8 +6,10 @@ Tests cover:
 - 路由优先级：显式路由 > 规则匹配 > 默认
 - executor=None 的不执行模式（取消现有订单）
 """
-import pytest
+# pylint: disable=protected-access
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from hft.executor.base import ExecutionResult
 from hft.executor.smart_executor.executor import SmartExecutor

@@ -3,10 +3,12 @@ BaseIndicator 单元测试
 
 Feature 0006: Indicator 与 DataSource 统一架构
 """
+# pylint: disable=protected-access
 import time
-import pytest
 import asyncio
-from typing import Any, Optional
+from typing import Any
+
+import pytest
 
 from hft.indicator.base import (
     BaseIndicator,

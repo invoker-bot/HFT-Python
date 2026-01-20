@@ -45,7 +45,7 @@ Example Config (展开式写法，Feature 0011):
       position_usd: 1000
       speed: 0.1
 """
-from typing import ClassVar, Type, Optional, Any, Union, TYPE_CHECKING
+from typing import ClassVar, Type, Optional, Any, Union, TYPE_CHECKING, cast
 from functools import cached_property
 from fnmatch import fnmatch
 from pydantic import Field, model_validator
@@ -72,7 +72,7 @@ class TargetPairDefinition(TargetDefinition):
 
 class StaticPositionsStrategyConfig(BaseStrategyConfig):
     """
-    静态仓位策略配置（Feature 0011 重命名自 KeepPositionsStrategyConfig）
+    静态仓位策略配置（Feature 0011）
 
     支持三种配置方式：
 
@@ -187,7 +187,9 @@ class StaticPositionsStrategyConfig(BaseStrategyConfig):
 
             # 创建 TargetDefinition
             target_def = TargetDefinition(**merged)
-            self.targets.append(target_def)
+            targets = cast(list[TargetDefinition], self.targets)
+            targets.append(target_def)
+            self.targets = targets
 
         return self
 
@@ -202,7 +204,7 @@ class StaticPositionsStrategyConfig(BaseStrategyConfig):
 
 class StaticPositionsStrategy(BaseStrategy):
     """
-    静态仓位策略（Feature 0011 重命名自 KeepPositionsStrategy）
+    静态仓位策略（Feature 0011）
 
     策略职责：
     - 通过 get_target_positions_usd() 返回配置的目标仓位

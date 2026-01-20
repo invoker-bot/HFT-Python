@@ -54,7 +54,7 @@ hft/
 | 模块 | 文件命名 | 示例 |
 |------|----------|------|
 | executor | `*_executor.py` | `market_executor.py` → `MarketExecutor` |
-| strategy | `*_strategy.py` | `keep_positions.py` → `KeepPositionsStrategy` |
+| strategy | `*_strategy.py` | `static_positions.py` → `StaticPositionsStrategy` |
 | indicator | `*_indicator.py` | `lazy_indicator.py` → `LazyIndicator` |
 | datasource | `*_datasource.py` | `ticker_datasource.py` → `TickerDataSource` |
 | 基类/配置 | `base.py`, `config.py`, `group.py` | 保持不变 |

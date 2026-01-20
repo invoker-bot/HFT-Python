@@ -11,6 +11,7 @@
 - 序列化：支持 pickle 持久化
 - 类索引：按类快速查找子监听器（O(1) 查找）
 """
+# pylint: disable=import-outside-toplevel,protected-access
 import time
 import asyncio
 import logging

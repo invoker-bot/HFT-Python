@@ -566,7 +566,7 @@ class SmartExecutor(BaseExecutor):
                 if route.condition is None:
                     return RoutingDecision(
                         executor_key=route.executor,
-                        rule=f"route_default",
+                        rule="route_default",
                         edge_usd=context.get('edge'),
                         trades_count=len(context.get('trades', [])),
                     )

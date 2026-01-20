@@ -1,6 +1,7 @@
 """
 Avellaneda-Stoikov Executor 配置模块
 """
+# pylint: disable=import-outside-toplevel
 from functools import cached_property
 from typing import ClassVar, Type
 
@@ -122,4 +123,3 @@ __all__ = [
     "ASOrderLevel",
     "AvellanedaStoikovExecutorConfig",
 ]
-

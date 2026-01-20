@@ -10,8 +10,9 @@ AvellanedaStoikovExecutor - Avellaneda-Stoikov 最优做市执行器
 """
 import math
 import time
-import numpy as np
 from typing import TYPE_CHECKING, Optional
+
+import numpy as np
 
 from ..base import BaseExecutor, ExecutionResult, OrderIntent
 from ..intensity import TradeIntensityCalculator, IntensityResult

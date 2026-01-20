@@ -6,13 +6,14 @@ Tests cover:
 - Health check behavior
 - Graceful shutdown
 """
-import pytest
 import asyncio
-from unittest.mock import MagicMock, patch, PropertyMock, AsyncMock
+from unittest.mock import MagicMock
+
+import pytest
 
 from hft.core.app import AppCore
 from hft.core.app.config import AppConfig
-from hft.core.listener import Listener, ListenerState
+from hft.core.listener import ListenerState
 from hft.executor.base import BaseExecutor
 from hft.executor.config import MarketExecutorConfig
 from hft.strategy.base import BaseStrategy

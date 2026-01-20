@@ -3,9 +3,8 @@ TickerDataSource 单元测试
 
 Feature 0006: Indicator 与 DataSource 统一架构
 """
+# pylint: disable=import-outside-toplevel,protected-access
 import time
-import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 from hft.indicator.datasource import TickerDataSource, TickerData
 

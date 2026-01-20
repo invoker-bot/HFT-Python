@@ -52,7 +52,7 @@ Strategy 支持数据驱动能力：
 │           ▼ 聚合到 Executor                                  │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  strategies namespace                                │    │
-│  │  strategies["position_usd"] = [1000, 2000]          │    │
+│  │  strategies["position_usd"] = [1000]                │    │
 │  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -61,7 +61,7 @@ Strategy 支持数据驱动能力：
 
 ```
 BaseStrategy (抽象基类)
-├── StaticPositionsStrategy       # 静态目标仓位（原 keep_positions）
+├── StaticPositionsStrategy       # 静态目标仓位策略
 ├── MarketNeutralPositionsStrategy # 市场中性对冲策略（Feature 0013）
 └── (其他自定义策略)
 ```
@@ -151,9 +151,7 @@ links:
 
 **vars 格式**：`vars` 支持标准格式 / dict 简化格式 / list[str] 简化格式，详见 [vars.md](vars.md)。
 
-### StaticPositionsStrategy 配置（原 keep_positions）
-
-说明：`keep_positions` 为历史别名（不推荐）；文档统一使用 `static_positions`。
+### StaticPositionsStrategy 配置
 
 支持三种配置方式：
 
@@ -252,19 +250,19 @@ targets:
 
 ---
 
-## strategies namespace（单策略口径）
+## strategies namespace（单策略标量化）
 
-Executor 会接收到一个 `strategies` namespace（list 口径），用于在表达式里统一处理“策略输出字段”：
+Executor 会接收到一个 `strategies` namespace，用于在表达式里统一处理"策略输出字段"：
 
-- 当前 App 仅支持单策略，因此每个字段的列表长度为 `1`
-- 仍使用 list：避免把表达式与“是否多策略”绑定；未来如恢复多策略，该口径可自然扩展
+- 当前 App 仅支持单策略，因此每个字段是标量值（Issue 0013）
+- 直接访问：`strategies["field"]` 即可，无需 sum/avg 聚合
 
 ```python
 # Strategy 输出（单策略）
 {("okx/main", "BTC/USDT"): {"position_amount": 0.01}}
 
-# Executor 接收到的 strategies namespace（仍为列表）
-strategies["position_amount"] = [0.01]
+# Executor 接收到的 strategies namespace（Issue 0013: 单策略标量化）
+strategies["position_amount"] = 0.01
 ```
 
 在 Executor 中使用：
@@ -273,9 +271,9 @@ strategies["position_amount"] = [0.01]
 # conf/executor/xxx.yaml
 vars:
   - name: position_amount
-    value: sum(strategies["position_amount"])
+    value: strategies["position_amount"]
   - name: position_usd
-    value: sum(strategies["position_usd"]) if "position_usd" in strategies else 0
+    value: strategies["position_usd"] if "position_usd" in strategies else 0
 ```
 
 ---
@@ -515,4 +513,3 @@ targets:
 - [Feature 0013: MarketNeutralPositions 策略](../features/0013-market-neutral-positions-strategy.md)
 - [Example 004: MarketNeutralPositions 配置详解](../examples/004-market-neutral-positions-strategy.md)
 - [Scope 系统文档](scope.md)
-

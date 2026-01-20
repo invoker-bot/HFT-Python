@@ -1,10 +1,12 @@
+import logging
+import warnings
+from os import makedirs
+
+import pandas as pd
 from rich.console import Console
 from rich.logging import RichHandler
 import typer
-import pandas as pd
-from os import makedirs
-import logging
-import warnings
+
 from .config.crypto import init_fernet
 from .bin.run import app as run_app
 from .bin.config import app as config_app, password_option

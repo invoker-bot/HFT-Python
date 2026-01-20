@@ -5,7 +5,7 @@
 ## 概述
 
 重构 Strategy 的 target 配置机制，实现：
-1. **命名变更**：`keep_positions` → `static_positions`（更准确反映"静态仓位策略"）
+1. **命名变更**：`统一使用 `static_positions`（更准确反映"静态仓位策略"）
 2. **展开式写法**：引入 `target_pairs` + `target` 机制（类似 Executor 的 `order_levels` + `order`）
 3. **去特殊化**：Strategy 输出为通用字典字段；输出字段以 list 口径注入到 Executor 的 `strategies[...]` namespace（当前单策略列表长度为 1）
 4. **显式聚合**：Executor 可在 `vars/condition` 中显式聚合 `strategies[...]`（统一使用 `strategies["field"]` 访问）
@@ -15,7 +15,7 @@
 ### 当前问题
 
 **问题 1：命名不准确**
-- `keep_positions` 名称暗示"保持仓位"，但实际是"维持目标仓位"
+- `static_positions` 是标准命名，历史上曾使用 `keep_positions`，但这个名称暗示"保持仓位"，但实际是"维持目标仓位"
 - `static_positions` 更准确地反映"静态仓位策略"的含义
 
 **问题 2：配置重复**
@@ -55,14 +55,13 @@ targets:
 
 ```yaml
 # 旧命名
-class_name: keep_positions
+class_name: static_positions
 
 # 新命名
 class_name: static_positions
 ```
 
 **理由**：
-- `keep_positions` 暗示"保持不变"，但实际是"维持目标仓位"
 - `static_positions` 更准确：目标仓位是静态配置的（相对于动态策略）
 
 ### 变更 2：展开式写法
@@ -160,7 +159,7 @@ speed = target_dict["speed"]
 # Executor 显式聚合
 vars:
   - name: position_usd
-    value: sum(strategies["position_usd"])  # [100] → 100
+    value: strategies["position_usd"]  # [100] → 100
   - name: speed
     value: avg(strategies["speed"])         # [0.1] → 0.1
 ```
@@ -181,7 +180,7 @@ vars:
 
 ```yaml
 # conf/strategy/old.yaml
-class_name: keep_positions
+class_name: static_positions
 
 targets:
   - exchange_class: okx
@@ -220,7 +219,7 @@ class_name: limit
 vars:
   # 显式聚合 Strategy 输出
   - name: position_usd
-    value: sum(strategies["position_usd"])
+    value: strategies["position_usd"]
   - name: speed
     value: avg(strategies["speed"])
   - name: delta_usd
@@ -363,8 +362,8 @@ for (exchange_path, symbol), strategies_data in aggregated_targets.items():
 > 所有配置必须使用 `class_name: static_positions`。
 
 **迁移要求**：
-- 所有配置文件中的 `class_name: keep_positions` 必须改为 `class_name: static_positions`
-- 目录 `conf/strategy/keep_positions/` 已重命名为 `conf/strategy/static_positions/`
+- 所有配置文件中的 `class_name: static_positions` 必须改为 `class_name: static_positions`
+- 目录 `conf/strategy/static_positions/` 已重命名为 `conf/strategy/static_positions/`
 
 ### 2. 配置兼容
 
@@ -420,7 +419,7 @@ class_name: limit
 class_name: limit
 vars:
   - name: position_usd
-    value: sum(strategies["position_usd"])
+    value: strategies["position_usd"]
   - name: speed
     value: avg(strategies["speed"])
 ```
@@ -434,10 +433,8 @@ vars:
 
 ### Phase 1: 命名变更（P2）
 
-- [x] 重命名 `KeepPositionsStrategy` → `StaticPositionsStrategy`（已通过）
-- [x] 重命名 `keep_positions.py` → `static_positions.py`（已通过）
-- [x] ~~添加 `keep_positions` 别名支持~~ → 已移除，不再需要向后兼容（已通过）
-- [x] ~~添加 DeprecationWarning~~ → 已移除别名类（已通过）
+- [x] 重命名类和文件为 `StaticPositionsStrategy` / `static_positions.py`（已通过）
+- [x] 移除 `keep_positions` 别名支持（不再向后兼容）（已通过）
 - [x] 更新配置注册（hft/bin/config.py）（已通过）
 
 ### Phase 2: 展开式写法（P1）

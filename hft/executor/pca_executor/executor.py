@@ -16,7 +16,7 @@ Feature 0010 Phase 5: 使用统一的 Order 配置格式
 """
 import time
 from typing import TYPE_CHECKING, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..base import BaseExecutor, ExecutionResult, OrderIntent
 from ..order_config import OrderDefinition

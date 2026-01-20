@@ -77,23 +77,23 @@
 
 在 `conf/strategy/demo/` 新增用于触发交易的策略配置/入口：
 
-- `keep_positions_eth.yaml`：基于 `keep_positions`，针对 ETH 的目标仓位可在测试中切换（0 ↔ +100USD ↔ 0）
+- `static_positions_eth.yaml`：基于 `static_positions`，针对 ETH 的目标仓位可在测试中切换（0 ↔ +100USD ↔ 0）
 - 需要最小化依赖，便于在 app/demo 中引用
 
 ### 4) App demo（新增）
 
 在 `conf/app/demo/` 新增少量 app 配置，随机配对覆盖：
 
-- `okx_market_keep_positions.yaml`（OKX + market + keep_positions）
-- `binance_limit_keep_positions.yaml`（Binance + limit + keep_positions）
-- `okx_smart_keep_positions.yaml`（OKX + smart + keep_positions）
+- `okx_market_static_positions.yaml`（OKX + market + static_positions）
+- `binance_limit_static_positions.yaml`（Binance + limit + static_positions）
+- `okx_smart_static_positions.yaml`（OKX + smart + static_positions）
 
 说明：
 - 只需要 3–5 个组合即可。
 - `exchanges:` 必须引用 demo 交易所配置路径，例如：`demo/okx`、`demo/binance`（对应 `conf/exchange/demo/*.yaml`）。
 - 运行 app 的筛选由 `INTEGRATION_TEST_ALLOW_APP_LISTS` 控制：
   - `INTEGRATION_TEST_ALLOW_APP_LISTS="*"`：跑全部 demo app
-  - `INTEGRATION_TEST_ALLOW_APP_LISTS="okx_market_keep_positions,okx_smart_keep_positions"`：只跑指定 app（建议使用不带 `.yaml` 的 basename）
+  - `INTEGRATION_TEST_ALLOW_APP_LISTS="okx_market_static_positions,okx_smart_static_positions"`：只跑指定 app（建议使用不带 `.yaml` 的 basename）
 
 ## 测试设计（核心用例）
 
@@ -129,7 +129,7 @@
 选取少量 app/demo 组合（3–5 个），对每个组合：
 
 1) 启动最小 Listener 树（exchange/datasource/strategy/executor/app core），运行有限 duration（由INTEGRATION_TEST_DELAY_TIMEOUT决定）。
-2) 通过策略目标变化触发交易（例如 keep_positions 目标从 0 → +100USD → 0）。
+2) 通过策略目标变化触发交易（例如 static_positions 目标从 0 → +100USD → 0）。
 3) 验证：
 - 触发条件时选择的执行器符合预期（market/smart/limit）
 - 订单被创建（市价单必须成交；限价单检查价格/方向合理）

@@ -17,10 +17,12 @@ Demo 配置集成测试
 - 显式运行：pytest -m integration -v -s
 - 运行全部测试（包括集成测试）：pytest -m "" -v -s
 """
+# pylint: disable=import-outside-toplevel
 import os
-import pytest
 from glob import glob
 from pathlib import Path
+
+import pytest
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent

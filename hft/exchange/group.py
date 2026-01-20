@@ -21,7 +21,6 @@ from collections import defaultdict
 from cryptography.fernet import InvalidToken
 from ..core.listener import Listener, ListenerState
 from .base import BaseExchange
-from .config import BaseExchangeConfig
 
 if TYPE_CHECKING:
     from ..core.app import AppCore

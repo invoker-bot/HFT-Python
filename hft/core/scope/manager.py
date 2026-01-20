@@ -13,7 +13,7 @@ from .scopes import (
     TradingPairScope,
     TradingPairClassGroupScope,
 )
-from .instance_ids import get_all_instance_ids, has_instance_ids_provider
+from .instance_ids import get_all_instance_ids
 
 if TYPE_CHECKING:
     from ...core.app.base import AppCore

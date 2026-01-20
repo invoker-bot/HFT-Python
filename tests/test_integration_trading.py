@@ -23,13 +23,12 @@
 - 需要设置 INTEGRATION_TEST_ALLOW_LISTS 环境变量
 - 需要网络连接，否则会明确提示跳过原因
 """
+# pylint: disable=import-outside-toplevel,protected-access,too-many-lines
 import os
 import asyncio
-import time
 import random
 import socket
 from pathlib import Path
-from typing import Optional
 from glob import glob
 
 import pytest
@@ -270,7 +269,7 @@ async def sell_spot_balance(exchange, symbol: str, base_currency: str = "ETH") -
 
 async def cleanup_eth(exchange, include_spot: bool = True):
     """清理 ETH/SOL 相关的仓位和挂单"""
-    print(f"\n  [Cleanup] Cancelling orders and closing positions...")
+    print("\n  [Cleanup] Cancelling orders and closing positions...")
 
     # 取消挂单
     if include_spot and "spot" in exchange.config.support_types:
@@ -333,7 +332,7 @@ class TestGroup0ExchangeAPI:
         print(f"\n  [Spot Market] Price: {price}, Amount: {amount:.6f} SOL (~{amount * price:.2f} USD)")
 
         # 市价买入
-        print(f"  Placing buy order...")
+        print("  Placing buy order...")
         buy_order = await exchange.create_order(SOL_SPOT_SYMBOL, "market", "buy", amount)
         assert buy_order is not None
         assert buy_order.get("id")
@@ -342,7 +341,7 @@ class TestGroup0ExchangeAPI:
         await wait_random(5, 10)
 
         # 获取实际余额后卖出（考虑手续费）
-        print(f"  Fetching actual balance...")
+        print("  Fetching actual balance...")
         spot_key = "spot" if "spot" in exchange.exchanges else list(exchange.exchanges.keys())[0]
         balance = await exchange.medal_fetch_balance(spot_key)
         actual_amount = float(balance.get("SOL", {}).get("free", 0) or balance.get("SOL", 0) or 0)
@@ -351,7 +350,7 @@ class TestGroup0ExchangeAPI:
         print(f"  Actual SOL balance: {actual_amount:.6f}")
 
         # 市价卖出
-        print(f"  Placing sell order...")
+        print("  Placing sell order...")
         sell_order = await exchange.create_order(SOL_SPOT_SYMBOL, "market", "sell", actual_amount)
         assert sell_order is not None
         assert sell_order.get("id")
@@ -360,7 +359,7 @@ class TestGroup0ExchangeAPI:
         await wait_random(5, 10)
 
         # 验证 fetch_my_trades 可见性
-        print(f"  Verifying trades visibility...")
+        print("  Verifying trades visibility...")
         spot_ccxt = exchange.exchanges.get("spot") or exchange.exchanges.get(list(exchange.exchanges.keys())[0])
         trades = await spot_ccxt.fetch_my_trades(SOL_SPOT_SYMBOL, limit=10)
         assert len(trades) > 0, "No trades found after market orders"
@@ -392,7 +391,7 @@ class TestGroup0ExchangeAPI:
         print(f"\n  [Swap Market] Price: {price}, Amount: {amount:.6f} contracts (~{ORDER_USD} USD)")
 
         # 市价开多
-        print(f"  Opening long position...")
+        print("  Opening long position...")
         open_order = await exchange.create_order(ETH_SWAP_SYMBOL, "market", "buy", amount)
         assert open_order is not None
         assert open_order.get("id")
@@ -401,7 +400,7 @@ class TestGroup0ExchangeAPI:
         await wait_random(5, 10)
 
         # 市价平仓
-        print(f"  Closing position...")
+        print("  Closing position...")
         close_order = await exchange.create_order(
             ETH_SWAP_SYMBOL, "market", "sell", amount,
             params={"reduceOnly": True}
@@ -413,7 +412,7 @@ class TestGroup0ExchangeAPI:
         await wait_random(5, 10)
 
         # 验证 fetch_my_trades 可见性
-        print(f"  Verifying trades visibility...")
+        print("  Verifying trades visibility...")
         swap_ccxt = exchange.exchanges.get("swap")
         trades = await swap_ccxt.fetch_my_trades(ETH_SWAP_SYMBOL, limit=10)
         assert len(trades) > 0, "No trades found after market orders"
@@ -459,7 +458,7 @@ class TestGroup1LimitOrders:
         print(f"\n  [Far Limit] Current: {price}, Limit: {far_price:.2f} (-5%), Amount: {amount:.6f}")
 
         # 下远离限价单
-        print(f"  Placing far limit buy order...")
+        print("  Placing far limit buy order...")
         order = await exchange.create_order(
             ETH_SWAP_SYMBOL, "limit", "buy", amount, far_price
         )
@@ -471,11 +470,11 @@ class TestGroup1LimitOrders:
         await wait_random(5, 10)
 
         # 验证订单状态（应为 open）
-        print(f"  Checking order status...")
+        print("  Checking order status...")
         open_orders = await exchange.fetch_open_orders(ETH_SWAP_SYMBOL)
         order_ids = [o["id"] for o in open_orders]
         assert order_id in order_ids, f"Order {order_id} not found in open orders"
-        print(f"  ✓ Order is open")
+        print("  ✓ Order is open")
 
         # 验证价格偏移
         placed_order = next(o for o in open_orders if o["id"] == order_id)
@@ -485,7 +484,7 @@ class TestGroup1LimitOrders:
         print(f"  ✓ Price deviation: {price_diff:.4%}")
 
         # 撤单
-        print(f"  Cancelling order...")
+        print("  Cancelling order...")
         await exchange.cancel_order(order_id, ETH_SWAP_SYMBOL)
 
         await asyncio.sleep(2)
@@ -494,7 +493,7 @@ class TestGroup1LimitOrders:
         open_orders = await exchange.fetch_open_orders(ETH_SWAP_SYMBOL)
         order_ids = [o["id"] for o in open_orders]
         assert order_id not in order_ids, f"Order {order_id} still open after cancel"
-        print(f"  ✓ Order cancelled successfully")
+        print("  ✓ Order cancelled successfully")
 
         # 清理
         await cleanup_eth(exchange, include_spot=False)
@@ -525,7 +524,7 @@ class TestGroup1LimitOrders:
         print(f"  Buy price: {buy_price:.2f} (-1%), Sell price: {sell_price:.2f} (+1%)")
 
         # 下买单
-        print(f"  Placing near limit buy order...")
+        print("  Placing near limit buy order...")
         buy_order = await exchange.create_order(
             ETH_SWAP_SYMBOL, "limit", "buy", amount, buy_price
         )
@@ -539,7 +538,7 @@ class TestGroup1LimitOrders:
         print(f"  ✓ Buy order price valid: {placed_buy_price}")
 
         # 下卖单
-        print(f"  Placing near limit sell order...")
+        print("  Placing near limit sell order...")
         sell_order = await exchange.create_order(
             ETH_SWAP_SYMBOL, "limit", "sell", amount, sell_price
         )
@@ -555,10 +554,10 @@ class TestGroup1LimitOrders:
         await asyncio.sleep(2)
 
         # 撤单
-        print(f"  Cancelling orders...")
+        print("  Cancelling orders...")
         await exchange.cancel_order(buy_order_id, ETH_SWAP_SYMBOL)
         await exchange.cancel_order(sell_order_id, ETH_SWAP_SYMBOL)
-        print(f"  ✓ Orders cancelled")
+        print("  ✓ Orders cancelled")
 
         # 清理
         await cleanup_eth(exchange, include_spot=False)
@@ -597,7 +596,7 @@ class TestGroup2AppTick:
 
         try:
             # 启动 app
-            print(f"  Starting app...")
+            print("  Starting app...")
             await app.start()
 
             # 获取交易所实例
@@ -621,7 +620,7 @@ class TestGroup2AppTick:
             await asyncio.sleep(DELAY_TIMEOUT)
 
             # 修改策略目标：+100 USD -> 0
-            print(f"  Setting target position to 0...")
+            print("  Setting target position to 0...")
             for strategy in app.strategies.values():
                 if hasattr(strategy, "positions_usd"):
                     strategy.positions_usd[ETH_SWAP_SYMBOL] = 0
@@ -632,11 +631,11 @@ class TestGroup2AppTick:
             # 清理
             await cleanup_eth(exchange, include_spot=True)
 
-            print(f"  ✓ App tick cycle completed")
+            print("  ✓ App tick cycle completed")
 
         finally:
             # 停止 app
-            print(f"  Stopping app...")
+            print("  Stopping app...")
             await app.stop()
 
 

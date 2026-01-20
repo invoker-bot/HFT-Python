@@ -2,8 +2,8 @@ import typer
 from rich.console import Console
 from ..exchange import BaseExchangeConfig
 from ..strategy.config import BaseStrategyConfig
-from ..strategy.static_positions import StaticPositionsStrategyConfig  # noqa: F401 - 注册子类
-from ..strategy.market_neutral_positions import MarketNeutralPositionsConfig  # noqa: F401 - 注册子类
+from ..strategy.static_positions import StaticPositionsStrategyConfig  # noqa: F401 - 注册子类  # pylint: disable=unused-import
+from ..strategy.market_neutral_positions import MarketNeutralPositionsConfig  # noqa: F401 - 注册子类  # pylint: disable=unused-import
 from ..core.app.config import AppConfig
 
 app = typer.Typer()

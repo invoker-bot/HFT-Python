@@ -3,7 +3,6 @@ StaticPositionsStrategy Scope 支持测试
 
 验证 StaticPositionsStrategy 与 Scope 系统的兼容性
 """
-import pytest
 from hft.strategy.static_positions import StaticPositionsStrategy, StaticPositionsStrategyConfig
 
 

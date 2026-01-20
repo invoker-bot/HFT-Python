@@ -25,13 +25,14 @@ DataSourceGroup - 数据源管理器
     # 批量获取
     sources = datasource_group.query_many("okx", ["BTC/USDT:USDT", "ETH/USDT:USDT"], DataType.TICKER)
 """
+# pylint: disable=import-outside-toplevel
 import time
 import asyncio
 from enum import Enum
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Optional, Generic, TypeVar, Type, TYPE_CHECKING
-from ..core.listener import Listener, GroupListener, ListenerState
+from ..core.listener import Listener, GroupListener
 
 if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
@@ -686,7 +687,7 @@ class DataSourceGroup(GroupListener):
         return TradingPairDataSource(
             exchange=param["exchange"],
             symbol=param["symbol"],
-            auto_destroy_timeout=self._auto_destroy_timeout,
+            auto_stop_timeout=self._auto_destroy_timeout,
         )
 
     # ===== 查询接口 =====

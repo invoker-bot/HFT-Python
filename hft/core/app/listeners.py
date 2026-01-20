@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any
 from rich.console import Console
 from ..._version import __version__
 from ..listener import Listener, ListenerState
-from ..listener_cache import ListenerCache, build_cache_key
+from ..listener_cache import ListenerCache
 
 if TYPE_CHECKING:
     from .base import AppCore

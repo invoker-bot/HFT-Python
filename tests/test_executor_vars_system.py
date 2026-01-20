@@ -8,9 +8,11 @@ Feature 0010: Executor vars 系统 - 单元测试
 4. duration 变量
 5. 状态持久化
 """
+# pylint: disable=import-outside-toplevel,protected-access
+from unittest.mock import MagicMock
+
 import pytest
-import time
-from unittest.mock import MagicMock, patch
+
 from hft.executor.config import ExecutorVarDefinition
 from hft.executor.market_executor.config import MarketExecutorConfig
 
@@ -325,21 +327,23 @@ class TestExecutorCollectContextVars:
         assert context2["reset_signal"] == 1
 
     def test_strategies_namespace(self):
-        """测试 strategies namespace"""
+        """测试 strategies namespace（Issue 0013: 单策略标量化）"""
         from hft.executor.market_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
             vars={
-                "total_position": "sum(strategies['position_usd'])",
+                "scaled_position": "strategies['position_usd'] * 2",
             },
         )
         executor = MarketExecutor(config)
         executor._root = MagicMock()
         executor._root.indicator_group = None
 
+        # Issue 0013: strategies_data 不再是列表，而是标量值
         strategies_data = {
-            "position_usd": [100.0, 200.0, 300.0],
+            "position_usd": 300.0,
+            "speed": 0.8,
         }
 
         context = executor.collect_context_vars(
@@ -352,7 +356,8 @@ class TestExecutorCollectContextVars:
         )
 
         assert context["strategies"] == strategies_data
-        assert context["total_position"] == 600.0  # sum([100, 200, 300])
+        # 不再需要 sum，直接访问标量
+        assert context["scaled_position"] == 600.0  # 300 * 2
 
     def test_vars_and_conditional_vars_combined(self):
         """测试普通 vars 和条件 vars 组合使用"""

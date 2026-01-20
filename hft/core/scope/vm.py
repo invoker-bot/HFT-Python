@@ -5,7 +5,6 @@ VirtualMachine - 表达式求值引擎
 """
 from typing import Any, Dict, Optional
 from simpleeval import simple_eval, DEFAULT_FUNCTIONS, DEFAULT_OPERATORS
-import operator
 
 
 class VirtualMachine:

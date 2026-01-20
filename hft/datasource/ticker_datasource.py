@@ -6,6 +6,7 @@ Ticker 数据源
     新代码请使用 hft.indicator.datasource.TickerDataSource。
     将在 Phase 3 清理时移除。
 """
+# pylint: disable=import-outside-toplevel,protected-access
 from typing import Optional, Any, TYPE_CHECKING
 from .base import BaseDataSource
 

@@ -7,8 +7,6 @@ Scope 系统变量计算 - 单元测试
 3. Scope 树构建
 4. parent/children 访问
 """
-import pytest
-from hft.core.scope.base import BaseScope
 from hft.core.scope.scopes import (
     GlobalScope,
     ExchangeScope,

@@ -9,8 +9,9 @@ PCAExecutor 特点：
 - 支持 entry_level, exit_level 追踪
 - 支持 reset 条件（重置统计）
 """
+# pylint: disable=import-outside-toplevel
 from functools import cached_property
-from typing import ClassVar, Type, Optional, Union
+from typing import ClassVar, Type, Optional
 
 from pydantic import Field
 
@@ -146,5 +147,3 @@ class PCAExecutorConfig(BaseExecutorConfig):
 __all__ = [
     "PCAExecutorConfig",
 ]
-
-

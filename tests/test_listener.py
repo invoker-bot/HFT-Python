@@ -8,11 +8,13 @@ Tests cover:
 - Parent-child relationships
 - Background task management
 """
-import pytest
+# pylint: disable=protected-access
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from hft.core.listener import Listener, ListenerState, RETRY_ATTEMPTS, RETRY_WAIT_SECONDS
+import pytest
+
+from hft.core.listener import ListenerState, RETRY_ATTEMPTS
 from tests.conftest import MockListener
 
 
@@ -462,7 +464,6 @@ from tests.conftest import (
     MockLimitExecutor,
     MockStrategy,
     MockTrendStrategy,
-    MockMeanReversionStrategy,
 )
 
 

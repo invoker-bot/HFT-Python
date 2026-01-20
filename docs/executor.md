@@ -150,7 +150,7 @@ vars:
 
 ```
 1. 收集 requires 中 Indicator 的变量
-2. 注入 strategies namespace（来自 Strategy 输出的聚合口径；当前仅支持单策略，列表长度为 1）
+2. 注入 strategies namespace（来自 Strategy 输出；Issue 0013: 单策略标量化）
 3. 计算 vars（按列表顺序，包括条件变量）
 4. 计算 order 内部的 vars
 ```
@@ -397,9 +397,9 @@ routes:
 ```yaml
 vars:
   - name: position_amount
-    value: 'sum(strategies["position_amount"])'
+    value: 'strategies["position_amount"]'
   - name: position_usd
-    value: 'sum(strategies["position_usd"])'
+    value: 'strategies["position_usd"]'
 ```
 
 ---

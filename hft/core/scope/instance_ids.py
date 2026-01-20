@@ -12,7 +12,8 @@ get_all_instance_ids 注册机制
 2. 调用：
    instance_ids = get_all_instance_ids(app_core, parent_scope, parent_scope_class, scope_class)
 """
-from typing import Callable, Optional, Any, TYPE_CHECKING
+# pylint: disable=import-outside-toplevel
+from typing import Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .base import BaseScope

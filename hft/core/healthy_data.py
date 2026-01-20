@@ -519,7 +519,8 @@ class HealthyDataArray(Generic[T]):
 
     def __iter__(self):
         """迭代返回值（不含时间戳）"""
-        return (item[1] for item in self._data)
+        # Keep it tuple-unpacking (instead of subscript) to avoid rare astroid/pylint crashes.
+        return (value for _, value in self._data)
 
     def items(self):
         """迭代返回 (timestamp, value) 元组"""

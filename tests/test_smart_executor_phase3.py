@@ -8,10 +8,12 @@ Tests cover:
 - trades 数据缺失时的 fail-safe 行为
 - edge 和 notional 计算正确性
 """
-import time
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+# pylint: disable=protected-access
 from dataclasses import dataclass
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from hft.executor.base import ExecutionResult
 from hft.executor.smart_executor.executor import SmartExecutor

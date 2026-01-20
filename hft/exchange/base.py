@@ -14,7 +14,6 @@ import time
 import asyncio
 from abc import abstractmethod, ABCMeta
 from enum import StrEnum
-from operator import attrgetter
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, ClassVar, TYPE_CHECKING
@@ -136,12 +135,12 @@ class FundingRate:
     @property
     def seconds_until_funding(self) -> float:
         """距离下次结算的秒数"""
-        return max(self.funding_timestamp - time.time(), 0.0)
+        return max(self.next_funding_timestamp - time.time(), 0.0)
 
     @property
     def daily_funding_rate(self) -> float:
         """日化资金费率"""
-        return self.funding_rate * (24 / self.funding_interval_hours)
+        return self.next_funding_rate * (24 / self.funding_interval_hours)
 
     @property
     def annual_funding_rate(self) -> float:
@@ -923,8 +922,6 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             ValueError: 参数无效或条件不满足
             TimeoutError: 等待到账超时
         """
-        import asyncio
-
         # 获取通知服务（如果可用）
         notify = getattr(self.root, 'notify', None)
 

@@ -1,6 +1,7 @@
 """
 SmartExecutor 配置模块
 """
+# pylint: disable=import-outside-toplevel
 from functools import cached_property
 from typing import ClassVar, Type, Optional
 
@@ -129,4 +130,3 @@ __all__ = [
     "RouteConfig",
     "SmartExecutorConfig",
 ]
-
