@@ -4,11 +4,14 @@ Indicator 工厂类
 可 pickle 的 indicator 工厂，用于配置驱动创建指标。
 
 Feature 0008: 支持 exchange_path 级别的 Indicator
+Issue 0015: 支持 window duration 字符串
 """
+# pylint: disable=import-outside-toplevel
 import logging
 from typing import Any, Optional
 
 from .base import BaseIndicator
+from ..core.duration import parse_duration
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,7 @@ class IndicatorFactory:
     """
 
     # 内置 indicator 类映射（延迟加载）
-    _builtin_classes: dict[str, type] | None = None
+    _builtin_classes: dict[str, type[BaseIndicator]] = {}
 
     def __init__(self, class_name: str, params: dict[str, Any], ready_condition: Optional[str] = None):
         """
@@ -31,13 +34,34 @@ class IndicatorFactory:
             ready_condition: ready 条件表达式（单独注入）
         """
         self._class_name = class_name
-        self._params = params
+        # Issue 0015: 解析 window duration 字符串
+        self._params = self._normalize_params(params)
         self._ready_condition = ready_condition
 
+    @staticmethod
+    def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
+        """
+        归一化参数，处理 window duration 字符串
+
+        Args:
+            params: 原始参数
+
+        Returns:
+            归一化后的参数
+        """
+        normalized = params.copy()
+        if 'window' in normalized:
+            try:
+                normalized['window'] = parse_duration(normalized['window'])
+            except (ValueError, TypeError) as e:
+                logger.warning("Failed to parse window duration: %s", e)
+                # 保留原值，让后续报错
+        return normalized
+
     @classmethod
-    def _get_builtin_classes(cls) -> dict[str, type]:
+    def _get_builtin_classes(cls) -> dict[str, type[BaseIndicator]]:
         """延迟加载内置类映射"""
-        if cls._builtin_classes is None:
+        if not cls._builtin_classes:
             from .datasource import (
                 TickerDataSource,
                 TradesDataSource,
@@ -96,7 +120,7 @@ class IndicatorFactory:
         Returns:
             BaseIndicator 实例，创建失败返回 None
         """
-        builtin_classes = self._get_builtin_classes()
+        builtin_classes = type(self)._get_builtin_classes()
 
         if self._class_name not in builtin_classes:
             logger.warning("Unknown indicator class: %s", self._class_name)

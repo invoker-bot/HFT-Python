@@ -98,13 +98,13 @@ indicators:
   ticker:
     class: TickerDataSource
     params:
-      window: 60.0
+      window: 1m  # 支持 duration 字符串：60s, 1m, 5m, 1h, 1d, 500ms
     ready_condition: "timeout < 5"
 
   trades:
     class: TradesDataSource
     params:
-      window: 300.0
+      window: 5m  # 等价于 300.0 或 "300s"
     ready_condition: "timeout < 60 and cv < 0.8"
 
   rsi:
@@ -147,9 +147,46 @@ debug: true
 | `cv` | float | 采样间隔变异系数（0-1，越小越稳定） |
 | `range` | float | 实际覆盖时间 / 期望窗口时间 |
 
+**限制**：
+- `ready_condition` 禁用函数调用（如 `len/sum/min/max`），仅支持比较/逻辑/基本算术等操作符
+- `window <= 0` 或 `window: null` 时：`cv = 0.0`，`range = 1.0`
+
 **示例**：
 ```yaml
 ready_condition: "timeout < 60 and cv < 0.8 and range > 0.6"
+```
+
+## window 参数格式（Issue 0015）
+
+`window` 参数用于指定数据窗口大小，支持以下格式：
+
+| 格式 | 说明 | 示例 | 等价秒数 |
+|------|------|------|----------|
+| `int/float` | 数值（单位秒） | `60`, `300.0` | 60, 300 |
+| `str` | duration 字符串 | `"60s"`, `"1m"`, `"5m"` | 60, 60, 300 |
+| `null` | 无窗口（仅保留最新点） | `null` | 0 |
+
+**支持的 duration 单位**：
+- `ms`: 毫秒（0.001秒）
+- `s`: 秒
+- `m`: 分钟（60秒）
+- `h`: 小时（3600秒）
+- `d`: 天（86400秒）
+
+**推荐写法**：优先使用 duration 字符串（更直观、更不易出错）
+
+```yaml
+# 推荐：duration 字符串
+window: 1m    # 1分钟
+window: 5m    # 5分钟
+window: 1h    # 1小时
+
+# 也支持：数值秒
+window: 60.0  # 1分钟
+window: 300   # 5分钟
+
+# 无窗口
+window: null  # 等价于 0
 ```
 
 ## 相关文档

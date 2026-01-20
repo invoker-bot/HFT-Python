@@ -208,7 +208,7 @@ indicators:
   trades:
     class: TradesDataSource
     params:
-      window: 300.0
+      window: 5m  # 支持 duration 字符串：60s, 1m, 5m, 1h, 1d
     ready_condition: "timeout < 60 and cv < 0.8 and range > 0.6"
 ```
 

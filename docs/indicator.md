@@ -174,7 +174,9 @@ def is_ready(self) -> bool:
 |------|------|
 | `timeout` | 距离最后一次数据更新的秒数 |
 | `cv` | 数据变异系数（Coefficient of Variation） |
-| `count` | 数据点数量 |
+| `range` | 实际覆盖时间 / 期望窗口时间 |
+
+**注意**：`ready_condition` 禁用函数调用（如 `len/sum/min/max`），仅支持比较/逻辑/基本算术等操作符。
 
 **配置示例**：
 
@@ -184,7 +186,7 @@ indicators:
     class: TradesDataSource
     ready_condition: "timeout < 60 and cv < 0.8"  # 单独字段
     params:
-      window: 300.0  # 构造参数
+      window: 5m  # 构造参数（支持 duration 字符串：60s, 1m, 5m, 1h, 1d）
 ```
 
 ### ready_internal() 实现

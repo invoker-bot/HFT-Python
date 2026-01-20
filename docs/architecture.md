@@ -310,7 +310,7 @@ AppConfigPath("main").instance  # 解析出 AppConfig（Pydantic）
         └──> indicators:  # 内联定义（运行时创建）
               ticker:
                 class: TickerDataSource
-                params: {window: 60.0}
+                params: {window: 1m}
                 ready_condition: "timeout < 5"
               └──> IndicatorFactory ──> BaseIndicator 实例
 ```
