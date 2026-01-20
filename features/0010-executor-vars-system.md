@@ -51,7 +51,10 @@ vars:
 
 ### 3. strategies namespace
 
-Executor 通过 `strategies` namespace 接收多个 Strategy 的聚合输出：
+Executor 通过 `strategies` namespace 接收 Strategy 输出的 list 口径：
+
+- 当前 App 仅支持单策略，因此每个字段列表长度为 1
+- 仍保持 list：表达式可统一写成 `sum/avg/max(...)` 等聚合形式
 
 ```yaml
 vars:
@@ -62,14 +65,14 @@ vars:
 ```
 
 **聚合规则**：
-- 多个 Strategy 输出同一字段时，聚合为列表
+- 字段统一为列表（单策略时列表长度为 1）
 - 通过 `sum()`, `max()`, `min()`, `avg()` 等函数处理
 
 ### 4. 计算顺序
 
 ```
 1. 内置变量（direction/buy/sell/speed/notional 等）
-2. 注入 strategies namespace（来自多个 Strategy 的聚合输出）
+2. 注入 strategies namespace（来自 Strategy 输出的 list 口径；单策略长度为 1）
 3. 收集 requires 中 Indicator 的变量
 4. 计算 vars（按列表顺序，包括条件变量和 duration）
 5. （如适用）计算 order 内部的 vars

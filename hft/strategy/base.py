@@ -340,6 +340,38 @@ class BaseStrategy(Listener):
         # 返回过滤后的结果
         return list(included - excluded)
 
+    def _get_group_id_for_symbol(self, symbol: str) -> Optional[str]:
+        """
+        获取交易对的分组 ID
+
+        默认实现：使用 symbol 的第一部分（如 ETH/USDT → ETH）
+        子类可以重写此方法提供自定义分组逻辑。
+
+        Args:
+            symbol: 交易对（如 "ETH/USDT"）
+
+        Returns:
+            分组 ID（如 "ETH"），如果无法确定则返回 None
+        """
+        # 检查是否有 trading_pair_group 配置（在子类配置中）
+        trading_pair_group = getattr(self.config, 'trading_pair_group', None)
+        if trading_pair_group and symbol in trading_pair_group:
+            return trading_pair_group[symbol]
+
+        # 检查是否有 default_trading_pair_group 表达式
+        default_expr = getattr(self.config, 'default_trading_pair_group', None)
+        if default_expr:
+            try:
+                context = {"symbol": symbol}
+                return self._safe_eval(default_expr, context)
+            except Exception:
+                pass
+
+        # 降级：使用 symbol 的第一部分
+        if '/' in symbol:
+            return symbol.split('/')[0]
+        return symbol
+
     def _register_custom_scopes(self) -> None:
         """
         注册自定义 Scope 类型（由子类重写）
@@ -484,6 +516,18 @@ class BaseStrategy(Listener):
                 # 为每个 symbol 构建 trading_pair instance_id: "exchange_path:symbol"
                 return [f"{exchange_path}:{symbol}" for symbol in sorted(symbols)]
 
+            elif class_name == "TradingPairClassGroupScope":
+                # TradingPairClassGroupScope: 获取所有唯一的 group_id
+                # group_id 由 symbol 计算得出（通过 default_trading_pair_group 或 trading_pair_group 映射）
+                symbols = self._get_filtered_symbols()
+                group_ids = set()
+                for symbol in symbols:
+                    # 计算 group_id
+                    group_id = self._get_group_id_for_symbol(symbol)
+                    if group_id:
+                        group_ids.add(group_id)
+                return sorted(group_ids)
+
             else:
                 # 未知类型，返回空列表
                 self.logger.warning(
@@ -512,7 +556,9 @@ class BaseStrategy(Listener):
 
     def _evaluate_targets(self, scope, exchange_path: str, symbol: str) -> dict:
         """
-        匹配并求值 targets 配置
+        匹配并求值 targets 配置（Feature 0012）
+
+        支持新格式（vars 列表）和旧格式（直接字段）。
 
         Args:
             scope: 当前 Scope
@@ -533,26 +579,25 @@ class BaseStrategy(Listener):
                     exchange_class = exchange.class_name
                     break
 
-        # 遍历所有 targets，找到匹配的
+        # 遍历所有 targets，找到匹配的（贪婪匹配：取第一个）
         for target in self.config.targets:
-            # 匹配 exchange
-            if not self._match_pattern(target.exchange, exchange_path):
+            # 匹配 exchange_id（优先）或 exchange（向后兼容）
+            exchange_pattern = target.exchange_id
+            if not self._match_pattern(exchange_pattern, exchange_path):
                 continue
 
             # 匹配 exchange_class
             if exchange_class and not self._match_pattern(target.exchange_class, exchange_class):
                 continue
 
-            # 匹配 symbol
-            if target.symbol != symbol:
+            # 匹配 symbol（支持通配符）
+            if not self._match_pattern(target.symbol, symbol):
                 continue
 
             # 检查 target 级 condition
             if target.condition:
                 try:
-                    context = dict(scope._vars)
-                    context['parent'] = scope.parent
-                    context['children'] = scope.children
+                    context = dict(scope.vars)
                     result = self._safe_eval(target.condition, context)
                     if not result:
                         continue
@@ -565,39 +610,52 @@ class BaseStrategy(Listener):
 
             # 求值所有字段
             output = {}
-            context = dict(scope._vars)
-            context['parent'] = scope.parent
-            context['children'] = scope.children
+            context = dict(scope.vars)
 
-            # 求值标准字段
-            for field_name in ["position_usd", "position_amount", "max_position_usd"]:
-                field_value = getattr(target, field_name, None)
-                if field_value is not None:
+            # 新格式：计算 vars 列表
+            if target.vars:
+                for var_def in target.vars:
                     try:
-                        output[field_name] = self._safe_eval(field_value, context)
+                        value = self._safe_eval(var_def.value, context)
+                        output[var_def.name] = value
+                        # 更新上下文，后续 var 可以引用前面的 var
+                        context[var_def.name] = value
                     except Exception as e:
                         self.logger.warning(
-                            "Failed to evaluate %s for %s:%s: %s",
-                            field_name, exchange_path, symbol, e
+                            "Failed to evaluate target var %s for %s:%s: %s",
+                            var_def.name, exchange_path, symbol, e
                         )
 
-            # speed 是 float，直接使用
-            if target.speed is not None:
-                output["speed"] = target.speed
-
-            # 求值额外字段（通过 model_extra）
-            if hasattr(target, '__pydantic_extra__'):
-                for field_name, field_value in target.__pydantic_extra__.items():
-                    if isinstance(field_value, str):
+            # 向后兼容：求值标准字段（如果 vars 为空）
+            if not target.vars:
+                for field_name in ["position_usd", "position_amount", "max_position_usd"]:
+                    field_value = getattr(target, field_name, None)
+                    if field_value is not None:
                         try:
                             output[field_name] = self._safe_eval(field_value, context)
                         except Exception as e:
                             self.logger.warning(
-                                "Failed to evaluate extra field %s for %s:%s: %s",
+                                "Failed to evaluate %s for %s:%s: %s",
                                 field_name, exchange_path, symbol, e
                             )
-                    else:
-                        output[field_name] = field_value
+
+                # speed 是 float，直接使用
+                if target.speed is not None:
+                    output["speed"] = target.speed
+
+                # 求值额外字段（通过 model_extra）
+                if hasattr(target, '__pydantic_extra__'):
+                    for field_name, field_value in target.__pydantic_extra__.items():
+                        if isinstance(field_value, str):
+                            try:
+                                output[field_name] = self._safe_eval(field_value, context)
+                            except Exception as e:
+                                self.logger.warning(
+                                    "Failed to evaluate extra field %s for %s:%s: %s",
+                                    field_name, exchange_path, symbol, e
+                                )
+                        else:
+                            output[field_name] = field_value
 
             return output
 
@@ -726,11 +784,13 @@ class BaseStrategy(Listener):
         """
         注入 Indicator 变量到 Scope
 
+        如果 Indicator not ready，则标记该 scope 及其所有 children 为 not ready。
+
         Args:
             scope: 目标 Scope
         """
         # 获取 exchange_path 和 symbol
-        exchange_path = scope.get_var("exchange_path")
+        exchange_path = scope.get_var("exchange_id") or scope.get_var("exchange_path")
         symbol = scope.get_var("symbol")
 
         if not exchange_path or not symbol:
@@ -744,24 +804,41 @@ class BaseStrategy(Listener):
             indicator = self._get_indicator(
                 indicator_id, exchange_class, symbol, exchange_path=exchange_path
             )
-            if indicator and indicator.is_ready():
-                try:
-                    vars_dict = indicator.calculate_vars(direction=0)
-                    # 注入到 Scope
-                    for var_name, var_value in vars_dict.items():
-                        scope.set_var(var_name, var_value)
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to inject vars from indicator %s to scope %s:%s: %s",
-                        indicator_id, scope.scope_class_id, scope.scope_instance_id, e
-                    )
 
-    def _compute_scope_vars(self, scope: 'BaseScope') -> None:
+            if indicator is None:
+                # Indicator 不存在，标记为 not ready
+                scope.mark_not_ready()
+                continue
+
+            if not indicator.is_ready():
+                # Indicator not ready → 标记该 scope 及其所有 children 为 not ready
+                scope.mark_not_ready()
+                continue
+
+            try:
+                vars_dict = indicator.calculate_vars(direction=0)
+                # 注入到 Scope
+                for var_name, var_value in vars_dict.items():
+                    scope.set_var(var_name, var_value)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to inject vars from indicator %s to scope %s:%s: %s",
+                    indicator_id, scope.scope_class_id, scope.scope_instance_id, e
+                )
+                # 注入失败也标记为 not ready
+                scope.mark_not_ready()
+
+    def _compute_scope_vars(
+        self,
+        scope: 'BaseScope',
+        post: bool = False
+    ) -> None:
         """
         计算 Scope 配置中的 vars
 
         Args:
             scope: 目标 Scope
+            post: 是否只计算 post=True 的 vars（默认 False，只计算 post=False 的 vars）
         """
         scope_config = self.config.scopes.get(scope.scope_class_id)
         if not scope_config or not scope_config.vars:
@@ -774,8 +851,25 @@ class BaseStrategy(Listener):
         context['parent'] = scope.parent
         context['children'] = scope.children
 
-        # 计算每个 var
+        # 辅助函数：聚合 children 的变量
+        def child_values(children, var_name):
+            """收集所有 children 的指定变量值"""
+            values = []
+            for child in children.values():
+                val = child.get_var(var_name)
+                if val is not None:
+                    values.append(val)
+            return values
+
+        context['child_values'] = child_values
+
+        # 计算每个 var（只计算 post 属性匹配的 var）
         for var_def in scope_config.vars:
+            # 检查 post 属性是否匹配
+            var_post = getattr(var_def, 'post', False)
+            if var_post != post:
+                continue
+
             try:
                 # 检查条件
                 if var_def.on:
@@ -799,89 +893,166 @@ class BaseStrategy(Listener):
                     var_def.name, scope.scope_class_id, scope.scope_instance_id, e
                 )
 
+    def _breadth_first_traversal(self, root_scopes: list['BaseScope']) -> list['BaseScope']:
+        """
+        广度优先遍历 Scope 树
+
+        Args:
+            root_scopes: 根节点列表
+
+        Returns:
+            广度优先顺序的 Scope 列表
+        """
+        from collections import deque
+
+        result = []
+        visited = set()
+        queue = deque(root_scopes)
+
+        while queue:
+            scope = queue.popleft()
+            scope_id = id(scope)
+
+            if scope_id in visited:
+                continue
+
+            visited.add(scope_id)
+            result.append(scope)
+
+            # 添加 children 到队列
+            for child in scope.children.values():
+                if id(child) not in visited:
+                    queue.append(child)
+
+        return result
+
     def get_output(self) -> StrategyOutput:
         """
         获取策略输出（Feature 0012）
 
         基于 Scope 系统计算策略输出。
 
-        流程：
-        1. 获取所有需要处理的 (exchange_path, symbol) 对
-        2. 第一次遍历：按需创建 Scope + 注入 Indicator 变量
-        3. 第二次遍历：计算 Scope vars + 求值 targets
-        4. 应用 condition gate
+        流程（三遍计算）：
+        1. 构建 LinkTree（按需创建 Scope）
+        2. 第一遍：requires（Indicator 注入）
+        3. 第二遍：计算 post=false 的 vars
+        4. 第三遍：计算 post=true 的 vars
+        5. target 匹配与输出
 
         Returns:
             {(exchange_path, symbol): {"field": value, ...}}
         """
         if not self.config.links or not self.scope_manager:
-            # 如果没有配置 Scope 系统，返回空输出
             return {}
 
-        # 1. 获取所有需要处理的 trading pairs
-        trading_pairs = self._get_all_trading_pairs()
+        # 重置所有 scope 的 ready 状态
+        self.scope_manager.reset_all_ready_states()
 
+        # 1. 构建 LinkTree（按需创建 Scope）
+        trading_pairs = self._get_all_trading_pairs()
         if not trading_pairs:
             return {}
 
-        # 2. 第一次遍历：按需创建 Scope + 注入 Indicator 变量
-        # 支持多条 links
-        scopes_map = {}  # {(link_index, exchange_path, symbol): scope}
+        # 为每条 link 构建 Scope 树
+        link_trees = []  # [(link_index, root_scopes, leaf_scopes)]
         for link_index in range(len(self.config.links)):
+            root_scopes = []
+            leaf_scopes = []
+
             for exchange_path, symbol in trading_pairs:
                 scope = self._get_or_create_scope_for_target(
                     exchange_path, symbol, link_index
                 )
                 if scope:
-                    key = (link_index, exchange_path, symbol)
-                    scopes_map[key] = scope
-                    self._inject_indicator_vars_to_scope(scope)
+                    leaf_scopes.append(scope)
+                    # 找到 root scope
+                    root = scope
+                    while root.parent is not None:
+                        root = root.parent
+                    if root not in root_scopes:
+                        root_scopes.append(root)
 
-        # 3. 第二次遍历：计算 Scope vars + 求值 targets
+            if root_scopes:
+                link_trees.append((link_index, root_scopes, leaf_scopes))
+
+        # 对每条 link 执行三遍计算
         output = {}
-        for (link_index, exchange_path, symbol), scope in scopes_map.items():
-            # 计算 Scope vars（从 root 到 leaf）
-            self._compute_scope_vars_recursive(scope)
+        for link_index, root_scopes, leaf_scopes in link_trees:
+            # 广度优先遍历
+            all_scopes = self._breadth_first_traversal(root_scopes)
 
-            # 检查全局 condition
-            if self.config.condition:
-                try:
-                    context = dict(scope._vars)
-                    result = self._safe_eval(self.config.condition, context)
-                    if not result:
-                        continue
-                except Exception as e:
-                    self.logger.warning("Global condition evaluation failed: %s", e)
+            # 追踪已计算的 scope（去重）
+            computed_set = set()
+
+            # 第一遍：requires（Indicator 注入）
+            for scope in all_scopes:
+                scope_id = id(scope)
+                if scope_id in computed_set or scope.is_not_ready:
                     continue
 
-            # 匹配并求值 targets 配置
-            target_output = self._evaluate_targets(scope, exchange_path, symbol)
+                # 注入 Indicator 变量
+                self._inject_indicator_vars_to_scope(scope)
 
-            if target_output:
-                # 如果同一个 (exchange_path, symbol) 有多个 link 的输出
-                # 需要合并（这里简单覆盖，实际可能需要更复杂的合并逻辑）
-                key = (exchange_path, symbol)
-                if key in output:
-                    # 合并输出
-                    output[key].update(target_output)
-                else:
-                    output[key] = target_output
+                # 检查 Indicator 是否 ready（通过检查 scope 的 not_ready 标记）
+                # _inject_indicator_vars_to_scope 内部会检查 indicator.is_ready()
+                # 如果 not ready，应该标记 scope
+
+                computed_set.add(scope_id)
+
+            # 第二遍：计算 post=false 的 vars
+            computed_set.clear()
+            for scope in all_scopes:
+                scope_id = id(scope)
+                if scope_id in computed_set or scope.is_not_ready:
+                    continue
+
+                self._compute_scope_vars(scope, post=False)
+                computed_set.add(scope_id)
+
+            # 第三遍：计算 post=true 的 vars
+            computed_set.clear()
+            for scope in all_scopes:
+                scope_id = id(scope)
+                if scope_id in computed_set or scope.is_not_ready:
+                    continue
+
+                self._compute_scope_vars(scope, post=True)
+                computed_set.add(scope_id)
+
+            # target 匹配与输出（只处理叶子节点）
+            for scope in leaf_scopes:
+                if scope.is_not_ready:
+                    continue
+
+                # 获取 exchange_path 和 symbol
+                exchange_path = scope.get_var("exchange_id") or scope.get_var("exchange_path")
+                symbol = scope.get_var("symbol")
+
+                if not exchange_path or not symbol:
+                    continue
+
+                # 检查全局 condition
+                if self.config.condition:
+                    try:
+                        context = dict(scope.vars)
+                        result = self._safe_eval(self.config.condition, context)
+                        if not result:
+                            continue
+                    except Exception as e:
+                        self.logger.warning("Global condition evaluation failed: %s", e)
+                        continue
+
+                # 匹配并求值 targets 配置
+                target_output = self._evaluate_targets(scope, exchange_path, symbol)
+
+                if target_output:
+                    key = (exchange_path, symbol)
+                    if key in output:
+                        output[key].update(target_output)
+                    else:
+                        output[key] = target_output
 
         return output
-
-    def _compute_scope_vars_recursive(self, scope: 'BaseScope') -> None:
-        """
-        递归计算 Scope vars（从 root 到 leaf）
-
-        Args:
-            scope: 目标 Scope
-        """
-        # 先计算 parent 的 vars
-        if scope.parent:
-            self._compute_scope_vars_recursive(scope.parent)
-
-        # 再计算当前 Scope 的 vars
-        self._compute_scope_vars(scope)
 
     async def on_start(self) -> None:
         """

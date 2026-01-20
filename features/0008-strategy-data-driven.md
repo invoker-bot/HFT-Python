@@ -1,5 +1,7 @@
 # Feature 0008: Strategy 数据驱动增强
 
+> **状态**：全部通过
+
 ## 概述
 
 增强 Strategy 的数据驱动能力，使其支持：
@@ -23,20 +25,22 @@ TargetPositions = dict[tuple[str, str], tuple[float, float]]  # (position_usd, s
 ```python
 # Strategy 返回通用字典，可包含任意字段
 StrategyOutput = dict[tuple[str, str], dict[str, Any]]
-# {(exchange_path, symbol): {"position_usd": ..., "speed": ..., "任意字段": ...}}
+# {(exchange_id, symbol): {"position_usd": ..., "speed": ..., "任意字段": ...}}
 ```
 
 ### Executor 接收聚合后的列表
 
-多个 Strategy 的输出聚合到 `strategies` namespace：
+Executor 接收一个 `strategies` namespace（list 口径）用于表达式聚合：
+
+- 当前 App 仅支持单策略，因此每个字段列表长度为 1
+- 仍保持 list：避免表达式依赖“是否多策略”的差异
 
 ```python
-# 假设有两个 Strategy 都输出了 position_amount
-# Strategy A: {("okx/main", "BTC/USDT"): {"position_amount": 0.01}}
-# Strategy B: {("okx/main", "BTC/USDT"): {"position_amount": 0.02}}
+# Strategy 输出（单策略）
+{("okx/main", "BTC/USDT"): {"position_amount": 0.01}}
 
-# Executor 收到：
-strategies["position_amount"] = [0.01, 0.02]  # 列表形式
+# Executor 接收到的 strategies namespace（仍为列表）
+strategies["position_amount"] = [0.01]
 ```
 
 ### Executor 中聚合 Strategy 输出
@@ -52,11 +56,11 @@ vars:
 
 ## 当前实现问题
 
-### KeepPositionsStrategy 配置
+### StaticPositionsStrategy 配置（原 keep_positions）
 
 **当前**：
 ```yaml
-class_name: keep_positions
+class_name: static_positions
 exchange_path: okx/main  # 只能指定单个 exchange
 positions_usd:
   BTC/USDT:USDT: 1000    # 静态数值
@@ -64,20 +68,21 @@ positions_usd:
 
 **目标**：
 ```yaml
-class_name: keep_positions
-requires:
-  - equation
-  - rsi
-
-# vars 定义在 scopes 中（Feature 0012）
+ # conf/app/<app>.yaml（片段：Scope 节点只允许在 app 配置里声明）
 scopes:
-  global:
-    class_name: GlobalScope
+  g:
+    class: GlobalScope
     vars:
       - max_position_ratio=0.8
 
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
   trading_pair:
-    class_name: TradingPairScope
+    class: TradingPairScope
     vars:
       - name: center_price
         value: mid_price
@@ -87,9 +92,21 @@ scopes:
         value: current_position_amount
         on: rsi[-1] < 30 or rsi[-1] > 70
         initial_value: 0
+```
+
+```yaml
+# conf/strategy/<strategy>.yaml
+class_name: static_positions
+requires:
+  - equation
+  - rsi
+
+links:
+  - id: link_main
+    value: [g, exchange_class, exchange, trading_pair]
 
 targets:
-  - exchange: okx/a
+  - exchange_id: okx/a
     exchange_class: okx
     symbol: USDG/USDT
     position_usd: '0.6 * equation_usd'
@@ -109,11 +126,11 @@ class BaseStrategy(Listener):
     def __init__(self, config: BaseStrategyConfig):
         self._requires: list[str] = config.requires or []
 
-    def collect_context_vars(self, exchange_path: str, symbol: str) -> dict:
+    def collect_context_vars(self, exchange_id: str, symbol: str) -> dict:
         """收集 requires 中 Indicator 的变量"""
         vars = {}
         for indicator_id in self._requires:
-            indicator = self._get_indicator(indicator_id, exchange_path, symbol)
+            indicator = self._get_indicator(indicator_id, exchange_id, symbol)
             if indicator and indicator.is_ready():
                 vars.update(indicator.calculate_vars(direction=0))
         return vars
@@ -127,7 +144,7 @@ class BaseStrategy(Listener):
 |------|------|------|
 | Global | 全局唯一 | GlobalFundingRateIndicator |
 | ExchangeClass | 按交易所类型 | - |
-| ExchangePath | 按交易所实例 | MedalEquationDataSource |
+| Exchange | 按交易所实例（exchange_id） | MedalEquationDataSource |
 | Pair | 按交易对 | TickerDataSource, RSIIndicator |
 
 ```python
@@ -137,14 +154,14 @@ class IndicatorGroup:
         indicator_id: str,
         exchange_class: str | None = None,
         symbol: str | None = None,
-        exchange_path: str | None = None,  # 新增
+        exchange_id: str | None = None,  # 新增
     ) -> BaseIndicator | None:
         """
         按层级查询 Indicator
 
         查询顺序：
         1. Pair 级别: (exchange_class, symbol)
-        2. ExchangePath 级别: (exchange_path,)
+        2. Exchange 级别: (exchange_id,)
         3. ExchangeClass 级别: (exchange_class,)
         4. Global 级别: ()
         """
@@ -152,7 +169,7 @@ class IndicatorGroup:
 
 ### 3. MedalEquationDataSource
 
-账户权益数据源，ExchangePath 级别：
+账户权益数据源，Exchange 级别：
 
 ```python
 class MedalEquationDataSource(BaseIndicator[float]):
@@ -164,8 +181,8 @@ class MedalEquationDataSource(BaseIndicator[float]):
     - available_usd: 可用余额（USD）
     """
 
-    def __init__(self, exchange_path: str, **kwargs):
-        self._exchange_path = exchange_path
+    def __init__(self, exchange_id: str, **kwargs):
+        self._exchange_id = exchange_id
 
     async def on_tick(self) -> bool:
         exchange = self._get_exchange()
@@ -236,25 +253,25 @@ vars:
 
 ```yaml
 targets:
-  - exchange: okx/a        # 精确匹配 path
+  - exchange_id: okx/a     # 精确匹配 path
     symbol: USDG/USDT
     position_usd: 1000
 
-  - exchange: '*'          # 匹配所有 exchange
+  - exchange_id: '*'       # 匹配所有 exchange
     exchange_class: okx    # 但只匹配 okx 类型
     symbol: BTC/USDT:USDT
     position_usd: 500
 ```
 
 匹配规则：
-- `exchange`: 匹配 exchange path，`*` 表示所有
+- `exchange_id`: 匹配 exchange path，`*` 表示所有（兼容字段：`exchange` 等价 `exchange_id`）
 - `exchange_class`: 匹配 exchange class_name，`*` 表示所有
 
 ## 任务列表
 
 ### Phase 1: Indicator 层级（P0）
 
-- [x] IndicatorGroup 支持 exchange_path 级别查询（已通过）
+- [x] IndicatorGroup 支持 exchange_id 级别查询（已通过）
 - [x] 新增 MedalEquationDataSource（已通过）
 - [x] IndicatorFactory 注册 MedalEquationDataSource（已通过）
 
@@ -274,7 +291,7 @@ targets:
 
 ### Phase 4: targets 通用字段（P1）
 
-- [x] KeepPositionsStrategyConfig.targets 支持任意字段（已通过）
+- [x] StaticPositionsStrategyConfig.targets 支持任意字段（已通过）
 - [x] targets 字段表达式求值（已通过）
 - [x] 多 Exchange 目标匹配逻辑（已通过）
 
@@ -285,13 +302,13 @@ targets:
 
 ### Phase 6: vars 简化格式支持（P2）
 
-- [ ] BaseStrategyConfig 支持 vars 的三种格式（待审核）
-- [ ] BaseExecutorConfig 支持 vars 的三种格式（待审核）
-- [ ] ScopeConfig 支持 vars 的三种格式（待审核）
-- [ ] 更新 docs/strategy.md 说明 vars 格式（待审核）
-- [ ] 更新 docs/executor.md 说明 vars 格式（待审核）
-- [ ] 更新 docs/scope.md 说明 vars 格式（待审核）
-- [ ] 添加 vars 简化格式的单元测试（待实现）
+- [x] BaseStrategyConfig 支持 vars 的三种格式（已通过）
+- [x] BaseExecutorConfig 支持 vars 的三种格式（已通过）
+- [x] ScopeConfig 支持 vars 的三种格式（已通过）
+- [x] 更新 docs/strategy.md 说明 vars 格式（已通过）
+- [x] 更新 docs/executor.md 说明 vars 格式（已通过）
+- [x] 更新 docs/scope.md 说明 vars 格式（已通过）
+- [x] 添加 vars 简化格式的单元测试（已通过：覆盖 BaseStrategyConfig/TargetDefinition）
 
 ## 与现有 Feature 的关系
 
@@ -307,15 +324,15 @@ targets:
 ### App 配置
 
 ```yaml
-# conf/app/stablecoin/grid.yaml
+# conf/app/<app>.yaml（示例）
+class_name: app
+
 exchanges:
-  - okx/spot_a
-  - okx/spot_b
+  - "demo/*"
 
-strategies:
-  - stablecoin/grid_positions
-
-executor: stablecoin/grid_executor
+strategy: demo/static_positions_eth
+executor: demo/market_eth
+debug: true
 
 indicators:
   ticker:
@@ -324,24 +341,24 @@ indicators:
       window: 60
     ready_condition: "timeout < 5"
   equation:
-    class: MedalEquationDataSource
-    params:
-      window: null
-    ready_condition: "timeout < 15"
+	    class: MedalEquationDataSource
+	    params:
+	      window: null
+	    ready_condition: "timeout < 15"
 ```
 
 ### Strategy 配置
 
 ```yaml
-# conf/strategy/stablecoin/grid_positions.yaml
-class_name: keep_positions
+# conf/strategy/<strategy>.yaml（示例）
+class_name: static_positions
 requires:
   - equation
 
 targets:
-  - exchange: '*'
-    exchange_class: okx
-    symbol: USDG/USDT
+  - exchange_id: '*'
+    exchange_class: '*'
+    symbol: ETH/USDT:USDT
     position_usd: '0.6 * equation_usd'
     speed: 0.1
 ```

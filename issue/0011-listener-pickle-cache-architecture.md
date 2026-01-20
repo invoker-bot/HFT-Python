@@ -1,113 +1,65 @@
 # Issue 0011: Listener/Pickle 缓存架构改进
 
+> **状态**：全部通过
+
 ## 问题描述
 
-当前 Listener 的 pickle/cache 机制存在设计问题，不符合"cache dict + children 排除 + get_or_create 重建树"的目标架构。
+本 Issue 记录 Listener 的 pickle/cache 机制的架构设计和实现状态。
 
-## 当前问题
+## 架构设计
 
-### 1. Listener 构造函数仍有 name/interval 参数
-- **位置**：`hft/core/listener.py:78`
-- **问题**：这些参数应该从缓存中恢复，而不是每次构造时传入
+### 核心原则
 
-### 2. pickle 仍会包含 _children
-- **位置**：`hft/core/listener.py:73`（`__pickle_exclude__` 未排除 `_children`）
-- **问题**：children 应该通过 get_or_create 重建，而不是序列化整棵树
+1. **Cache Dict 模式**：pickle 保存的是 `dict[cache_key, state_dict]`，而不是整棵 Listener 树
+2. **Children 排除**：`_children` 和 `_parent` 不被序列化
+3. **树重建**：parent/children 关系在 load 后通过 `get_or_create(..., parent=...)` 重建
+4. **异步 I/O**：使用 `asyncio.to_thread()` 将文件 I/O 放到线程池，避免阻塞主循环
 
-### 3. __setstate__ 会恢复 children/parent/class_index
-- **位置**：`hft/core/listener.py:119`
-- **问题**：这与"children 排除 + 重建树"的目标冲突
+### Cache Key 设计
 
-### 4. CacheListener 仍 pickle 整个 self.root
-- **位置**：`hft/core/app/listeners.py:26`、`hft/core/app/listeners.py:73`
-- **问题**：应该只保存 cache dict，而不是整棵 Listener 树
+**当前实现**：cache key 包含 parent 链
 
-### 5. 缺少全局 get_or_create 函数
-- **现状**：只有 Scope 有 `get_or_create`（`hft/core/scope/manager.py:116`）
-- **需求**：需要 Listener 级别的 `get_or_create(cache, Class, name, parent=None)`
-
-## 目标架构
-
-### 1. Cache Dict 模式
 ```python
-# 只保存每个 Listener 的自身状态（不含 children）
-cache = {
-    "AppCore": {"interval": 1.0, "state": "RUNNING", ...},
-    "ExchangeGroup": {...},
-    "ExchangeGroup/okx/main": {...},
-    ...
-}
+# 格式："ClassName:name/parent_key"
+# 示例："Exchange:okx/main/AppCore:app/main"
 ```
 
-### 2. Children 排除
-```python
-class Listener:
-    __pickle_exclude__ = {
-        '_parent', '_background_task', '_alock', '_class_index', 'root',
-        '_children',  # 新增：排除 children
-    }
-```
+**设计理由**：
+- 支持同一个 Listener 在不同父节点下有不同状态
+- 确保 cache key 的唯一性和稳定性
 
-### 3. get_or_create 重建树
-```python
-def get_or_create(
-    cache: dict,
-    listener_class: Type[Listener],
-    name: str,
-    parent: Optional[Listener] = None,
-    **kwargs
-) -> Listener:
-    """
-    从缓存获取或创建 Listener 实例。
+## 当前实现状态
 
-    如果缓存中存在，恢复状态；否则创建新实例。
-    """
-    cache_key = _build_cache_key(listener_class, name, parent)
+### 已实现的功能
 
-    if cache_key in cache:
-        # 从缓存恢复
-        instance = listener_class.__new__(listener_class)
-        instance.__setstate__(cache[cache_key])
-    else:
-        # 创建新实例
-        instance = listener_class(name=name, **kwargs)
+1. **Cache Dict 模式**（`hft/core/app/listeners.py:71-95`）
+   - `CacheListener.save_cache_async()` 收集所有 Listener 状态到 cache dict
+   - 序列化 cache dict 为 bytes
+   - 使用 `asyncio.to_thread()` 异步写入文件
 
-    # 建立父子关系
-    if parent is not None:
-        parent.add_child(instance)
+2. **Children 排除**（`hft/core/listener.py`）
+   - `__pickle_exclude__` 包含 `_children` 和 `_parent`
+   - `__setstate__` 不恢复 children/parent
 
-    return instance
-```
+3. **get_or_create 机制**（`hft/core/listener_cache.py:40-80`）
+   - 从缓存获取或创建 Listener 实例
+   - 建立父子关系
+   - 支持 cache key 包含 parent 链
 
-### 4. CacheListener 改进
-```python
-class CacheListener:
-    async def save_cache_async(self):
-        # 收集所有 Listener 的状态（不含 children）
-        cache_dict = self._collect_cache(self.root)
-        data = pickle.dumps(cache_dict, protocol=pickle.HIGHEST_PROTOCOL)
-        await asyncio.to_thread(self._write_cache_file, data)
-
-    def _collect_cache(self, listener: Listener) -> dict:
-        """递归收集所有 Listener 的状态"""
-        result = {}
-        key = self._build_cache_key(listener)
-        result[key] = listener.__getstate__()  # 不含 children
-
-        for child in listener.children.values():
-            result.update(self._collect_cache(child))
-
-        return result
-```
+4. **ListenerCache 类**（`hft/core/listener_cache.py:83-150`）
+   - `collect()` 方法收集所有 Listener 状态
+   - `restore()` 方法从 cache dict 恢复 Listener 树
 
 ## 任务列表
 
-- [ ] 修改 `__pickle_exclude__` 排除 `_children`（待审核）
-- [ ] 实现 Listener 级别的 `get_or_create` 函数（待审核）
-- [ ] 修改 `__setstate__` 不恢复 children（待审核）
-- [ ] 修改 CacheListener 只保存 cache dict（待审核）
-- [ ] 实现 cache dict 的加载和树重建逻辑（待审核）
-- [ ] 添加单元测试验证新机制（待审核）
+> **架构决策**：cache key **包含 parent 链**（格式：`"ClassName:name/parent_key"`），用于区分同名 Listener 在不同父节点下的状态。
+
+- [x] 修改 `__pickle_exclude__` 排除 `_children`（已通过）
+- [x] 实现 Listener 级别的 `get_or_create` 函数（已通过）
+- [x] 修改 `__setstate__` 不恢复 children（已通过）
+- [x] 修改 CacheListener 只保存 cache dict（已通过）
+- [x] 实现 cache dict 的加载和树重建逻辑（已通过）
+- [x] 添加单元测试验证新机制（已通过）
 
 ## 实现文件
 

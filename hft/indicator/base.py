@@ -65,7 +65,7 @@ class BaseIndicator(Listener, Generic[T]):
     def __init__(
         self,
         name: str,
-        window: float = 300.0,
+        window: Optional[float] = 300.0,
         ready_condition: Optional[str] = None,
         expire_seconds: float = DEFAULT_EXPIRE_SECONDS,
         interval: Optional[float] = None,
@@ -73,18 +73,19 @@ class BaseIndicator(Listener, Generic[T]):
         """
         Args:
             name: 指标名称
-            window: 数据窗口大小（秒），用于 cv/range 计算
+            window: 数据窗口大小（秒），用于 cv/range 计算。None 等价于 0（仅保留最新点）
             ready_condition: 就绪条件表达式，如 "timeout < 60 and cv < 0.8"
             expire_seconds: 过期时间（秒），无 query 后自动停止
             interval: tick 间隔，None 表示事件驱动
         """
         super().__init__(name=name, interval=interval)
-        self._window = window
+        # Issue 0010: 归一化 window，None -> 0
+        self._window = 0.0 if window is None else float(window)
         self._ready_condition = ready_condition
         self._expire_seconds = expire_seconds
 
-        # 数据存储
-        self._data: HealthyDataArray[T] = HealthyDataArray(max_seconds=window)
+        # 数据存储（使用归一化后的 window）
+        self._data: HealthyDataArray[T] = HealthyDataArray(max_seconds=self._window)
 
         # 过期追踪
         self._last_touch: float = time.time()

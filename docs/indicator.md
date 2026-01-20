@@ -270,9 +270,56 @@ Executor 通过 `requires` 声明依赖，系统自动：
 3. 调用 `calculate_vars(direction)` 收集变量
 4. 注入到 condition 表达式上下文
 
+## Scope 集成（Feature 0012）
+
+Indicator 可以注入到不同层级的 Scope 中，提供层级化的变量访问。
+
+### scope_level 属性
+
+每个 Indicator 可以指定其注入的 Scope 层级：
+
+```python
+class TickerDataSource(BaseDataSource[dict]):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # 注入到 trading_pair_class 层级（所有 exchange 共享）
+        self.scope_level = "trading_pair_class"
+```
+
+### Indicator 层级体系
+
+| Indicator 类型 | Scope 层级 | 说明 |
+|---------------|-----------|------|
+| GlobalIndicator | global | 全局唯一指标 |
+| EquationDataSource | exchange | 账户权益（按 exchange 实例） |
+| TickerDataSource | trading_pair_class | 价格数据（按交易对类型） |
+| RSIIndicator | trading_pair | 技术指标（按交易对实例） |
+
+### 在 Strategy 中使用
+
+Strategy 通过 `requires` 声明依赖，系统会在 Scope 树构建时自动注入 Indicator 变量：
+
+```yaml
+# conf/strategy/my_strategy.yaml
+requires:
+  - ticker
+  - equation
+  - rsi
+
+links:
+  - [global, exchange, trading_pair]
+
+targets:
+  - exchange_id: '*'
+    symbol: BTC/USDT
+    position_usd: '0.6 * equation_usd'  # 使用 Indicator 变量
+```
+
 ## 相关文档
 
 - [datasource.md](datasource.md) - 数据源详细文档
 - [executor.md](executor.md) - 执行器与数据驱动设计
 - [listener.md](listener.md) - Listener 基类和生命周期
+- [scope.md](scope.md) - Scope 系统架构
+- [vars.md](vars.md) - 变量系统设计
 

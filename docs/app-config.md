@@ -32,6 +32,13 @@ exchanges:               # ExchangeConfigPathGroup（list[str] 选择器）
 strategy: <strategy_id>  # StrategyConfigPath（单条）
 executor: <executor_id>  # ExecutorConfigPath（单条）
 
+# Scope 系统（仅 AppConfig 支持；Strategy/Executor 配置里不允许出现 scopes 字段）
+scopes:
+  <scope_class_id>:       # 用户命名（例如 g / exchange / trading_pair 等）
+    class: <ScopeClass>   # 例如 GlobalScope / ExchangeScope / TradingPairScope
+    vars:                 # scope 创建时初值（以及可选的持久状态初值）
+      ...
+
 # 内联定义（运行时创建）
 indicators:
   <indicator_id>:
@@ -54,7 +61,7 @@ exchanges:
   - okx/main        # → $HFT_ROOT_PATH/conf/exchange/okx/main.yaml
   - binance/spot    # → $HFT_ROOT_PATH/conf/exchange/binance/spot.yaml
 
-strategy: keep_positions/btc   # → $HFT_ROOT_PATH/conf/strategy/keep_positions/btc.yaml
+strategy: static_positions/main   # → $HFT_ROOT_PATH/conf/strategy/static_positions/main.yaml
 
 executor: smart/default         # → $HFT_ROOT_PATH/conf/executor/smart/default.yaml
 ```
@@ -115,36 +122,19 @@ indicators:
 ## 完整示例
 
 ```yaml
-# conf/app/stablecoin/grid.yaml
+# conf/app/app.yaml（简化示例）
 class_name: app
 
-interval: 1.0
 health_check_interval: 60.0
-log_interval: 120.0
+log_interval: 30.0
 
 # 引用配置路径
 exchanges:
-  - okx/spot_main
-  - okx/spot_backup
+  - "demo/*"  # selector: 匹配所有 demo 下的 exchange
+strategy: static_positions/main
+executor: market/default
 
-strategy: stablecoin/grid_positions
-
-executor: stablecoin/grid_executor
-
-# 内联定义 Indicator
-indicators:
-  ticker:
-    class: TickerDataSource
-    params:
-      window: 60.0
-    ready_condition: "timeout < 5"
-
-  order_book:
-    class: OrderBookDataSource
-    params:
-      window: 60.0
-      depth: 20
-    ready_condition: "timeout < 10"
+debug: true
 ```
 
 ## ready_condition 表达式
@@ -168,6 +158,7 @@ ready_condition: "timeout < 60 and cv < 0.8 and range > 0.6"
 - [config-path.md](config-path.md) - ConfigPath 类型、ExchangeConfigPathGroup 选择器与缓存
 - [indicator.md](indicator.md) - Indicator 模块
 - [executor.md](executor.md) - Executor 配置
+- [scope.md](scope.md) - Scope 系统（links/ChainMap/target 输出）
 
 ## 兼容性与迁移提示
 

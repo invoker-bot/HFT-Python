@@ -53,6 +53,10 @@ class IndicatorFactory:
                 VolumeIndicator,
                 RSIIndicator,
             )
+            # Feature 0013: MarketNeutralPositions 相关
+            from .fair_price_indicator import FairPriceIndicator
+            from ..datasource.medal_amount_datasource import MedalAmountDataSource
+
             cls._builtin_classes = {
                 # DataSource 类
                 "TickerDataSource": TickerDataSource,
@@ -69,6 +73,9 @@ class IndicatorFactory:
                 "MedalEdgeIndicator": MedalEdgeIndicator,
                 "VolumeIndicator": VolumeIndicator,
                 "RSIIndicator": RSIIndicator,
+                # Feature 0013: MarketNeutralPositions 相关
+                "FairPriceIndicator": FairPriceIndicator,
+                "MedalAmountDataSource": MedalAmountDataSource,
             }
         return cls._builtin_classes
 

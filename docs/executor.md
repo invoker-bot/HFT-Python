@@ -10,7 +10,7 @@
 
 1. **Indicator 统一架构**：所有数据源（DataSource）都是特殊的 Indicator，统一通过 `IndicatorGroup` 管理
 2. **变量注入机制**：Indicator 通过 `calculate_vars(direction)` 提供变量，Executor 通过 `requires` 声明依赖
-3. **Scope 系统集成**：Executor 通过 `scope` 字段关联到 Scope class ID（Feature 0012）
+3. **Scope 系统集成**：Executor 可选通过 `scope` 字段声明其订单执行所在的 `scope_class_id`（Feature 0012；不用于声明 Scope 节点）
 4. **vars 变量系统**：支持变量计算和条件触发更新（详见 [vars 文档](vars.md)）
 5. **统一 order 配置**：所有 Executor 使用相同的 order 配置格式
 
@@ -31,7 +31,7 @@
 │           │                                                 │
 │           ▼ strategies namespace                            │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │  strategies["position_amount"] = [0.01, 0.02]        │   │
+│  │  strategies["position_amount"] = [0.01]              │   │
 │  │  strategies["speed"] = [0.1]                         │   │
 │  └─────────────────────────────────────────────────────┘   │
 │           │                                                 │
@@ -150,7 +150,7 @@ vars:
 
 ```
 1. 收集 requires 中 Indicator 的变量
-2. 注入 strategies namespace（来自多个 Strategy 的聚合输出）
+2. 注入 strategies namespace（来自 Strategy 输出的聚合口径；当前仅支持单策略，列表长度为 1）
 3. 计算 vars（按列表顺序，包括条件变量）
 4. 计算 order 内部的 vars
 ```

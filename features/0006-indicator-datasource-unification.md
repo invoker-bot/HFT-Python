@@ -1,5 +1,7 @@
 # Feature: Indicator 与 DataSource 统一架构
 
+> **状态**：全部通过
+
 ## 背景
 
 当前 DataSource 和 Indicator 是两套独立概念，导致概念冗余、生命周期分散、健康检查不统一。
@@ -535,7 +537,7 @@ class FundingRateDataSource(BaseIndicator[FundingRate]):
 - [x] BaseIndicator 自动过期机制（已通过）
 - [x] 单元测试：BaseIndicator、IndicatorGroup、query_indicator（已通过）
 - [x] 迁移 DataListener 到 hft/indicator/persist/（已通过）
-- [ ] 更新文档：明确 `window: null` 语义等价 `0`（待审核）
+- [x] 更新文档：明确 `window: null` 语义等价 `0`（已通过）
 
 > Phase 1.5：配置驱动与落地
 

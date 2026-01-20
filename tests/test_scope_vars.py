@@ -140,8 +140,8 @@ class TestScopeManager:
         # 应该返回同一个实例
         assert scope1 is scope2
 
-    def test_different_parents_create_different_scopes(self):
-        """测试不同 parent 创建不同的 Scope 实例"""
+    def test_same_key_returns_same_instance(self):
+        """测试相同 (scope_class_id, scope_instance_id) 返回同一实例（Issue 0012）"""
         manager = ScopeManager()
 
         parent1 = GlobalScope("global", "global1", None)
@@ -161,10 +161,10 @@ class TestScopeManager:
             parent=parent2
         )
 
-        # 不同 parent 应该创建不同实例
-        assert scope1 is not scope2
+        # 相同 cache key 应该返回同一实例（缓存 key 不包含 parent）
+        assert scope1 is scope2
+        # 第一次创建时的 parent 被保留
         assert scope1.parent is parent1
-        assert scope2.parent is parent2
 
 
 class TestScopeTreeBuilding:

@@ -16,7 +16,7 @@
 ## 关键约束
 
 - 安全默认：不开启 `--allow-orders` 时不会产生任何订单。
-- 使用测试网：以配置 `testnet`/`sandbox` 为准。
+- 使用测试模式：以 exchange config 的 `test: true` 为准（实现侧会将其映射到 ccxt 的 `sandbox`/demo 交易模式）。
 - 合约数量口径：订单测试里的 `0.01` 表示 **基础货币数量**（与 `contractSize` 无关），在下单前会换算为 ccxt 需要的合约张数：`contracts = base_amount / contractSize`。
 - Spot 市场可用性：若当前 exchange config 未启用 spot instance（仅 swap），则在测试中临时创建 spot ccxt 实例完成现货下单测试。
 

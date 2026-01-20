@@ -1,569 +1,347 @@
-# Scope 系统
+# Scope 系统（重构规则）
 
-## 概述
+本文档定义 Scope 系统的**配置边界**、**实例发现**、**缓存语义**、**变量继承（ChainMap）**与**执行流程**。任何与本文档不一致的行为应视为实现缺陷。
 
-Scope 系统是 HFT-Python 的核心数据驱动机制，提供分层的变量作用域管理。
+## 1. 配置边界（必须严格遵守）
 
-**核心特性**：
-- **分层结构**：支持多层级的变量作用域（global → exchange → trading_pair 等）
-- **变量继承**：子 Scope 自动继承父 Scope 的变量（使用 ChainMap）
-- **灵活配置**：用户可以自由定义 Scope 类型标识符
-- **多根节点**：支持多个根节点，形成森林结构
-- **Scope 复用**：中间节点可以被多个父节点共享
+Scope 相关配置分布在不同的配置文件中，**同名字段在不同文件里含义不同**，不可混用：
 
-## 核心概念
+| 配置文件 | 允许的 Scope 字段 | 说明 |
+|----------|------------------|------|
+| `conf/app/*.yaml` | `scopes:` | **唯一允许声明 `scopes:` 的地方**（声明 scope 类型、类、初值） |
+| `conf/strategy/*.yaml` | `links:`, `requires:`, `targets:` | 策略逻辑；**不允许声明 `scopes:`** |
+| `conf/executor/*.yaml` | `vars:`, `scope:` | 消费 Strategy 返回的 Scope；**不声明 Scope 节点** |
+| `conf/exchange/*.yaml` | 无 | 交易所配置，不包含 Scope 系统配置 |
 
-### Scope 的三个标识符
+## 2. 术语与不变量
 
-1. **Scope Class Name**（类名）
-   - 在代码中定义的 Python 类名
-   - 例如：`GlobalScope`, `ExchangeScope`, `TradingPairScope`
-   - 由开发者在代码中实现
+### 2.1 Scope 的两类"ID"
 
-2. **Scope Class ID**（类型标识符）
-   - 用户在app配置文件中自由定义的标识符
-   - 例如：`"global"`, `"my_scope"`, `"层级1"`
-   - **可以任意命名，不是硬编码的**
+| 术语 | 来源 | 示例 | 说明 |
+|------|------|------|------|
+| `scope_class_id` | 用户在 `conf/app/*.yaml` 的 `scopes` 字段 key 中定义 | `g`, `exchange`, `trading_pair` | 用户命名的 scope 标识符；在 `links` 中引用它 |
+| `scope_instance_id` | 由 ScopeClass 的 `get_all_instance_ids` 在运行时生成 | `global`, `okx/a`, `okx/a-ETH/USDT` | Scope 实例 ID |
 
-3. **Scope Instance ID**（实例标识符）
-   - 具体的 Scope 实例标识
-   - 例如：`"okx/main"`, `"BTC/USDT"`, `"global"`
-   - 用于区分同一类型的不同实例
+### 2.2 ScopeClass（Python 类）
 
-### 缓存机制
+ScopeClass 是 Python 中的 Scope 实现类：
 
-Scope 实例通过 `scope_path` 作为缓存 key，`scope_path` 包含从根到当前节点的完整路径：
+| ScopeClass | 说明 |
+|------------|------|
+| `GlobalScope` | 全局作用域（根节点） |
+| `ExchangeClassScope` | 交易所类型 |
+| `ExchangeScope` | 交易所实例 |
+| `TradingPairClassScope` | 交易对类型（跨 exchange） |
+| `TradingPairScope` | 交易对实例（最细粒度） |
 
-```python
-# scope_path 格式："scope_class_id:scope_instance_id/parent_path"
-# 例如：
-cache_key = "global:global"  # GlobalScope
-cache_key = "exchange:okx/main/global:global"  # ExchangeScope (parent 是 GlobalScope)
-cache_key = "trading_pair:okx/main:BTC/USDT/exchange:okx/main/global:global"  # TradingPairScope
+### 2.3 缓存语义（强约束）
+
+ScopeManager 必须满足：
+
+```text
+get_or_create(scope_class_id, scope_instance_id) -> 同一个 Scope 实例（全局唯一）
 ```
 
-**重要**：只有完整的 `scope_path` 相同（包括 parent 链），才会复用同一个 Scope 实例。这意味着：
-- 相同的 `(scope_class_id, scope_instance_id)` 但不同的 parent，会创建不同的 Scope 实例
-- 这确保了 ChainMap 变量继承链的正确性
+缓存 key 为 `(scope_class_id, scope_instance_id)`；**不包含 parent 链**。
 
-## 标准 Scope 类
+为保证"实例拓扑为严格树"：
 
-| Scope Class Name | 说明 | 典型 Class ID | Instance ID 示例 |
-|------------------|------|---------------|------------------|
-| `GlobalScope` | 全局作用域 | `global` | `"global"` |
-| `ExchangeClassScope` | 交易所类型 | `exchange_class` | `"okx"`, `"binance"` |
-| `ExchangeScope` | 交易所实例 | `exchange` | `"okx/main"`, `"binance/spot"` |
-| `TradingPairClassScope` | 交易对类型 | `trading_pair_class` | `"BTC/USDT"` |
-| `TradingPairScope` | 交易对实例 | `trading_pair` | `"okx/main:BTC/USDT"` |
+1. 对任意 `(scope_class_id, scope_instance_id)`，其 parent 关系是确定且稳定的
+2. 若同一 ScopeClass 需要在不同 parent 类型下复用，必须保证 `scope_instance_id` **不会冲突**
 
-**注意**：表格中的"典型 Class ID"只是建议，用户可以使用任何名称。
+### 2.4 ScopeVars 与 ChainMap
 
-## 基本用法
+每个 Scope 在表达式求值时拥有一个"变量上下文"（`scope_vars`），其核心是 **ChainMap**：
 
-### 单根节点配置
+- 继承链由 `links` 中该节点的**顺序**决定
+- 更靠后的 scope（更"内层"）覆盖更靠前的 scope（更"外层"）
 
-最简单的配置，使用单一的 GlobalScope：
+示例 link：`["g", "exchange_class", "exchange", "trading_pair"]`
+
+则 `trading_pair` 节点的查找顺序为：
+
+```python
+ChainMap(trading_pair_vars, exchange_vars, exchange_class_vars, g_vars)
+```
+
+### 2.5 特殊变量（由 Scope 系统自动提供）
+
+所有 Scope 都拥有特殊变量 `instance_id`（等于 `scope_instance_id`）。
+
+各 ScopeClass 的额外特殊变量：
+
+| ScopeClass | 特殊变量 | 说明 |
+|------------|----------|------|
+| `GlobalScope` | `app_core` | AppCore 实例引用 |
+| `ExchangeClassScope` | `exchange_class` | 交易所类名（如 `"okx"`, `"binance"`） |
+| `ExchangeScope` | `exchange_id`, `exchange` | exchange path（如 `"okx/a"`）及 exchange 实例 |
+| `TradingPairClassScope` | `symbol`, `exchange_class` | 交易对符号及继承的 exchange_class |
+| `TradingPairScope` | `exchange_id`, `symbol` | exchange path 及交易对符号 |
+
+## 3. AppConfig: `scopes` 声明
+
+`conf/app/*.yaml` 中的 `scopes:` 用于声明可用的 scope 节点类型。
 
 ```yaml
-# Strategy 配置
-class_name: static_positions
-
-# Scope 链路定义
-links:
-  - ["global", "exchange", "trading_pair"]
-
-# Scope 变量配置
+# conf/app/<app>.yaml（仅 app 配置允许 scopes 字段）
 scopes:
-  global:
-    class_name: GlobalScope
-    instance_id: "global"
-    vars:
-      - name: max_position_usd
-        value: 10000
-      - name: default_speed
-        value: 0.5
+  g:                    # scope_class_id（用户命名）
+    class: GlobalScope  # ScopeClass（Python 类名）
+    vars:               # scope 创建时初值
+      - max_position_usd=10000
+      - weights={"okx/a": 0.6, "okx/b": 0.4}
+
+  exchange_class:
+    class: ExchangeClassScope
 
   exchange:
-    class_name: ExchangeScope
+    class: ExchangeScope
     vars:
-      - name: total_equity
-        value: equation_usd  # 来自 Indicator 注入
+      - exchange_weight=weights.get(exchange_id, 0.5)
 
   trading_pair:
-    class_name: TradingPairScope
+    class: TradingPairScope
     vars:
-      - name: target_position
-        value: max_position_usd * 0.5  # 使用父 Scope 变量
-      - name: speed
-        value: default_speed
-
-targets:
-  - symbol: BTC/USDT
-    position_usd: target_position  # 使用 Scope 变量
-    speed: speed
+      - target_position=max_position_usd * exchange_weight
 ```
 
-### 多根节点配置
+**说明**：
+- `g` 只是用户取的名字；Scope 的 `instance_id` 由 ScopeClass 的 `get_all_instance_ids` 决定
+- `vars` 表示 scope 创建时的初始变量（strategy/executor 中同名 vars 会覆盖）
+- 不支持 `group_condition` 字段（出现即视为配置错误）；如需过滤 group，请在 vars 中计算布尔量（如 `group_enabled`）并在 leaf `targets[*].condition` 中引用
 
-支持多个 GlobalScope，用于不同的策略或场景：
+### 3.1 实例发现：`get_all_instance_ids`
+
+每条 parent→child 的实例展开由 ScopeClass 通过注册机制提供：
+
+```python
+# 注册在全局字典中，签名：
+get_all_instance_ids(app_core, parent_scope_instance, ...) -> list[str]
+```
+
+支持自定义装饰器：
+
+```python
+@register_get_all_instance_ids(ParentScopeClass, ScopeClass)
+def my_instance_ids(app_core, parent_scope):
+    return [...]
+```
+
+### 3.2 内置标准展开（默认）
+
+| (ParentClass, ScopeClass) | 返回示例 | 由什么决定 |
+|---------------------------|----------|-----------|
+| `(None, GlobalScope)` | `["global"]` | 固定返回 1 个 |
+| `(GlobalScope, ExchangeClassScope)` | `["okx", "binance"]` | `app_core.exchanges` 的 groups |
+| `(ExchangeClassScope, ExchangeScope)` | `["okx/a", "okx/b"]` | `app_core` 中该类型的 exchange 实例 |
+| `(ExchangeScope, TradingPairScope)` | `["okx/a-ETH/USDT", "okx/b-BTC/USDT:USDT"]` | exchange 实例支持的 symbols |
+| `(ExchangeClassScope, TradingPairClassScope)` | `["okx-ETH/USDT"]` | exchange class 下所有 symbols（去重） |
+| `(TradingPairClassScope, TradingPairScope)` | `["okx/a-ETH/USDT", "okx/b-BTC/USDT:USDT"]` | 该 symbol 在各 exchange 实例的具体交易对 |
+
+**两条路径**：
+
+```
+路径1: GlobalScope → ExchangeClassScope → ExchangeScope → TradingPairScope
+路径2: GlobalScope → ExchangeClassScope → TradingPairClassScope → TradingPairScope
+```
+
+## 4. StrategyConfig: `links` 与 LinkTree
+
+Strategy 的 `links` 定义 Scope 的计算拓扑。每个 link 独立形成一棵 `LinkTree`。
 
 ```yaml
-scopes:
-  global_arbitrage:
-    class_name: GlobalScope
-    instance_id: "arbitrage"  # 必须不同
-    vars:
-      - name: strategy_type
-        value: "arbitrage"
-      - name: max_position_usd
-        value: 10000
-
-  global_market_making:
-    class_name: GlobalScope
-    instance_id: "market_making"  # 必须不同
-    vars:
-      - name: strategy_type
-        value: "market_making"
-      - name: max_position_usd
-        value: 5000
-
+# conf/strategy/<strategy>.yaml
 links:
-  - ["global_arbitrage", "exchange", "trading_pair"]
-  - ["global_market_making", "exchange", "trading_pair"]
+  - id: link_main
+    value:
+      - g
+      - exchange_class
+      - exchange
+      - trading_pair
 ```
 
-**关键点**：
-- 每个 GlobalScope 必须有不同的 `instance_id`
-- 不同的 GlobalScope 形成独立的 Scope 树
-- 中间节点（如 `exchange`, `trading_pair`）可以被多个根节点共享
+### 4.1 LinkTree 构建过程
 
-## 变量继承
+1. 从 root 开始（第一个 scope_class_id）
+2. 对每个 parent_scope，调用 `get_all_instance_ids(app_core, parent_scope)`
+3. Strategy 侧 filter（当前仅支持 `include_symbols`/`exclude_symbols`；exchange 选择由 AppConfig.exchanges 控制）
+4. 对每个 `(scope_class_id, scope_instance_id)`，调用 `ScopeManager.get_or_create(...)`
+5. 根据前后顺序构建 ChainMap，注入 `parent` 和 `children`
 
-Scope 使用 Python 的 `ChainMap` 实现变量继承：
+### 4.2 LinkNode
 
-```python
-# 父 Scope
-parent_scope.set_var("parent_var", "parent_value")
+LinkNode 存储 `(scope_class_id, scope_instance_id)` 对，用于标识 LinkTree 中的节点。
 
-# 子 Scope
-child_scope.set_var("child_var", "child_value")
+### 4.3 Filter 机制
 
-# 子 Scope 可以访问父 Scope 的变量
-child_scope.get_var("parent_var")  # "parent_value"
-child_scope.get_var("child_var")   # "child_value"
+Strategy 配置中的 filter：
 
-# 子 Scope 的变量会覆盖父 Scope 的同名变量
-parent_scope.set_var("shared_var", "parent")
-child_scope.set_var("shared_var", "child")
-child_scope.get_var("shared_var")  # "child"
-```
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `include_symbols` | `["*"]` | 包含的 symbol 列表 |
+| `exclude_symbols` | `[]` | 排除的 symbol 列表 |
 
-## 计算顺序与 parent/children 访问
+**注意**：当前 filter 仅对 symbol 进行过滤；exchange 维度由 AppConfig 的 `exchanges` 选择器决定。
 
-### 计算顺序
+## 5. 每个 tick 的三遍计算（Strategy）
 
-Scope 系统的变量计算遵循以下顺序：
+对每条 link（LinkTree），每个 tick 的计算有**三遍**：
 
-1. **Indicator 注入**：首先注入所有 Indicator 提供的变量（如 `mid_price`, `rsi`, `amount` 等）
-2. **vars 计算**：然后按照 Scope 树的层级顺序计算 vars（包括条件变量）
+### 5.1 第一遍：requires（Indicator 注入）
 
-### parent 和 children 访问
+对 `requires` 中声明的每个 Indicator：
 
-Scope 系统支持通过 `parent` 和 `children` 访问父节点和子节点：
+1. 找到该 Indicator 注入的 ScopeClass（由 Indicator 自己声明）
+2. 对 LinkTree 中所有该 ScopeClass 的 scope 实例：
+   - 调用 `app_core.query_indicator(scope_vars)`
+   - 将返回的变量写入该 scope 的变量空间
+
+**级联 not ready 机制**：
+
+如果某个 scope 的 Indicator **not ready**（数据未就绪），则：
+- 该 scope 标记为 not ready
+- 该 scope 的**所有 children scope 实例**也自动标记为 not ready
+- not ready 的 scope 不参与后续的 vars 计算和 target 匹配
+- 效果等同于该分支被整体裁剪
+
+### 5.2 第二遍：计算 `post: false` 的 vars
+
+从前到后遍历 link 的 scope 链，计算所有 `post: false`（默认）的 vars。
 
 ```yaml
-# ✅ 自下而上聚合（parent 访问 children 的 indicator 变量）
-scopes:
-  exchange:
-    # indicator 注入的变量（如 amount）
-
-  global:
-    vars:
-      - name: total_amount
-        value: sum([scope["amount"] for scope in children.values()])
-```
-
-**关键点**：
-- `parent` 可以访问 `children` 的 **indicator 注入的变量**
-- 因为 indicator 注入发生在 vars 计算之前
-
-```yaml
-# ✅ 自上而下分配（child 访问 parent 的 vars）
-scopes:
-  global:
-    vars:
-      - name: total_budget
-        value: 10000
-
-  exchange:
-    vars:
-      - name: allocation
-        value: parent["total_budget"] * 0.5
-```
-
-**关键点**：
-- `child` 可以访问 `parent` 的 **vars 计算结果**
-- 因为 parent 的 vars 在 child 之前计算
-
-## Scope 复用
-
-中间节点可以被多个父节点引用，实现 Scope 复用：
-
-```yaml
-# 同一个 exchange 可以属于多个策略的 Scope 树
-links:
-  - ["global_1", "exchange", "trading_pair"]  # 策略 1
-  - ["global_2", "exchange", "trading_pair"]  # 策略 2
-```
-
-**缓存行为**：
-- 相同的 `(scope_class_id, scope_instance_id)` 会返回同一个实例，**即使 parent 不同**
-- 这意味着同一个 Scope 可以被多个 parent 共享
-- 例如：`global_1 -> exchange:okx/main` 和 `global_2 -> exchange:okx/main` 会共享同一个 `exchange:okx/main` 实例
-
-## Links 计算规则
-
-### Links 的定义
-
-Links 定义了 Scope 树的拓扑结构，指定了从根节点到目标节点的**层级路径**：
-
-```yaml
-links:
-  - ["global", "exchange_class", "exchange", "trading_pair"]
-  - ["global", "exchange_class", "trading_pair_class", "trading_pair"]
-```
-
-**重要**：每个 link 不是"一条路径"，而是定义了**层级关系**。在展开时，会遍历每一层的所有 children。
-
-### 沿 Link 展开计算
-
-**展开规则**（树的完整遍历）：
-
-Link `["global", "exchange", "trading_pair"]` 的展开过程：
-
-1. **第一层**：创建/获取 `global` scope（1个实例）
-2. **第二层**：遍历 `global` 的所有 `exchange` children（如 `okx/main`, `binance/spot`）
-3. **第三层**：对每个 `exchange`，遍历其所有 `trading_pair` children（如 `BTC/USDT`, `ETH/USDT`）
-
-**结果**：形成完整的树结构，而非单一路径。
-
-**计算流程**：
-
-1. **Indicator 注入**
-   - 在每个 Scope 层级注入对应的 Indicator 变量
-   - 例如：`trading_pair` 层级注入 `mid_price`, `rsi` 等
-
-2. **计算 vars**
-   - 按照 link 的顺序，从根到叶依次计算每个 Scope 的 vars
-   - 每个 Scope 可以访问：
-     - 自己的 Indicator 注入变量
-     - parent 的 vars（通过 ChainMap 继承）
-     - children 的 Indicator 注入变量（通过 `children` 字典）
-
-## 条件变量
-
-Scope 支持条件变量，用于状态缓存和条件分支：
-
-```yaml
-scopes:
-  trading_pair:
-    class_name: TradingPairScope
-    vars:
-      - name: is_oversold
-        value: rsi[-1] < 30
-
-      # 条件变量：仅当条件满足时更新
-      - name: entry_price
-        value: mid_price
-        on: is_oversold
-        initial_value: null
-
-      - name: entry_time
-        value: current_timestamp
-        on: is_oversold
-        initial_value: null
-
-      - name: time_since_entry
-        value: current_timestamp - entry_time if entry_time else 0
-```
-
-**行为**：
-- `on` 为 `True` 时，更新变量值
-- `on` 为 `False` 时，保持上次的值（缓存）
-- `on` 未定义时，默认为 `True`（每次都更新）
-- `initial_value` 定义初始值（条件从未满足时使用）
-- 可以实现状态记忆和条件分支逻辑
-
-## 自定义 Scope 类型
-
-Strategy 可以定义自己的 Scope 类型：
-
-```python
-from hft.core.scope import BaseScope
-
-class TradingPairClassGroupScope(BaseScope):
-    """
-    交易对分组 Scope
-
-    用于 MarketNeutralPositions 策略的分组聚合
-    """
-
-    def __init__(self, scope_class_id: str, scope_instance_id: str,
-                 parent: BaseScope):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
-        )
-        self.set_var("group_id", scope_instance_id)
-```
-
-然后在 Strategy 中注册：
-
-```python
-class MarketNeutralPositionsStrategy(BaseStrategy):
-    def _register_custom_scopes(self):
-        """注册自定义 Scope 类型"""
-        self.scope_manager.register_scope_class(
-            "TradingPairClassGroupScope",
-            TradingPairClassGroupScope
-        )
-```
-
-配置中使用：
-
-```yaml
-scopes:
-  trading_pair_group:
-    class_name: TradingPairClassGroupScope
-    vars:
-      - name: fair_price_min
-        value: min([scope["fair_price"] for scope in children.values()])
-```
-
-## ScopeManager
-
-`ScopeManager` 负责 Scope 实例的创建、缓存和管理：
-
-```python
-from hft.core.scope import ScopeManager
-
-# 创建 ScopeManager
-manager = ScopeManager()
-
-# 获取或创建 Scope 实例
-scope = manager.get_or_create(
-    scope_class_name="GlobalScope",      # 类名
-    scope_class_id="global",             # 类型标识符
-    scope_instance_id="global",          # 实例标识符
-    parent=None                          # 父 Scope
-)
-
-# 注册自定义 Scope 类型
-manager.register_scope_class("CustomScope", CustomScope)
-```
-
-## 与 Indicator 集成
-
-Indicator 可以将计算结果注入到指定层级的 Scope：
-
-```python
-class TickerDataSource(BaseIndicator):
-    """注入到 trading_pair_class scope"""
-
-    def calculate_vars(self, direction: Optional[str] = None) -> Dict[str, Any]:
-        latest = self._data.get_latest()
-        return {
-            "mid_price": latest.mid_price,
-            "best_bid": latest.best_bid,
-            "best_ask": latest.best_ask,
-        }
-```
-
-配置中指定注入层级：
-
-```yaml
-indicators:
-  ticker:
-    class_name: TickerDataSource
-    inject_to: trading_pair_class  # 注入到 trading_pair_class scope
-```
-
-## 与 Executor 集成
-
-Executor 可以访问 Strategy 定义的 Scope 变量：
-
-```yaml
-# Executor 配置
-class_name: limit
-
-requires:
-  - ticker
-
 vars:
-  # 访问 Scope 变量
-  - name: target_pos
-    value: target_position  # 来自 trading_pair scope
-  - name: max_pos
-    value: max_position_usd  # 来自 global scope
-
-  # 计算本地变量
-  - name: position_ratio
-    value: current_position_usd / max_pos if max_pos > 0 else 0
-
-orders:
-  - spread: '0.0002 * mid_price'
-    order_usd: 'abs(delta_usd)'
-    condition: 'position_ratio < 0.8'  # 使用本地变量
+  - name: foo
+    value: "mid_price * 0.5"
+    post: false  # 默认值，第二遍计算
 ```
 
-### vars 格式说明
+### 5.3 第三遍：计算 `post: true` 的 vars
 
-Scope 的 `vars` 支持三种格式：
-
-**格式 1：标准格式（推荐）**
-```yaml
-scopes:
-  global:
-    vars:
-      - name: var_name
-        value: expression
-        on: condition  # 可选，条件表达式
-        initial_value: value  # 可选，初始值
-```
-
-**格式 2：dict 简化格式（计算顺序不确定）**
-```yaml
-scopes:
-  global:
-    vars:
-      var_name: expression
-      another_var: another_expression
-```
-
-**格式 3：list[str] 简化格式**
-```yaml
-scopes:
-  global:
-    vars:
-      - var_name=expression
-      - another_var=another_expression
-```
-
-**注意**：
-- 格式 1 支持完整功能（条件变量、初始值）
-- 格式 2 和 3 不支持条件变量，且格式 2 的计算顺序不确定
-- 推荐使用格式 1 以获得最佳可读性和功能支持
-
-## 完整的计算流程
-
-详细的执行流程说明请参考：[Scope 系统执行流程详解](./scope-execution-flow.md)
-
-**简要概述**：
-
-### 在 AppCore 中的初始化
-
-1. **创建 ScopeManager**
-   ```python
-   self.scope_manager = ScopeManager()
-   ```
-
-2. **注册自定义 Scope 类**
-   - Strategy 通过 `_register_custom_scopes()` 注册自定义 Scope 类
-   - 例如：`TradingPairClassGroupScope`
-
-### 在 Strategy 中的展开计算
-
-**每次 tick 的计算流程**：
-
-1. **构建 Scope 树** (`_build_scope_trees()`)
-   - 遍历每个 link
-   - 沿着 link 创建/获取 Scope 实例
-   - 建立 parent-child 关系
-
-2. **Indicator 注入**
-   - 在对应层级注入 Indicator 变量
-   - 例如：`trading_pair` 层级注入 `mid_price`
-
-3. **计算 vars**
-   - 按 link 顺序，从根到叶计算每个 Scope 的 vars
-
-4. **输出 targets**
-   - 调用 `get_output()` 获取目标仓位
-   - 返回 `{(exchange_path, symbol): {...}}`
-
-### 在 Executor 中的使用
-
-Executor 通过 `strategies` namespace 接收 Strategy 的输出，并可以访问 Scope 变量。
-
-**计算顺序**：
-1. 收集 Indicator 变量
-2. 注入 `strategies` namespace
-3. 计算 Executor 的 vars
-4. 执行订单逻辑
-
-## 最佳实践
-
-### 1. 命名约定
-
-- **Scope Class ID**：使用小写下划线命名（如 `global`, `exchange`, `trading_pair`）
-- **Instance ID**：使用有意义的标识符（如 `"okx/main"`, `"BTC/USDT"`）
-- **变量名**：使用小写下划线命名（如 `max_position_usd`, `target_position`）
-
-### 2. 变量组织
-
-- **全局配置**：放在 `global` scope（如 `max_position_usd`, `weights`）
-- **交易所级别**：放在 `exchange` scope（如 `equation_usd`, `amount`）
-- **交易对级别**：放在 `trading_pair` scope（如 `target_position`, `speed`）
-
-### 3. 使用条件变量缓存状态
+从前到后遍历 link 的 scope 链，计算所有 `post: true` 的 vars。
 
 ```yaml
-# ✅ 正确：使用条件变量缓存状态
-scopes:
-  trading_pair:
+vars:
+  - name: aggregated_amount
+    value: "sum(child_values(children, 'amount'))"
+    post: true  # 第三遍计算（此时 children 的 vars 已计算完毕）
+```
+
+### 5.4 去重规则（性能关键）
+
+- 广度优先 + 去重
+- **同一个 scope 实例在同一遍里只计算一次**（即使被多个 child 触达）
+
+## 6. targets 配置与匹配
+
+### 6.1 targets 格式
+
+```yaml
+# conf/strategy/<strategy>.yaml
+condition: null           # 全局门控（可选；默认 null=True；False/异常时跳过全部 targets）
+targets:
+  - exchange_id: "*"        # 匹配所有 exchange（默认）
+    symbol: "*"             # 匹配所有 symbol（默认）
+    condition: "rsi < 30"   # 条件表达式（可选，默认 True）
     vars:
-      - name: entry_price
-        value: mid_price
-        on: rsi[-1] < 30  # 仅在 RSI < 30 时更新
-        initial_value: null
+      - name: position_usd
+        value: "max_position_usd * 0.5"
+      - name: speed
+        value: "0.8"
 ```
 
-## 常见问题
+### 6.2 匹配逻辑
 
-### Q1: 为什么需要 Scope 系统？
+每个 `TradingPairScope` 从前往后扫描 `targets` 列表，**贪婪匹配**：
 
-**A**: Scope 系统解决了以下问题：
+1. 匹配到第一个符合的 target → 使用该 target 的 vars 和 condition
+2. 如果没有匹配到任何 target → 该 scope 不执行（被裁剪掉）
 
-1. **变量来源不明确**：明确定义变量的作用域层级
-2. **无法表达层级关系**：支持多层级的变量继承和聚合
-3. **复杂策略逻辑**：支持跨层级的计算（如分组聚合）
+### 6.3 target 输出
 
-### Q2: 可以有多个 GlobalScope 吗？
+Strategy 输出阶段：
 
-**A**: 可以！Scope 系统支持多个根节点，形成森林结构。只要 `instance_id` 不同，就不会冲突。
+1. 基于 links 的计算结果得到"被选中的 groups"
+2. 展开得到 concrete 的 `target_pairs`（不再包含 `*`）
+3. 若 `strategy.condition` 不为空：在该 TradingPairScope 上求值；False/异常则忽略该 scope
+4. 对每个 TradingPairScope：
+   - 匹配 target，计算 condition
+   - condition 为 True → 计算 target vars，收集到输出
+   - condition 为 False 或没有匹配 → 忽略该 scope
 
-### Q3: Scope 复用是什么意思？
+**约束**：Strategy 的最后一条 link 的最后一个 scope **必须是 `TradingPairScope`**。
 
-**A**: 中间节点可以被多个父节点引用。例如，同一个 `exchange` 节点可以属于多个策略的 Scope 树。
+## 7. Executor 的计算范围裁剪（节约资源）
 
-### Q4: 如何调试 Scope 变量？
+Executor 只处理 Strategy 返回的 `TradingPairScope`（及其祖先），不会对整棵 LinkTree 重复计算。
 
-**A**: 可以使用 `scope.vars` 查看所有变量（包括继承的）：
+### 7.1 计算范围
 
-```python
-# 查看所有变量
-print(dict(scope.vars))
-
-# 查看当前 Scope 的变量（不包括继承的）
-print(scope._vars)
+```text
+a0 -> b0 -> c0
+ |     |-> c1
+ |-> b1 -> c2
 ```
 
-## 相关文档
+若 Strategy 只返回 `c2`，则 Executor 只处理 `(a0, b1, c2)` 这条祖先链。
 
-- [Feature 0012: Scope 系统](../features/0012-scope-system.md) - 详细设计文档
-- [Example 001: 稳定币做市](../examples/001-stablecoin-market-making.md) - Scope 使用示例
-- [Example 002: Executor 配置](../examples/002-executor-configurations.md) - Executor 中使用 Scope
-- [Example 003: StaticPositions 策略](../examples/003-static-positions-strategy.md) - Strategy 中使用 Scope
-- [docs/strategy.md](./strategy.md) - Strategy 文档
-- [docs/executor.md](./executor.md) - Executor 文档
+### 7.2 Executor 的三遍计算
+
+与 Strategy 类似，但**只在 Strategy 返回的 TradingPairScope 及其祖先上执行**：
+
+1. **第一遍**：requires（Indicator 注入）—— 只对涉及的 scope 调用 `query_indicator`
+2. **第二遍**：计算 `post: false` 的 vars
+3. **第三遍**：计算 `post: true` 的 vars
+
+### 7.3 Executor vars 计算范围
+
+Executor config 中定义的 vars **只在 TradingPairScope 上计算**（与 Strategy 返回的 target scope 对应）。
+
+因为只有一层，所以 executor 中的 `post` 参数实际上无影响。
+
+### 7.4 orders 展开
+
+Executor 在完成 vars 计算后，基于 TradingPairScope 进行 `order`/`orders` 展开。
+
+## 8. ScopeManager
+
+ScopeManager 是 AppCore 的属性（全局单例），负责：
+
+1. **get_or_create**：缓存 key 为 `(scope_class_id, scope_instance_id)`
+2. **实例缓存**：按 key 复用 scope 实例（不维护 parent/children 拓扑；拓扑由 links 构建 LinkTree 时挂接）
+3. **缓存管理**：Scope 实例永久缓存（生命周期与 AppCore 相同）
+
+**注意**：ScopeManager 不可 pickle（不包含在缓存中）。
+
+## 9. vars 字段语法
+
+vars 支持条件变量：
+
+```yaml
+vars:
+  - name: foo
+    value: "mid_price * 0.5"
+    on: "rsi < 30"              # 条件表达式（默认 True）
+    initial_value: 0            # 初始值（条件从未满足时使用）
+    post: false                 # 是否延后到第三遍计算（默认 false）
+```
+
+vars 也支持 dict/list[str] 等简化写法；为避免歧义与顺序问题，推荐标准格式。详见 [vars.md](vars.md)。
+
+## 10. 常见误区（必须避免）
+
+| 误区 | 正确做法 |
+|------|----------|
+| 在 strategy/executor 配置中写 `scopes:` | `scopes:` 只允许在 `conf/app/*.yaml` |
+| 认为 `instance_id` 是 YAML 字段 | `instance_id` 是特殊变量，由 `get_all_instance_ids` 生成 |
+| 手动复制 parent vars 来模拟继承 | 使用 ChainMap，继承链由 links 顺序定义 |
+| 同一 scope 在同一遍中重复计算 | 广度优先 + 去重 |
+| Executor 计算整棵 LinkTree | Executor 只计算 Strategy 返回的 scope 及其祖先 |
+| 忽略 Indicator not ready 的级联影响 | not ready 的 scope 及其所有 children 都会被裁剪 |
+
+## 11. 相关文档
+
+- [Scope 执行流程](scope-execution-flow.md)
+- [vars 系统文档](vars.md)
+- [Strategy 文档](strategy.md)
+- [Executor 文档](executor.md)
+- [Feature 0012: Scope 系统](../features/0012-scope-system.md)

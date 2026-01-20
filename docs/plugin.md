@@ -18,8 +18,8 @@
 | `on_order_cancelled` | ✅ | `BaseExchange.cancel_order()` 后 |
 | `on_order_error` | ✅ | `BaseExchange.create_order()` 失败时 |
 | `on_order_filled` | ✅ | `ExchangeOrderBillListener._emit_order_filled_hook()` |
-| `on_strategy_targets_calculated` | ✅ | `StrategyGroup.get_aggregated_targets()` |
-| `on_targets_aggregated` | ✅ | `StrategyGroup.get_aggregated_targets()` |
+| `on_strategy_targets_calculated` | ✅ | `StrategyGroup.get_aggregated_targets()`（当前仅管理单条 Strategy） |
+| `on_targets_aggregated` | ✅ | `StrategyGroup.get_aggregated_targets()`（当前仅管理单条 Strategy） |
 | `on_execution_start` | ✅ | `BaseExecutor.on_tick()` 执行前 |
 | `on_execution_complete` | ✅ | `BaseExecutor.on_tick()` 执行后 |
 | `on_balance_update` | ✅ | `BaseExchange.medal_cache_balance()` |
@@ -131,7 +131,7 @@ def on_strategy_targets_calculated(strategy: "BaseStrategy", targets: "TargetPos
 
 @hookspec
 def on_targets_aggregated(strategy_group: "StrategyGroup", targets: "AggregatedTargets"):
-    """策略组聚合目标后调用"""
+    """策略输出聚合（当前单策略；仍统一为 AggregatedTargets）后调用"""
 
 @hookspec
 def on_execution_start(executor: "BaseExecutor", targets: "AggregatedTargets"):

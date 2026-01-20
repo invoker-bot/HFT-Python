@@ -3,7 +3,7 @@ ScopeManager - Scope 实例管理器
 
 负责 Scope 实例的创建、缓存和管理。
 """
-from typing import Dict, Tuple, Optional, Type
+from typing import Dict, Tuple, Optional, Type, Callable, TYPE_CHECKING
 from .base import BaseScope
 from .scopes import (
     GlobalScope,
@@ -13,6 +13,10 @@ from .scopes import (
     TradingPairScope,
     TradingPairClassGroupScope,
 )
+from .instance_ids import get_all_instance_ids, has_instance_ids_provider
+
+if TYPE_CHECKING:
+    from ...core.app.base import AppCore
 
 
 class ScopeManager:
@@ -27,19 +31,9 @@ class ScopeManager:
 
     def __init__(self):
         """初始化 ScopeManager"""
-        # Scope 实例缓存：{scope_path: scope_instance}
-        # scope_path 包含从根到当前节点的完整路径
-        # 格式："scope_class_id:scope_instance_id/parent_path"
-        #
-        # 注意：虽然文档说缓存 key 是 (scope_class_id, scope_instance_id)，
-        # 但由于 ChainMap 继承机制，scope.parent 必须是唯一的，
-        # 因此实际缓存 key 必须包含 parent 信息
-        #
-        # 例如：
-        # - "global:global"
-        # - "exchange:okx/main/global:global"
-        # - "trading_pair:okx/main:BTC/USDT/exchange:okx/main/global:global"
-        self._cache: Dict[str, BaseScope] = {}
+        # Scope 实例缓存：{(scope_class_id, scope_instance_id): scope_instance}
+        # 缓存 key 不包含 parent 信息，确保同一 scope 在不同 links 中可以复用
+        self._cache: Dict[Tuple[str, str], BaseScope] = {}
 
         # Scope 类型注册表：{scope_class_name: scope_class}
         self._scope_classes: Dict[str, Type[BaseScope]] = {}
@@ -71,48 +65,6 @@ class ScopeManager:
         """
         self._scope_classes[scope_class_name] = scope_class
 
-    def _build_scope_path(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        parent: Optional[BaseScope] = None
-    ) -> str:
-        """
-        构建 Scope 路径（用于缓存 key）
-
-        Args:
-            scope_class_id: Scope 类型 ID
-            scope_instance_id: Scope 实例 ID
-            parent: 父 Scope
-
-        Returns:
-            完整的 scope path，格式："scope_class_id:scope_instance_id/parent_path"
-        """
-        current = f"{scope_class_id}:{scope_instance_id}"
-        if parent is None:
-            return current
-
-        # 递归构建父路径
-        parent_path = self._get_scope_path(parent)
-        return f"{current}/{parent_path}"
-
-    def _get_scope_path(self, scope: BaseScope) -> str:
-        """
-        获取已存在 Scope 的路径
-
-        Args:
-            scope: Scope 实例
-
-        Returns:
-            Scope 路径
-        """
-        current = f"{scope.scope_class_id}:{scope.scope_instance_id}"
-        if scope.parent is None:
-            return current
-
-        parent_path = self._get_scope_path(scope.parent)
-        return f"{current}/{parent_path}"
-
     def get_or_create(
         self,
         scope_class_name: str,
@@ -128,18 +80,18 @@ class ScopeManager:
             scope_class_name: Scope 类名（如 "GlobalScope"）
             scope_class_id: Scope 类型 ID（用户在配置中定义，如 "global", "my_scope"）
             scope_instance_id: Scope 实例 ID
-            parent: 父 Scope
+            parent: 父 Scope（仅用于传递给构造函数，不影响缓存 key）
             **kwargs: 传递给 Scope 构造函数的额外参数
 
         Returns:
             Scope 实例
         """
-        # 构建完整的 scope path 作为缓存 key
-        scope_path = self._build_scope_path(scope_class_id, scope_instance_id, parent)
+        # 使用 (scope_class_id, scope_instance_id) 作为缓存 key
+        cache_key = (scope_class_id, scope_instance_id)
 
         # 从缓存中获取
-        if scope_path in self._cache:
-            return self._cache[scope_path]
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
         # 创建新实例
         scope_class = self._scope_classes.get(scope_class_name)
@@ -149,20 +101,15 @@ class ScopeManager:
         # 所有 Scope 类现在都有统一的构造函数签名
         scope = scope_class(scope_class_id, scope_instance_id, parent, **kwargs)
 
-        # 添加到父节点的 children
-        if parent is not None:
-            parent.add_child(scope)
-
-        # 缓存
-        self._cache[scope_path] = scope
+        # 缓存（不再在这里挂接 children，由 LinkTree 构建逻辑负责）
+        self._cache[cache_key] = scope
 
         return scope
 
     def get(
         self,
         scope_class_id: str,
-        scope_instance_id: str,
-        parent: Optional[BaseScope] = None
+        scope_instance_id: str
     ) -> Optional[BaseScope]:
         """
         获取 Scope 实例（不创建）
@@ -170,13 +117,12 @@ class ScopeManager:
         Args:
             scope_class_id: Scope 类型 ID
             scope_instance_id: Scope 实例 ID
-            parent: 父 Scope（用于构建完整路径）
 
         Returns:
             Scope 实例，不存在则返回 None
         """
-        scope_path = self._build_scope_path(scope_class_id, scope_instance_id, parent)
-        return self._cache.get(scope_path)
+        cache_key = (scope_class_id, scope_instance_id)
+        return self._cache.get(cache_key)
 
     def clear_cache(self) -> None:
         """清空缓存"""
@@ -186,7 +132,10 @@ class ScopeManager:
         self,
         link: list[str],
         scope_configs: dict[str, dict],
-        instance_ids_provider: callable
+        instance_ids_provider: Callable = None,
+        app_core: "AppCore" = None,
+        symbol_filter: Callable[[str], bool] = None,
+        exchange_filter: Callable[[str], bool] = None,
     ) -> list[BaseScope]:
         """
         根据 link 配置构建 Scope 树
@@ -195,12 +144,16 @@ class ScopeManager:
             link: Scope 链路，如 ["global", "exchange_class", "exchange", "trading_pair"]
             scope_configs: Scope 配置字典，格式：
                 {
-                    "global": {"class": "GlobalScope", "instance_id": "global"},
+                    "global": {"class": "GlobalScope"},
                     "exchange": {"class": "ExchangeScope"},
                     ...
                 }
-            instance_ids_provider: 函数，用于获取指定 scope_class_id 的所有实例 ID
+            instance_ids_provider: 自定义实例发现函数（可选）
                 签名：(scope_class_id: str, parent_scope: BaseScope) -> list[str]
+                如果不提供，使用注册的 get_all_instance_ids 函数
+            app_core: AppCore 实例（使用注册的实例发现函数时必需）
+            symbol_filter: 交易对过滤函数（可选）
+            exchange_filter: 交易所过滤函数（可选）
 
         Returns:
             叶子节点 Scope 列表（target_scope 层级）
@@ -211,18 +164,30 @@ class ScopeManager:
         # 从第一个节点开始构建
         first_scope_class_id = link[0]
         first_config = scope_configs.get(first_scope_class_id, {})
+        first_class_name = first_config.get("class", "GlobalScope")
+        first_scope_class = self._scope_classes.get(first_class_name)
 
         # 获取第一个节点的实例 ID
-        instance_ids = instance_ids_provider(first_scope_class_id, None)
+        if instance_ids_provider:
+            instance_ids = instance_ids_provider(first_scope_class_id, None)
+        elif app_core and first_scope_class:
+            instance_ids = get_all_instance_ids(
+                app_core, None, None, first_scope_class,
+                symbol_filter=symbol_filter,
+                exchange_filter=exchange_filter,
+            )
+        else:
+            instance_ids = ["global"] if first_class_name == "GlobalScope" else []
 
         # 创建根节点
         root_scopes = []
         for instance_id in instance_ids:
             scope = self.get_or_create(
-                scope_class_name=first_config.get("class", "GlobalScope"),
+                scope_class_name=first_class_name,
                 scope_class_id=first_scope_class_id,
                 scope_instance_id=instance_id,
-                parent=None
+                parent=None,
+                app_core=app_core,
             )
             root_scopes.append(scope)
 
@@ -238,7 +203,10 @@ class ScopeManager:
                 current_index=1,
                 parent_scope=root_scope,
                 scope_configs=scope_configs,
-                instance_ids_provider=instance_ids_provider
+                instance_ids_provider=instance_ids_provider,
+                app_core=app_core,
+                symbol_filter=symbol_filter,
+                exchange_filter=exchange_filter,
             )
             leaf_scopes.extend(leaves)
 
@@ -250,7 +218,10 @@ class ScopeManager:
         current_index: int,
         parent_scope: BaseScope,
         scope_configs: dict[str, dict],
-        instance_ids_provider: callable
+        instance_ids_provider: Callable = None,
+        app_core: "AppCore" = None,
+        symbol_filter: Callable[[str], bool] = None,
+        exchange_filter: Callable[[str], bool] = None,
     ) -> list[BaseScope]:
         """递归构建 Scope 树"""
         if current_index >= len(link):
@@ -259,19 +230,48 @@ class ScopeManager:
 
         current_scope_class_id = link[current_index]
         current_config = scope_configs.get(current_scope_class_id, {})
+        current_class_name = current_config.get("class", "BaseScope")
+        current_scope_class = self._scope_classes.get(current_class_name)
+
+        # 获取 parent 的 scope class
+        parent_class_name = scope_configs.get(
+            parent_scope.scope_class_id, {}
+        ).get("class", "BaseScope")
+        parent_scope_class = self._scope_classes.get(parent_class_name)
 
         # 获取当前层级的所有实例 ID
-        instance_ids = instance_ids_provider(current_scope_class_id, parent_scope)
+        if instance_ids_provider:
+            instance_ids = instance_ids_provider(current_scope_class_id, parent_scope)
+        elif app_core and current_scope_class and parent_scope_class:
+            instance_ids = get_all_instance_ids(
+                app_core, parent_scope, parent_scope_class, current_scope_class,
+                symbol_filter=symbol_filter,
+                exchange_filter=exchange_filter,
+            )
+        else:
+            instance_ids = []
+
+        # 应用 exchange_filter（如果适用）
+        if exchange_filter and current_class_name in ("ExchangeScope", "ExchangeClassScope"):
+            instance_ids = [
+                iid for iid in instance_ids
+                if exchange_filter(iid.split('/')[0] if '/' in iid else iid)
+            ]
 
         # 为每个实例 ID 创建子 Scope
         leaf_scopes = []
         for instance_id in instance_ids:
             child_scope = self.get_or_create(
-                scope_class_name=current_config.get("class", "BaseScope"),
+                scope_class_name=current_class_name,
                 scope_class_id=current_scope_class_id,
                 scope_instance_id=instance_id,
-                parent=parent_scope
+                parent=parent_scope,
+                app_core=app_core,
             )
+
+            # 挂接 parent/children（由 LinkTree 构建逻辑负责）
+            if parent_scope is not None:
+                parent_scope.add_child(child_scope)
 
             # 递归构建子树
             child_leaves = self._build_scope_tree_recursive(
@@ -279,9 +279,21 @@ class ScopeManager:
                 current_index=current_index + 1,
                 parent_scope=child_scope,
                 scope_configs=scope_configs,
-                instance_ids_provider=instance_ids_provider
+                instance_ids_provider=instance_ids_provider,
+                app_core=app_core,
+                symbol_filter=symbol_filter,
+                exchange_filter=exchange_filter,
             )
             leaf_scopes.extend(child_leaves)
 
         return leaf_scopes
+
+    def reset_all_ready_states(self) -> None:
+        """
+        重置所有缓存的 scope 的 ready 状态
+
+        应在每个 tick 开始时调用
+        """
+        for scope in self._cache.values():
+            scope.reset_ready_state()
 

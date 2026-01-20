@@ -23,6 +23,7 @@ class VarDefinition(BaseModel):
     value: str = Field(..., description="表达式")
     on: Optional[str] = Field(None, description="条件表达式（默认 True，条件满足时更新）")
     initial_value: Any = Field(None, description="初始值（条件从未满足时使用）")
+    post: bool = Field(False, description="是否延后到第三遍计算（默认 false）")
 
 
 class ScopeVarDefinition(BaseModel):
@@ -35,6 +36,7 @@ class ScopeVarDefinition(BaseModel):
     value: str = Field(..., description="表达式")
     on: Optional[str] = Field(None, description="条件表达式（默认 True，条件满足时更新）")
     initial_value: Any = Field(None, description="初始值（条件从未满足时使用）")
+    post: bool = Field(False, description="是否延后到第三遍计算（默认 false）")
 
 
 class ScopeConfig(BaseModel):
@@ -113,39 +115,121 @@ class ScopeConfig(BaseModel):
 
 class TargetDefinition(BaseModel):
     """
-    目标定义（Feature 0008 Phase 4）
+    目标定义（Feature 0012）
 
     用于 targets 列表中的目标定义，支持表达式和多 exchange 匹配。
 
-    Feature 0011: 添加 condition 支持
-    - condition: 条件表达式，默认 null（等价 True）
-    - 若 condition 求值为 False 或异常，该 target 被忽略
+    新格式（Feature 0012）：
+    - exchange_id: exchange 匹配模式（默认 "*"）
+    - symbol: symbol 匹配模式（默认 "*"）
+    - condition: 条件表达式（可选，默认 True）
+    - vars: 变量列表（VarDefinition 格式）
+
+    向后兼容旧格式：
+    - exchange: 等价于 exchange_id
+    - exchange_class: 用于匹配 exchange class
+    - position_usd/position_amount/max_position_usd/speed: 直接字段（不推荐，建议用 vars）
     """
-    exchange: str = Field(
+    # 新格式字段
+    exchange_id: str = Field(
         "*",
         description="Exchange 匹配模式，'*' 表示所有，或具体路径如 'okx/main'"
+    )
+    symbol: str = Field("*", description="Symbol 匹配模式，'*' 表示所有")
+
+    # 向后兼容字段
+    exchange: str = Field(
+        "*",
+        description="（向后兼容）Exchange 匹配模式，等价于 exchange_id"
     )
     exchange_class: str = Field(
         "*",
         description="Exchange class 匹配模式，'*' 表示所有，或具体类名如 'okx'"
     )
-    symbol: str = Field(..., description="交易对")
 
-    # Feature 0011: target 级 condition
+    # 条件表达式
     condition: Optional[str] = Field(
         None,
         description="条件表达式（默认 null=True；False/异常时忽略该 target）"
     )
 
-    # 支持任意字段，值可以是表达式或字面量
-    # 以下是常用字段，其他字段通过 extra_fields 传递
-    position_usd: Optional[str] = Field(None, description="目标仓位（USD 表达式）")
-    position_amount: Optional[str] = Field(None, description="目标仓位（数量表达式）")
-    max_position_usd: Optional[str] = Field(None, description="最大仓位（USD 表达式）")
-    speed: Optional[float] = Field(0.5, description="执行紧急度")
+    # 新格式：vars 列表
+    vars: Union[list[VarDefinition], dict[str, str], list[str]] = Field(
+        default_factory=list,
+        description="变量列表（支持三种格式：1. list[VarDefinition] 标准格式，2. dict[str, str] 简化格式，3. list[str] 'name=value' 格式）"
+    )
+
+    # 向后兼容：直接字段（不推荐，建议用 vars）
+    position_usd: Optional[str] = Field(None, description="（向后兼容）目标仓位（USD 表达式）")
+    position_amount: Optional[str] = Field(None, description="（向后兼容）目标仓位（数量表达式）")
+    max_position_usd: Optional[str] = Field(None, description="（向后兼容）最大仓位（USD 表达式）")
+    speed: Optional[float] = Field(0.5, description="（向后兼容）执行紧急度")
 
     # 额外字段（通过 model_extra 访问）
     model_config = {"extra": "allow"}
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        """
+        规范化字段
+
+        1. 向后兼容：exchange → exchange_id（双向同步）
+        2. 规范化 vars 格式
+        """
+        if not isinstance(data, dict):
+            return data
+
+        # 向后兼容：exchange 和 exchange_id 双向同步
+        if 'exchange' in data and 'exchange_id' not in data:
+            data['exchange_id'] = data['exchange']
+        elif 'exchange_id' in data and 'exchange' not in data:
+            data['exchange'] = data['exchange_id']
+
+        # 规范化 vars（复用 ScopeConfig 的逻辑）
+        vars_value = data.get('vars')
+        if vars_value is None:
+            return data
+
+        # 格式 2: dict[str, str] - {name: value}
+        if isinstance(vars_value, dict):
+            normalized = []
+            for name, value in vars_value.items():
+                normalized.append({
+                    'name': name,
+                    'value': str(value)
+                })
+            data['vars'] = normalized
+            return data
+
+        # 格式 1 和 3: list 格式（可能混合）
+        if isinstance(vars_value, list) and len(vars_value) > 0:
+            normalized = []
+            for item in vars_value:
+                if isinstance(item, dict):
+                    # 标准格式：已经是 dict，直接保留
+                    normalized.append(item)
+                elif isinstance(item, VarDefinition):
+                    # VarDefinition 实例，转换为 dict
+                    normalized.append(item.model_dump())
+                elif isinstance(item, str):
+                    # 简化格式：字符串 "name=value"
+                    if '=' in item:
+                        name, value = item.split('=', 1)
+                        normalized.append({
+                            'name': name.strip(),
+                            'value': value.strip()
+                        })
+                    else:
+                        # 格式错误，跳过
+                        continue
+                else:
+                    # 未知格式，跳过
+                    continue
+            data['vars'] = normalized
+            return data
+
+        return data
 
 
 class BaseStrategyConfig(BaseConfig["BaseStrategy"]):

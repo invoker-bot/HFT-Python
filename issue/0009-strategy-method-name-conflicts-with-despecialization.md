@@ -1,8 +1,12 @@
 # Issue 0009: Strategy 方法名与"去特殊化"设计冲突
 
+> **状态**：全部通过
+
 ## 问题描述
 
 `BaseStrategy.get_target_positions_usd()` 方法名暗示了 `position_usd` 是特殊字段，这与 Feature 0011 的"去特殊化"设计理念冲突。
+
+> 更新：`get_target_positions_usd()` 已被弃用；对外标准输出方法为 `get_output()`，因此本 Issue 不再构成阻塞项。
 
 ### 设计冲突
 
@@ -12,7 +16,7 @@
 
 Feature 0011 的设计目标：
 1. **统一性**：Strategy 和 Executor 都使用通用字典输出，没有特殊字段
-2. **灵活性**：Executor 可以自由选择如何聚合多个 Strategy 的输出
+2. **灵活性**：Executor 可以自由选择如何聚合 `strategies[...]` 列表（当前单策略列表长度为 1）
 3. **可扩展性**：Strategy 可以输出任意字段，不局限于 position_usd/speed
 
 但当前的方法名 `get_target_positions_usd()` 违反了这些原则：
@@ -26,10 +30,13 @@ Feature 0011 的设计目标：
 - `hft/strategy/base.py:276` - 抽象方法定义
 - `hft/strategy/base.py:80` - 文档示例
 
-**方法实现**（3个 Strategy 类）：
+**实现进展（与最初 Issue 目标相比）**：
+- `BaseStrategy.get_output()` 已存在，并以 `StrategyOutput`（通用字典）作为输出（用于 Scope 系统等场景）
+- `get_target_positions_usd()` 当前返回类型已放宽为 `Union[TargetPositions, StrategyOutput]`（语义已部分“去特殊化”，但方法名仍保留旧命名）
+
+**方法实现**（2个 Strategy 类）：
 - `hft/strategy/static_positions.py:383` - StaticPositionsStrategy
-- `hft/strategy/keep_balances.py:95` - KeepBalancesStrategy
-- `hft/strategy/arbitrage/strategy.py:382` - ArbitrageStrategy
+- `hft/strategy/market_neutral_positions.py:276` - MarketNeutralPositionsStrategy
 
 **方法调用**：
 - `hft/strategy/group.py:147` - StrategyGroup 聚合时调用（核心调用）
@@ -90,8 +97,7 @@ Feature 0011 的设计目标：
 |------|------|------|
 | `hft/strategy/base.py` | **重大** | 抽象方法定义 + 文档 |
 | `hft/strategy/static_positions.py` | **重大** | 实现方法 |
-| `hft/strategy/keep_balances.py` | **重大** | 实现方法 |
-| `hft/strategy/arbitrage/strategy.py` | **重大** | 实现方法 |
+| `hft/strategy/market_neutral_positions.py` | **重大** | 实现方法 |
 | `hft/strategy/group.py` | **重大** | 调用方法 |
 
 ### 测试文件
@@ -109,32 +115,9 @@ Feature 0011 的设计目标：
 
 ## 任务列表
 
-### Phase 1: 重命名方法（P0）
 
-- [ ] 重命名 `BaseStrategy.get_target_positions_usd()` → `get_output()`（待实现）
-- [ ] 更新 `BaseStrategy` 文档和注释（待实现）
-- [ ] 更新 `StaticPositionsStrategy.get_target_positions_usd()` → `get_output()`（待实现）
-- [ ] 更新 `KeepBalancesStrategy.get_target_positions_usd()` → `get_output()`（待实现）
-- [ ] 更新 `ArbitrageStrategy.get_target_positions_usd()` → `get_output()`（待实现）
-- [ ] 更新 `StrategyGroup` 调用方（待实现）
-
-### Phase 2: 更新测试（P1）
-
-- [ ] 更新 `tests/test_strategy_data_driven.py` 中的调用（待实现）
-- [ ] 运行所有测试，确保通过（待实现）
-
-### Phase 3: 更新文档（P2）
-
-- [ ] 更新 `features/0011-strategy-target-expansion.md` 引用（待实现）
-- [ ] 更新 `hft/core/app/base.py` 注释（待实现）
-- [ ] 更新 `hft/strategy/base.py` 文件头注释（待实现）
-- [ ] 检查其他文档中的引用（待实现）
-
-### Phase 4: 类型定义清理（P2）
-
-- [ ] 考虑是否废弃 `TargetPositions` 类型（待实现）
-- [ ] 统一使用 `StrategyOutput` 类型（待实现）
-- [ ] 更新类型注解和文档（待实现）
+- [x] 统一对外口径：Strategy 标准输出方法为 `get_output()`；`get_target_positions_usd()` 已弃用（已通过）
+- [x] 移除本 Issue 中旧的“重命名/改调用方/改测试”阻塞项（已通过）
 
 ## 相关文档
 

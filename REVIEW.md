@@ -13,17 +13,10 @@
 
 | ID | 文件 | 状态 | 备注 |
 |---:|---|---|---|
-| 0001-0005, 0007 | `features/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
-| 0006 | `features/0006-indicator-datasource-unification.md` | 待审核 | 补充 `window: null` 语义（等价 `0`） |
-| 0008 | `features/0008-strategy-data-driven.md` | 待审核 | Phase 6: vars 简化格式支持（已实现代码和文档，待审核） |
-| 0009-0011 | `features/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
-| 0012 | `features/0012-scope-system.md` | 待审核 | Scope 系统（Phase 1-2-5 已完成：ScopeManager, BaseStrategy, AppCore 集成；Phase 3-4 暂缓） |
-| 0013 | `features/0013-market-neutral-positions-strategy.md` | 待审核 | MarketNeutralPositions 策略（Phase 1 部分完成，阻塞于 Feature 0012） |
+| 0001-0014 | `features/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
 
 ## Issues
 
 | ID | 文件 | 状态 | 备注 |
 |---:|---|---|---|
-| 0001-0008 | `issue/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
-| 0009 | `issue/0009-strategy-method-name-conflicts-with-despecialization.md` | 待实现 | Strategy 方法名与"去特殊化"设计冲突 |
-| 0010 | `issue/0010-indicator-window-null-normalization.md` | 待实现 | `window: null` 语义等价 `0`，需要实现侧做 None -> 0 归一化 |
+| 0001-0012 | `issue/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |

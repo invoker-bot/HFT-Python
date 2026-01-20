@@ -46,7 +46,7 @@ Strategy 支持数据驱动能力：
 │           ▼ targets 表达式求值                               │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  StrategyOutput                                      │    │
-│  │  {(exchange_path, symbol): {"position_usd": ..., ...}}│   │
+│  │  {(exchange_id, symbol): {"position_usd": ..., ...}}│   │
 │  └─────────────────────────────────────────────────────┘    │
 │           │                                                  │
 │           ▼ 聚合到 Executor                                  │
@@ -61,7 +61,8 @@ Strategy 支持数据驱动能力：
 
 ```
 BaseStrategy (抽象基类)
-├── KeepPositionsStrategy  # 保持目标仓位
+├── StaticPositionsStrategy       # 静态目标仓位（原 keep_positions）
+├── MarketNeutralPositionsStrategy # 市场中性对冲策略（Feature 0013）
 └── (其他自定义策略)
 ```
 
@@ -73,7 +74,7 @@ BaseStrategy (抽象基类)
 
 ```python
 TargetPositions = dict[tuple[str, str], tuple[float, float]]
-# {(exchange_path, symbol): (position_usd, speed)}
+# {(exchange_id, symbol): (position_usd, speed)}
 ```
 
 示例：
@@ -88,7 +89,7 @@ return {
 
 ```python
 StrategyOutput = dict[tuple[str, str], dict[str, Any]]
-# {(exchange_path, symbol): {"position_usd": ..., "speed": ..., "任意字段": ...}}
+# {(exchange_id, symbol): {"position_usd": ..., "speed": ..., "任意字段": ...}}
 ```
 
 示例：
@@ -112,7 +113,7 @@ return {
 ### 基础配置（BaseStrategyConfig）
 
 ```yaml
-class_name: keep_positions
+class_name: static_positions
 name: my_strategy
 interval: 1.0  # 主循环间隔（秒）
 debug: false   # 调试模式（不下真单）
@@ -129,32 +130,37 @@ requires:
   - equation
   - rsi
 
-# Scope 系统（Feature 0012）
-scopes:
-  global:
-    class_name: GlobalScope
-    vars:
-      - max_position_ratio=0.8
+# Feature 0011: 全局 condition（可选）
+# - 默认为 null（等价 True）
+# - 在每个 (exchange_id, symbol) 上求值；若为 False 或求值异常：忽略该 scope（等价于为每个 target 追加 AND 条件）
+condition: null
 
-  trading_pair:
-    class_name: TradingPairScope
-    vars:
-      - name: center_price
-        value: mid_price
-        on: rsi[-1] < 30 or rsi[-1] > 70
-        initial_value: mid_price
+# Scope 系统（Feature 0012）
+# 注意：Scope 节点只允许在 conf/app/*.yaml 的 scopes 字段里声明；
+# Strategy 配置里只引用 links，不允许出现 scopes 字段。
+links:
+  - id: link_main
+    value: [g, exchange_class, exchange, trading_pair]
 ```
 
-**注意**：Strategy 中的 vars 定义在 `scopes` 配置中，不支持顶级 `vars` 字段。详见 [vars 文档](vars.md) 和 [Scope 文档](scope.md)。
+**过滤字段说明**：
+- `trading_pairs/max_trading_pairs`：旧字段（不使用 Scope 系统时常用）。
+- Scope 系统下（配置了 `links`）建议使用 `include_symbols/exclude_symbols`（见 [scope.md](scope.md)）；exchange 选择由 AppConfig 的 `exchanges` 选择器控制。
 
-### KeepPositionsStrategy 配置
+**注意**：Scope 的配置边界、实例发现与 ChainMap 继承规则详见 [Scope 文档](scope.md)。Strategy 顶级 `vars` 仍用于“策略本地变量”（与 Scope vars 不同）。
 
-支持两种配置方式：
+**vars 格式**：`vars` 支持标准格式 / dict 简化格式 / list[str] 简化格式，详见 [vars.md](vars.md)。
+
+### StaticPositionsStrategy 配置（原 keep_positions）
+
+说明：`keep_positions` 为历史别名（不推荐）；文档统一使用 `static_positions`。
+
+支持三种配置方式：
 
 #### 旧格式（向后兼容）
 
 ```yaml
-class_name: keep_positions
+class_name: static_positions
 exchange_path: okx/main
 exit_on_target: true
 tolerance: 0.05
@@ -167,7 +173,7 @@ positions_usd:
 #### 新格式（Feature 0008）
 
 ```yaml
-class_name: keep_positions
+class_name: static_positions
 requires:
   - equation
 
@@ -176,14 +182,14 @@ vars:
     value: '0.6'
 
 targets:
-  - exchange: '*'           # 匹配所有 exchange
+  - exchange_id: '*'        # 匹配所有 exchange（注：兼容字段 exchange 等价 exchange_id）
     exchange_class: okx     # 但只匹配 okx 类型
     symbol: BTC/USDT:USDT
     position_usd: 'target_ratio * equation_usd'
     max_position_usd: '0.8 * equation_usd'
     speed: 0.5
 
-  - exchange: okx/spot_a    # 精确匹配 exchange path
+  - exchange_id: okx/spot_a  # 精确匹配 exchange path
     symbol: USDG/USDT
     position_amount: 'base_amount + delta'
     custom_field: 'some_expression'  # 任意自定义字段
@@ -192,15 +198,34 @@ exit_on_target: false
 tolerance: 0.05
 ```
 
+#### 展开式写法（Feature 0011 推荐）
+
+```yaml
+class_name: static_positions
+
+target_pairs:
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+
+target:
+  exchange_class: okx
+  position_usd: "1000"
+  speed: 0.5
+```
+
+说明：`target_pairs + target` 会在配置加载时展开为 `targets` 列表（减少重复配置）。
+
 ---
 
 ## targets 匹配规则
 
-### exchange 匹配
+### exchange_id 匹配
 
 - `'*'`：匹配所有 exchange
 - `'okx/main'`：精确匹配 exchange path
 - `'okx/*'`：模式匹配（支持 fnmatch 语法）
+
+兼容字段：`exchange` 等价于 `exchange_id`（不推荐继续使用）。
 
 ### exchange_class 匹配
 
@@ -213,13 +238,13 @@ tolerance: 0.05
 ```yaml
 targets:
   # 匹配所有 okx 交易所的 BTC 交易对
-  - exchange: '*'
+  - exchange_id: '*'
     exchange_class: okx
     symbol: BTC/USDT:USDT
     position_usd: 1000
 
   # 只匹配特定的 exchange
-  - exchange: okx/spot_a
+  - exchange_id: okx/spot_a
     exchange_class: '*'
     symbol: USDG/USDT
     position_usd: 500
@@ -227,19 +252,19 @@ targets:
 
 ---
 
-## 多策略聚合
+## strategies namespace（单策略口径）
 
-多个 Strategy 的输出会聚合到 Executor 的 `strategies` namespace：
+Executor 会接收到一个 `strategies` namespace（list 口径），用于在表达式里统一处理“策略输出字段”：
+
+- 当前 App 仅支持单策略，因此每个字段的列表长度为 `1`
+- 仍使用 list：避免把表达式与“是否多策略”绑定；未来如恢复多策略，该口径可自然扩展
 
 ```python
-# Strategy A 输出
+# Strategy 输出（单策略）
 {("okx/main", "BTC/USDT"): {"position_amount": 0.01}}
 
-# Strategy B 输出
-{("okx/main", "BTC/USDT"): {"position_amount": 0.02}}
-
-# Executor 收到的 strategies namespace
-strategies["position_amount"] = [0.01, 0.02]  # 列表形式
+# Executor 接收到的 strategies namespace（仍为列表）
+strategies["position_amount"] = [0.01]
 ```
 
 在 Executor 中使用：
@@ -259,9 +284,9 @@ vars:
 
 当策略的 `on_tick()` 返回 `True` 时，触发退出流程：
 
-1. Strategy.on_tick() 返回 True → 策略从 StrategyGroup 中移除
+1. Strategy.on_tick() 返回 True → 唯一策略完成
 2. StrategyGroup.is_finished 变为 True → StrategyGroup.on_tick() 返回 True
-3. AppCore.on_tick() 检测到策略组完成 → 返回 True → 程序正常退出
+3. AppCore.on_tick() 检测到策略完成 → 返回 True → 程序正常退出
 
 ---
 
@@ -271,7 +296,7 @@ vars:
 
 ```yaml
 # conf/strategy/simple_hold.yaml
-class_name: keep_positions
+class_name: static_positions
 exchange_path: okx/main
 positions_usd:
   BTC/USDT:USDT: 1000
@@ -283,29 +308,42 @@ speed: 0.8
 ### 数据驱动的动态仓位策略
 
 ```yaml
-# conf/strategy/dynamic_hold.yaml
-class_name: keep_positions
-
-requires:
-  - equation  # 账户权益数据源
-  - rsi       # RSI 指标
-
+# conf/app/<app>.yaml（片段：scopes 字段只允许出现在 app 配置里）
 scopes:
-  global:
-    class_name: GlobalScope
+  g:
+    class: GlobalScope
     vars:
       - risk_ratio=0.6
 
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
   trading_pair:
-    class_name: TradingPairScope
+    class: TradingPairScope
     vars:
       - name: direction
         value: 1 if rsi[-1] < 30 else (-1 if rsi[-1] > 70 else 0)
         on: rsi[-1] < 30 or rsi[-1] > 70
         initial_value: 0
+```
+
+```yaml
+# conf/strategy/dynamic_hold.yaml
+class_name: static_positions
+
+requires:
+  - equation  # 账户权益数据源
+  - rsi       # RSI 指标
+
+links:
+  - id: link_main
+    value: [g, exchange_class, exchange, trading_pair]
 
 targets:
-  - exchange: '*'
+  - exchange_id: '*'
     exchange_class: okx
     symbol: BTC/USDT:USDT
     position_usd: 'risk_ratio * equation_usd * direction'
@@ -318,23 +356,163 @@ exit_on_target: false
 
 ```yaml
 # conf/strategy/hedge.yaml
-class_name: keep_positions
+class_name: static_positions
 
 requires:
   - equation
 
 targets:
   # OKX 做多
-  - exchange: okx/main
+  - exchange_id: okx/main
     symbol: BTC/USDT:USDT
     position_usd: '0.3 * equation_usd'
     speed: 0.3
 
   # Binance 做空
-  - exchange: binance/main
+  - exchange_id: binance/main
     symbol: BTC/USDT:USDT
     position_usd: '-0.3 * equation_usd'
     speed: 0.3
 
 exit_on_target: false
 ```
+
+---
+
+## MarketNeutralPositionsStrategy（市场中性对冲策略）
+
+### 概述
+
+MarketNeutralPositionsStrategy 是一个市场中性对冲策略，通过在不同交易所/交易对之间建立对冲仓位来捕获价差套利机会。
+
+**核心特性**：
+- **市场中性**：确保组内 `ratio` 总和为 0
+- **自动分组**：按 `group_id` 分组交易对
+- **公平价格**：通过 `FairPriceIndicator` 计算标准价格
+- **智能方向**：自动计算开仓/平仓/持仓方向
+- **Ratio 平衡**：自动调整仓位比例，满足对冲条件
+
+### 配置示例
+
+```yaml
+# conf/strategy/market_neutral_positions/eth_arbitrage.yaml
+class_name: market_neutral_positions
+
+# 交易对过滤
+include_symbols: ['ETH/USDT', 'WBETH/USDT', 'BTC/USDT']
+exclude_symbols: []
+
+# 依赖的 Indicator
+requires:
+  - medal_amount  # 账户余额
+  - ticker        # 行情数据
+  - fair_price    # 公平价格
+
+# Scope 链路
+links:
+  - id: main
+    value: [g, exchange_class, exchange, trading_pair_class_group, trading_pair_class, trading_pair]
+
+# 分组配置
+default_trading_pair_group: symbol.split('/')[0]
+trading_pair_group:
+  WBETH/USDT: ETH
+  STETH/USDT: ETH
+
+# 阈值配置
+max_trading_pair_groups: 10
+max_position_usd: 2000.0
+entry_price_threshold: 0.001
+exit_price_threshold: 0.0005
+score_threshold: 0.001
+
+# 目标配置
+targets:
+  - exchange_id: "*"
+    symbol: "*"
+    condition: "ratio != 0"
+    vars:
+      - position_usd=ratio * max_position_usd
+```
+
+### 配置参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_trading_pair_groups` | int | 10 | 最大交易对分组数量 |
+| `max_position_usd` | float | 2000.0 | 每个分组的最大仓位（USD） |
+| `entry_price_threshold` | float | 0.001 | 开仓价差阈值（0.1%） |
+| `exit_price_threshold` | float | 0.0005 | 平仓价差阈值（0.05%） |
+| `score_threshold` | float | 0.001 | 最小 score 阈值 |
+| `default_trading_pair_group` | str | `symbol.split('/')[0]` | 默认分组表达式 |
+| `trading_pair_group` | dict | {} | 自定义分组映射 |
+
+### 工作原理
+
+#### 1. Trading Pair 分组
+
+策略将交易对按 `group_id` 分组（如 ETH/USDT、WBETH/USDT → ETH 组）。
+
+#### 2. Fair Price 计算
+
+通过 `FairPriceIndicator` 获取每个交易对的公平价格（mid_price）。
+
+#### 3. Direction 计算
+
+根据价差计算每个交易对的方向：
+- `-1`: Entry Short（建议开空仓）
+- `0`: Exit（建议平仓）
+- `1`: Entry Long（建议开多仓）
+- `null`: Hold（建议持仓不动）
+
+#### 4. Ratio 计算与平衡
+
+策略自动调整仓位比例，确保：
+- 组内所有 `ratio` 总和为 0（市场中性）
+- `ratio(Price_min) - ratio(Price_max) = 2`（对冲条件）
+
+### 套利场景
+
+**场景 1：跨平台现货套利**
+```
+低价平台买入现货 → 链上转账 → 高价平台卖出现货
+同时：高价平台买入等值空合约（对冲）
+```
+
+**场景 2：资费率套利**
+```
+资费率为正：做空合约 + 买入现货（收取资费）
+资费率为负：做多合约 + 卖出现货（收取资费）
+```
+
+**场景 3：合约间套利**
+```
+不同交易所的合约价差套利
+```
+
+### 示例输出
+
+```python
+# 策略输出
+{
+    ("okx/main", "WBETH/USDT"): {
+        "position_usd": 2000.0,   # 做多 WBETH（最低价）
+        "ratio": 1.0,
+    },
+    ("okx/main", "ETH/USDT"): {
+        "position_usd": 0.0,      # 不持仓（中间价）
+        "ratio": 0.0,
+    },
+    ("binance/spot", "ETH/USDT"): {
+        "position_usd": -2000.0,  # 做空 ETH（最高价）
+        "ratio": -1.0,
+    },
+}
+```
+
+### 相关文档
+
+- [Feature 0013: MarketNeutralPositions 策略](../features/0013-market-neutral-positions-strategy.md)
+- [Example 004: MarketNeutralPositions 配置详解](../examples/004-market-neutral-positions-strategy.md)
+- [Scope 系统文档](scope.md)
+

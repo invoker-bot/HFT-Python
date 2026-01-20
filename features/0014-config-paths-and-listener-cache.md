@@ -1,5 +1,7 @@
 # Feature 0014: ConfigPath Types + Listener Cache Pickle
 
+> **状态**：全部通过
+
 ## 背景与目标
 
 本 Feature 是一次“基础架构调整”，目标是把 **配置加载** 与 **运行时状态持久化（pickle）** 做成更可控、更低耦合、更易迁移的体系：
@@ -16,7 +18,7 @@
 
 - **HFT_ROOT_PATH**：运行时配置根目录。默认 `"."`，用于加载 `conf/**.yaml`。
 - **Config ID / Pathname**：指 `BaseConfig.load(<pathname>)` 的 `<pathname>`，不含 `.yaml`，相对其 `class_dir`。
-- **Listener cache**：`dict[str, Listener]`，key 约定为 `f"{ClassName}-{name}"`。
+- **Listener cache**：`dict[str, Listener]`，key 由 `build_cache_key(cls, name, parent)` 生成（格式：`"ClassName:name/parent_key"`）。
 - **严格树（instance-level）**：Listener/Scope 等运行时实例只有一个 `parent`，`children` 由 parent 持有。
 
 ---
@@ -205,7 +207,8 @@ pickle 不再保存整棵 Listener 树（尤其不保存 `children` 的递归链
 
 ```python
 def get_or_create(cache: dict[str, Listener], cls: type[Listener], name: str, parent=None):
-    key = f"{cls.__name__}-{name}"
+    # cache key 包含 parent 链
+    key = build_cache_key(cls, name, parent)  # 格式："ClassName:name/parent_key"
     if key not in cache:
         cache[key] = cls()  # Listener 子类构造函数无参数
     inst = cache[key]
@@ -217,6 +220,7 @@ def get_or_create(cache: dict[str, Listener], cls: type[Listener], name: str, pa
 ```
 
 说明：
+- cache key 包含 parent 链，支持同一 Listener 在不同父节点下有不同状态
 - `parent` 由调用方决定（通常是当前 Listener）
 - 通过 `parent.add_child()` 重建树链接
 - 子 Listener 的 `config/interval/依赖` 在 `initialize()/on_start()` 阶段通过 `self.root` 获取并设置
@@ -270,12 +274,11 @@ exchange_config = (
 
 ## TODO（实现清单）
 
-- [ ] 为 BaseConfig 的 `load/save/list_configs` 引入 `HFT_ROOT_PATH` 默认 cwd（待实现）
-- [ ] 定义 `BaseConfigPath`（Pydantic 字段类型）+ `*.instance` lazy cache（待实现）
-- [ ] 为 AppConfig 引入 `exchanges/strategy/executor` 三个 Path 字段，并移除 `strategies`（待实现）
-- [ ] 实现 `ExchangeConfigPathGroup` 的过滤语法与 `get_id_map/get_grouped_*` API（待实现）
-- [ ] Listener 构造函数无参数化改造 + `get_or_create(cache, cls, name, parent)`（待实现）
-- [ ] pickle 改为仅保存 cache，不保存 children；恢复时重建树链接（待实现）
-- [ ] 更新 conf 模板与 examples（迁移到新字段：`strategy`，exchange 选择器语法）（待实现）
-- [ ] 新增/补充最小单元测试：ConfigPath 加载、filter 语法、pickle 恢复（待实现）
-
+- [x] 为 BaseConfig 的 `load/save/list_configs` 引入 `HFT_ROOT_PATH` 默认 cwd（已通过）
+- [x] 定义 `BaseConfigPath`（Pydantic 字段类型）+ `*.instance` lazy cache（已通过）
+- [x] 为 AppConfig 引入 `exchanges/strategy/executor` 三个 Path 字段，并移除 `strategies`（已通过）
+- [x] 实现 `ExchangeConfigPathGroup` 的过滤语法与 `get_id_map/get_grouped_*` API（已通过）
+- [x] Listener 构造函数无参数化改造 + `get_or_create(cache, cls, name, parent)`（已通过：cache key 包含 parent 链）
+- [x] pickle 改为仅保存 cache，不保存 children；恢复时重建树链接（已通过：cache key 包含 parent 链，支持同一 Listener 在不同父节点下有不同状态）
+- [x] 更新 conf 模板与 examples（迁移到新字段：`strategy`，exchange 选择器语法）（已通过）
+- [x] 新增/补充最小单元测试：ConfigPath 加载、filter 语法、pickle 恢复（已通过：tests/test_listener_cache.py 包含 parent 链 cache key 的测试）

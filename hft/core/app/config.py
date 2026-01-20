@@ -116,6 +116,12 @@ class AppConfig(BaseConfig[AppCore]):
         description="指标配置，格式: {indicator_id: {class: 类名, params: {...}}}"
     )
 
+    # Scope 配置（Feature 0012）
+    scopes: dict[str, dict] = Field(
+        default_factory=dict,
+        description="全局 Scope 配置，格式: {scope_class_id: {class_name: 类名, instance_id: 实例ID, vars: [...]}}"
+    )
+
     # 调试和测试
     debug: bool = Field(False, description="调试模式，验证流程而不实际下单")
     max_duration: float | None = Field(None, description="最大运行时长（秒），None 表示无限运行直到策略退出")

@@ -20,8 +20,8 @@
 
 1) SmartExecutor 不直接下单，挂载子执行器为 children。  
 2) 单次 tick：
-   - 禁用 children 的 tick，统一从 StrategyGroup 拉取目标仓位与 speed。  
-   - 根据规则为每个 (exchange_path, symbol) 选择执行器。  
+   - 禁用 children 的 tick，统一从 Strategy 输出拉取目标仓位与 speed（当前单策略）。  
+   - 根据规则为每个 (exchange_id, symbol) 选择执行器。  
    - gather 执行子执行器的 create_orders/execute_delta（按接口定义）生成订单。  
    - gather 执行 cancel_orders 针对被切走的执行器的遗留订单（先下新单，再取消旧单）。  
 3) 路由优先级：显式路由 > 规则匹配（自上而下） > 默认（null=不执行）。

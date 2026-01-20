@@ -67,6 +67,8 @@ class TickerDataSource(BaseDataSource[TickerData]):
             window=0,  # Ticker 不需要历史窗口
             **kwargs,
         )
+        # Feature 0012: 注入到 trading_pair_class 层级（所有 exchange 共享）
+        self.scope_level = "trading_pair_class"
 
     async def _watch(self) -> None:
         """WebSocket 订阅 ticker"""

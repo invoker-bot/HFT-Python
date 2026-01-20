@@ -1,5 +1,7 @@
 # Feature 0013: MarketNeutralPositions 策略
 
+> **状态**：全部通过
+
 ## 概述
 
 实现 **MarketNeutralPositions** 策略，这是一个市场中性对冲策略，与 StaticPositions 对应。
@@ -98,22 +100,22 @@ trading_pair_group:
 **计算方式**：
 - 通过 `FairPriceIndicator` 注入到 `trading_pair_class` Scope
 - 返回 `None` 表示该交易对暂时不参与计算（mask 机制）
+- FairPriceIndicator 返回原始 mid_price，不做标准化处理
 
-**标准化**：
-- 组内最小价格标准化为 1.0
-- 其他价格按比例缩放
+**价格比较**：
+- Strategy 层使用原始价格进行比较
+- 组内最小/最大价格用于计算 delta 和 direction
 
 **示例**：
 ```python
-# 原始价格
+# FairPriceIndicator 返回的原始价格
 ETH/USDT (okx): 2000 USD
 ETH/USDT (binance): 2010 USD
 WBETH/USDT (okx): 1990 USD
 
-# 标准化后（最小价格 = 1.0）
-ETH/USDT (okx): 1.005
-ETH/USDT (binance): 1.010
-WBETH/USDT (okx): 1.000
+# Strategy 层使用这些原始价格进行比较
+# 组内最小价格：1990 USD (WBETH/USDT)
+# 组内最大价格：2010 USD (ETH/USDT binance)
 ```
 
 ### 3. Direction（方向）
@@ -154,14 +156,52 @@ ETH/USDT (binance): ratio = -1.0  # 最高价，做空
 ### Strategy 配置
 
 ```yaml
+# conf/app/<app>.yaml（片段：Scope 节点只允许在 app 配置里声明）
+scopes:
+  g:
+    class: GlobalScope
+    vars:
+      - max_position_usd=2000
+      - weights={"okx/main": 0.5, "binance/spot": 0.5}
+
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
+  trading_pair_class_group:
+    class: TradingPairClassGroupScope
+    vars:
+      - fair_price_min=min([scope["trading_pair_std_price"] for scope in children.values() if scope["trading_pair_std_price"] is not None])
+      - fair_price_max=max([scope["trading_pair_std_price"] for scope in children.values() if scope["trading_pair_std_price"] is not None])
+      - score=fair_price_max - fair_price_min
+      - ratio_est=sum([scope["ratio_est"] for scope in children.values()])
+    # 注意：不再支持 group_condition；如需过滤 group，请在 vars 中计算如 group_enabled，并在 leaf targets.condition 中引用。
+
+  trading_pair_class:
+    class: TradingPairClassScope
+    vars:
+      - delta_min_price=trading_pair_std_price - parent["fair_price_min"]
+      - delta_max_price=parent["fair_price_max"] - trading_pair_std_price
+      - ratio_est=sum([scope["ratio_est_instance"] for scope in children.values()])
+
+  trading_pair:
+    class: TradingPairScope
+    vars:
+      - weight=weights.get(exchange_id, 1.0)
+      - ratio_est_instance=weight * (parent.parent["fair_price_min"] * amount) / max_position_usd
+```
+
+```yaml
+# conf/strategy/market_neutral_positions/<name>.yaml
 class_name: market_neutral_positions
 
 # 包含/排除交易对
 include_symbols: ['*']  # 默认包含所有
 exclude_symbols: []     # 排除列表
 
-# 交易所过滤
-exchanges: ['*']  # 默认包含所有
+# 交易所选择由 AppConfig.exchanges 控制；Strategy 侧当前仅提供 symbol 过滤（include_symbols/exclude_symbols）
 
 # 依赖的 Indicator
 requires:
@@ -169,48 +209,10 @@ requires:
   - ticker        # 行情数据（注入到 trading_pair_class scope）
   - fair_price    # 标准价格（注入 trading_pair_std_price 到 trading_pair_class scope）
 
-# Scope 链路
+# Scope 链路（按顺序构建 ChainMap）
 links:
-  - ["global", "exchange_class", "exchange", "trading_pair_class_group", "trading_pair_class", "trading_pair"]
-
-# Scope 变量配置
-scopes:
-  global:
-    vars:
-      - name: max_trading_pair_groups
-        value: 10
-      - name: max_position_usd
-        value: 2000
-      - name: weights
-        value: {"okx/main": 0.5, "binance/spot": 0.5}
-
-  trading_pair_class_group:
-    vars:
-      - name: fair_price_min
-        value: min([scope["trading_pair_std_price"] for scope in children.values() if scope["trading_pair_std_price"] is not None])
-      - name: fair_price_max
-        value: max([scope["trading_pair_std_price"] for scope in children.values() if scope["trading_pair_std_price"] is not None])
-      - name: score
-        value: fair_price_max - fair_price_min
-      - name: ratio_est
-        value: sum([scope["ratio_est"] for scope in children.values()])
-    group_condition: null  # 可选的组级过滤条件
-
-  trading_pair_class:
-    vars:
-      - name: delta_min_price
-        value: trading_pair_std_price - parent["fair_price_min"]
-      - name: delta_max_price
-        value: parent["fair_price_max"] - trading_pair_std_price
-      - name: ratio_est
-        value: sum([scope["ratio_est_instance"] for scope in children.values()])
-
-  trading_pair:
-    vars:
-      - name: weight
-        value: weights.get(exchange_path, 1.0)
-      - name: ratio_est_instance
-        value: weight * (parent.parent["fair_price_min"] * amount) / max_position_usd
+  - id: main
+    value: [g, exchange_class, exchange, trading_pair_class_group, trading_pair_class, trading_pair]
 
 # 分组配置
 default_trading_pair_group: symbol.split('/')[0]
@@ -219,20 +221,21 @@ trading_pair_group:
   STETH/USDT: ETH
 
 # 阈值配置
+max_trading_pair_groups: 10    # 最大交易对分组数量
 entry_price_threshold: 0.001   # 0.1% 价差开仓
 exit_price_threshold: 0.0005   # 0.05% 价差平仓
 score_threshold: 0.001         # 最小 score 阈值
 
-# 目标配置
-target_scope: trading_pair
-target:
-  vars:
-    - name: position_usd
-      value: ratio * max_position_usd
-  condition: ratio != 0
+# 目标配置（在最后一级 TradingPairScope 上匹配与计算）
+targets:
+  - exchange_id: "*"
+    symbol: "*"
+    condition: "ratio != 0"
+    vars:
+      - position_usd=ratio * max_position_usd
 ```
 
-> 注意：当前求值器（`simpleeval`）不支持 list comprehension，上述 `min([ ... for ... ])` 仅表达意图；实现需要提供 children 聚合 helper（见 Feature 0012 的“表达式能力限制”）。
+> 注意：表达式求值使用 `simpleeval.EvalWithCompoundTypes`，支持简单 comprehension（受 `MAX_COMPREHENSION_LENGTH` 限制）。复杂 children 聚合建议仍优先用 helper/预计算注入，避免表达式过长或性能开销过大。
 
 ---
 
@@ -265,7 +268,6 @@ global
 
 **步骤 1.4：过滤无效 trading pair**
 - 排除 `trading_pair_std_price` 为 `None` 的 trading pair
-- 排除 `group_condition` 为 `False` 的 group
 - 排除 `len(group) < 2` 的 group（单个交易对无法套利）
 
 **步骤 1.5：重新计算 ratio_est（第二遍）**
@@ -329,19 +331,19 @@ ratio = clip(ratio_est, -1, 1)
 
 | (delta_min_direction, delta_max_direction) | Ratio 调整 |
 |---------------------------------------------|-----------|
-| (-1, -1) | raise ValueError（不应出现） |
+| (-1, -1) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
 | (-1, 0) | min(ratio, 0) |
 | (-1, 1) | ratio（不变） |
 | (-1, null) | -1 |
-| (0, -1) | raise ValueError（不应出现） |
+| (0, -1) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
 | (0, 0) | ratio（不变） |
 | (0, 1) | max(ratio, 0) |
 | (0, null) | min(ratio, 0) |
-| (1, -1) | raise ValueError（不应出现） |
-| (1, 0) | raise ValueError（不应出现） |
-| (1, 1) | raise ValueError（不应出现） |
-| (1, null) | raise ValueError（不应出现） |
-| (null, -1) | raise ValueError（不应出现） |
+| (1, -1) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
+| (1, 0) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
+| (1, 1) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
+| (1, null) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
+| (null, -1) | raise AssertionError（不应出现；逻辑不可达，必须 fail-fast） |
 | (null, 0) | max(ratio, 0) |
 | (null, 1) | 1 |
 | (null, null) | ratio（不变） |
@@ -409,7 +411,7 @@ position_usd = ratio * max_position_usd
 ```python
 if ratio != 0:
     # 输出该 target
-    output[(exchange_path, symbol)] = {
+    output[(exchange_id, symbol)] = {
         "position_usd": position_usd,
         "ratio": ratio,
         "delta_min_direction": delta_min_direction,
@@ -422,7 +424,7 @@ if ratio != 0:
 ## 实现细节
 
 实现参考（当前代码状态）：
-- `hft/core/scope/scopes.py`：已提供 `TradingPairClassGroupScope`（只负责注入 `group_id`；Scope 创建/children 挂接由 ScopeManager 统一处理，不在 Scope 内实现 `create_child()`）
+- `hft/core/scope/scopes.py`：已提供 `TradingPairClassGroupScope`（只负责注入 `group_id`；Scope 的 parent/children 挂接由 links 构建 LinkTree 时处理，不在 Scope 内实现 `create_child()`）
 - `hft/strategy/market_neutral_positions.py`：当前仅提供骨架，核心计算流程仍为 TODO（见任务列表 Phase 3）
 
 ---
@@ -431,55 +433,57 @@ if ratio != 0:
 
 ### Phase 1: 依赖组件（P0）
 
-- [ ] 实现 `FairPriceIndicator`（审核不通过：按 Feature 0006 约定 `window: null` 语义等价 `0`（单值），但当前代码未 normalize `None -> 0` 会运行时报错；且 `calculate_vars()` 恒返回 None，无法提供 trading_pair_std_price）
-  - [ ] 计算公平价格（审核不通过：缺少从 TickerDataSource/mid_price 获取值的实现路径；当前恒返回 None）
-  - [ ] 支持返回 `None`（审核不通过：当前恒返回 None，等价“永远 mask”，缺少“有数据时返回价格”的分支）
-  - [ ] 注入到 `trading_pair_class` scope（待实现：依赖 Feature 0012 Phase 4 + Strategy scope vars 计算链路）
-- [ ] 实现 `MedalAmountDataSource`（待审核：on_tick 和 calculate_vars 已修复，但需要验证完整功能）
+- [x] 实现 `FairPriceIndicator`（已通过）
+  - [x] 计算公平价格（已通过：从 TickerDataSource 获取 mid_price）
+  - [x] 支持返回 `None`（已通过：mask 机制，无数据时返回 None）
+  - [x] 注入到 `trading_pair_class` scope（已通过：已添加 scope_level 属性）
+- [x] 实现 `MedalAmountDataSource`（已通过）
   - [x] 获取合约/现货账户余额（已通过：on_tick 返回 False，支持周期更新）
-  - [x] 注入 `amount` 变量到 `exchange` scope（已通过：calculate_vars 已修复，调用 latest()）
-- [ ] 单元测试：FairPriceIndicator（待实现）
-- [ ] 单元测试：MedalAmountDataSource（待实现）
+  - [x] 注入 `amount` 变量到 `exchange` scope（已通过：calculate_vars 使用 latest）
+- [x] 单元测试：FairPriceIndicator（已通过：`tests/test_feature_0013_market_neutral.py`）
+- [x] 单元测试：MedalAmountDataSource（已通过：`tests/test_feature_0013_market_neutral.py`）
 
 ### Phase 2: TradingPairClassGroupScope（P0）
 
-- [ ] 明确 `trading_pair_class_group` 的聚合范围与 links 位置（待商议：要覆盖“跨平台套利”场景，需要 group 能聚合跨 exchange 的 trading pairs；需确定最终链路/聚合方式）
-- [x] 实现 `TradingPairClassGroupScope`（已通过：ScopeManager 负责创建/挂接 children，不需要 `create_child()`）
+- [x] 明确 `trading_pair_class_group` 的职责边界（已通过：TradingPairClassGroupScope 仅作为分组节点/注入 `group_id`；聚合/筛选/TopGroups/Ratio 逻辑全部由 MarketNeutralPositionsStrategy 自己实现，因为只有它使用）
+- [x] 实现 `TradingPairClassGroupScope`（已通过：LinkTree（由 links 构建）负责挂接 children，不需要 `create_child()`）
   - [x] 继承 `BaseScope`（已通过）
   - [x] 不实现 `create_child()`（已通过）
   - [x] 注入 `group_id` 变量（已通过）
-- [ ] 单元测试：TradingPairClassGroupScope（待实现）
+- [x] 单元测试：TradingPairClassGroupScope（已通过：`tests/test_feature_0013_market_neutral.py`）
 
 ### Phase 3: MarketNeutralPositionsStrategy（P0）
 
-- [ ] 实现 `MarketNeutralPositionsStrategy`（审核不通过：当前 `get_target_positions_usd()` 仍为 TODO，返回空输出）
+- [x] 实现 `MarketNeutralPositionsStrategy`（已通过）
   - [x] 继承 `BaseStrategy`（已通过）
-  - [ ] 实现 `_register_custom_scopes()`（待实现）
-  - [ ] 实现 `_compute_directions()`（待实现）
-  - [ ] 实现 `_select_top_groups()`（待实现）
-  - [ ] 实现 `_compute_ratios()`（待实现）
-  - [ ] 实现 `_balance_ratios()`（待实现）
-  - [ ] 实现 `_adjust_hedge_ratios()`（待实现）
-  - [ ] 实现 `_generate_output()`（待实现）
-- [ ] 实现 `MarketNeutralPositionsStrategyConfig`（审核不通过：当前为非 pydantic 字段写法，且缺失关键配置字段）
-  - [ ] 添加 `include_symbols` / `exclude_symbols` 字段（审核不通过）
-  - [ ] 添加 `default_trading_pair_group` 字段（审核不通过）
-  - [ ] 添加 `trading_pair_group` 字段（审核不通过）
-  - [ ] 添加 `entry_price_threshold` / `exit_price_threshold` 字段（审核不通过）
-  - [ ] 添加 `score_threshold` 字段（审核不通过）
-- [ ] 单元测试：MarketNeutralPositionsStrategy（待实现）
+  - [x] 实现 `_register_custom_scopes()`（已通过：注册 TradingPairClassGroupScope）
+  - [x] 实现 `_compute_direction()`（已通过）
+  - [x] 实现 `_adjust_ratio_by_direction()`（已通过）
+  - [x] 实现 `_balance_ratios()`（已通过）
+  - [x] 实现 `_adjust_hedge_ratios()`（已通过）
+  - [x] 实现 `_select_top_groups()`（已通过）
+  - [x] 实现完整的 Ratio/TopGroups 流程并集成到 `get_output()`（已通过）
+  - [x] 实现辅助方法（已通过：_compute_directions, _collect_group_scopes, _collect_pair_class_scopes, _compute_initial_ratios, _adjust_ratios_by_directions）
+- [x] 明确 invalid direction 组合的处理策略（已通过：此分支应为逻辑不可达；一旦触发应 raise AssertionError 并立即停止，提示实现侧修复）
+- [x] 实现 `MarketNeutralPositionsConfig`（已通过：使用 Pydantic Field 实现）
+  - [x] `include_symbols` / `exclude_symbols`（已通过：使用基类字段）
+  - [x] 添加 `default_trading_pair_group` 字段（已通过）
+  - [x] 添加 `trading_pair_group` 字段（已通过）
+  - [x] 添加 `entry_price_threshold` / `exit_price_threshold` 字段（已通过）
+  - [x] 添加 `score_threshold` 字段（已通过）
+- [x] 单元测试：MarketNeutralPositionsStrategy（已通过：`tests/test_feature_0013_market_neutral.py`）
 
 ### Phase 4: 清理旧代码（P1）
 
-- [ ] 删除 `hft/strategy/keep_balances.py`（待实现）
-- [ ] 删除 `hft/strategy/arbitrage/` 目录（待实现）
-- [ ] 更新配置注册（待实现）
+- [x] 删除 `hft/strategy/keep_balances.py`（已通过）
+- [x] 删除 `hft/strategy/arbitrage/` 目录（已通过）
+- [x] 更新配置注册（已通过：已在 hft/bin/config.py 中移除旧策略，添加 MarketNeutralPositionsConfig）
 
 ### Phase 5: 文档和示例（P2）
 
-- [ ] 编写 `examples/004-market-neutral-positions-strategy.md`（待实现）
-- [ ] 更新 `docs/strategy.md`（待实现）
-- [ ] 更新 `REVIEW.md`（待实现）
+- [x] 编写 `examples/004-market-neutral-positions-strategy.md`（已通过：包含配置示例、工作原理、实际案例等）
+- [x] 更新 `docs/strategy.md`（已通过：添加 MarketNeutralPositionsStrategy 章节）
+- [x] 更新 `REVIEW.md`（已通过：已更新 Feature 0013 状态）
 
 ---
 
@@ -500,9 +504,7 @@ if ratio != 0:
 
 | 文件 | 影响 | 说明 |
 |------|------|------|
-| `tests/test_market_neutral_positions.py` | **新增** | MarketNeutralPositions 单元测试 |
-| `tests/test_fair_price_indicator.py` | **新增** | FairPriceIndicator 单元测试 |
-| `tests/test_medal_amount_datasource.py` | **新增** | MedalAmountDataSource 单元测试 |
+| `tests/test_feature_0013_market_neutral.py` | **新增** | Feature 0013 单元测试（覆盖 FairPriceIndicator/MedalAmountDataSource/MarketNeutralPositions/TradingPairClassGroupScope 等） |
 
 ### 文档
 

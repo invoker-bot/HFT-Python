@@ -405,31 +405,29 @@ target:
 
 ---
 
-## 8. 多 Strategy 聚合
+## 8. strategies namespace（单策略口径）
 
-当 App 配置多个 Strategy 时，StrategyGroup 会聚合它们的输出：
+当前 App 仅支持单策略；Executor 仍接收一个 `strategies` namespace（list 口径），用于表达式里统一聚合输出字段：
 
 ```yaml
-# conf/app/multi_strategy.yaml
-strategies:
-  - static_positions/strategy_a    # position_usd: 1000
-  - static_positions/strategy_b    # position_usd: 500
+# conf/app/app.yaml（示例）
+strategy: static_positions/strategy_a
 ```
 
-聚合结果（供 Executor 使用）：
+注入口径（供 Executor 使用）：
 
 ```python
 {
     ("okx/main", "BTC/USDT"): {
-        "position_usd": [1000, 500],  # 列表形式
-        "speed": [0.5, 0.3]
+        "position_usd": [1000],  # 单策略列表长度为 1
+        "speed": [0.5]
     }
 }
 ```
 
 Executor 的默认聚合行为：
-- `target_usd = sum(position_usd)` → 1500
-- `speed = weighted_avg(speed, position_usd)` → 加权平均
+- `target_usd = sum(position_usd)` → 1000
+- `speed = weighted_avg(speed, position_usd)` → 0.5（等价于该策略自身输出）
 
 ---
 
@@ -440,57 +438,94 @@ Executor 的默认聚合行为：
 ### 9.1 基本 Scope 配置
 
 ```yaml
-class_name: static_positions
-
-# Scope 链路定义
-links:
-  - ["global", "exchange_class", "exchange", "trading_pair"]
-
-# Scope 变量配置
+# conf/app/<app>.yaml（片段：Scope 节点只允许在 app 配置里声明）
 scopes:
   global:
+    class: GlobalScope
     vars:
       max_total_position_usd: 10000
       default_speed: 0.5
+
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
+  trading_pair:
+    class: TradingPairScope
+```
+
+```yaml
+# conf/strategy/static_positions/<name>.yaml（片段）
+class_name: static_positions
+
+# Scope 链路定义（按顺序构建 ChainMap）
+links:
+  - id: main
+    value: [global, exchange_class, exchange, trading_pair]
 ```
 
 ### 9.2 使用 Scope 变量
 
 ```yaml
-class_name: static_positions
-
-links:
-  - ["global", "exchange_class", "exchange", "trading_pair"]
-
+# conf/app/<app>.yaml（片段）
 scopes:
   global:
+    class: GlobalScope
     vars:
       max_position_usd: 2000
+      default_speed: 0.5
       speed_multiplier: 1.0
 
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
   trading_pair:
+    class: TradingPairScope
     vars:
       position_usd: max_position_usd * 0.5
       speed: default_speed * speed_multiplier
+```
+
+```yaml
+# conf/strategy/static_positions/<name>.yaml（片段）
+class_name: static_positions
+
+links:
+  - id: main
+    value: [global, exchange_class, exchange, trading_pair]
 
 target_pairs:
   - BTC/USDT
   - ETH/USDT
 
 target:
-  position_usd: position_usd  # 使用 Scope 变量
-  speed: speed                # 使用 Scope 变量
+  position_usd: position_usd  # 来自 TradingPairScope vars
+  speed: speed                # 来自 TradingPairScope vars
 ```
 
 ### 9.3 条件变量（conditional_vars）
 
 ```yaml
+# conf/app/<app>.yaml（片段）
 scopes:
   global:
+    class: GlobalScope
     vars:
       base_position: 1000
 
+  exchange_class:
+    class: ExchangeClassScope
+
+  exchange:
+    class: ExchangeScope
+
   trading_pair:
+    class: TradingPairScope
     vars:
       - name: position_usd
         value: >

@@ -68,6 +68,8 @@ class MedalEquationDataSource(BaseIndicator[EquationData]):
             **kwargs,
         )
         self._exchange_path = exchange_path
+        # Feature 0012: 注入到 exchange 层级（按交易所实例）
+        self.scope_level = "exchange"
 
     @property
     def exchange_path(self) -> str:

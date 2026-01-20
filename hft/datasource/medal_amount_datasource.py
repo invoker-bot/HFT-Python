@@ -109,7 +109,7 @@ class MedalAmountDataSource(BaseIndicator[AmountData]):
         Returns:
             变量字典：{"amount": amount_usd}
         """
-        latest = self._data.latest()
+        latest = self._data.latest
         if latest is None:
             return {"amount": 0.0}
         return {"amount": latest.amount}

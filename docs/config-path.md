@@ -66,7 +66,7 @@
 |------|-------------|------------|--------------------|
 | `AppConfigPath` | `conf/app` | `main` | `$HFT_ROOT_PATH/conf/app/main.yaml` |
 | `ExchangeConfigPath` | `conf/exchange` | `okx/main` | `$HFT_ROOT_PATH/conf/exchange/okx/main.yaml` |
-| `StrategyConfigPath` | `conf/strategy` | `keep_positions/eth` | `$HFT_ROOT_PATH/conf/strategy/keep_positions/eth.yaml` |
+| `StrategyConfigPath` | `conf/strategy` | `static_positions/main` | `$HFT_ROOT_PATH/conf/strategy/static_positions/main.yaml` |
 | `ExecutorConfigPath` | `conf/executor` | `smart/default` | `$HFT_ROOT_PATH/conf/executor/smart/default.yaml` |
 
 ## `ExchangeConfigPathGroup`

@@ -6,7 +6,7 @@ vars 是一个统一的变量定义和计算系统，用于在 Scope 和 Executo
 
 ### 使用场景
 
-- **Strategy 中的 Scope vars**：在 `scopes` 配置中定义，用于多层级的变量计算和继承
+- **Scope vars（Scope 系统）**：在 `conf/app/*.yaml` 的 `scopes.*.vars` 中定义，用于多层级的变量计算和继承（Strategy 通过 `links` 引用这些 scope）
 - **Executor 中的 vars**：在顶级 `vars` 字段中定义，用于 trading_pair instance level 的变量计算
 
 ---
@@ -154,28 +154,29 @@ vars:
 
 ## 使用场景详解
 
-### Strategy 中的 Scope vars
+### Scope vars（Scope 系统）
 
-在 Strategy 配置中，vars 定义在 `scopes` 配置中：
+Scope vars 声明在 App 配置里（`scopes` 字段只允许出现在 `conf/app/*.yaml`）：
 
 ```yaml
-# conf/strategy/my_strategy.yaml
-class_name: keep_positions
-
+# conf/app/<app>.yaml（片段）
 scopes:
-  global:
-    class_name: GlobalScope
+  g:
+    class: GlobalScope
     vars:
       - max_position=10000
       - speed=0.5
 
+  exchange_class:
+    class: ExchangeClassScope
+
   exchange:
-    class_name: ExchangeScope
+    class: ExchangeScope
     vars:
       - exchange_fee=0.001
 
   trading_pair:
-    class_name: TradingPairScope
+    class: TradingPairScope
     vars:
       - name: center_price
         value: mid_price
@@ -183,33 +184,48 @@ scopes:
         initial_value: mid_price
 ```
 
+Strategy 配置只引用 `links`，不允许出现 `scopes`：
+
+```yaml
+# conf/strategy/my_strategy.yaml（片段）
+class_name: static_positions
+
+requires:
+  - ticker
+  - rsi
+
+links:
+  - id: link_main
+    value: [g, exchange_class, exchange, trading_pair]
+```
+
 **特点**：
 - 多层级变量继承（子 Scope 可以访问父 Scope 的变量）
 - 支持自上而下分配和自下而上聚合
 - 与 Scope 系统深度集成
+- Scope vars 支持 `post: true/false` 以控制三遍计算（见 [scope.md](scope.md)）
 
 ### Executor 中的 vars
 
 在 Executor 配置中，vars 定义在顶级字段：
 
 ```yaml
-# 在 app 配置中定义
-executors:
-  - class_name: market
-    scope: trading_pair  # 关联到 trading_pair level
-    vars:
-      - delta_usd=target_usd - current_usd
-      - ratio=delta_usd / max_usd
-      - name: entry_price
-        value: mid_price
-        on: position == 0
-        initial_value: null
+# conf/executor/<executor>.yaml（片段）
+class_name: market
+scope: trading_pair  # 可选：使用 Scope 系统时，声明订单执行所在的 scope_class_id
+
+vars:
+  - delta_usd=target_usd - current_usd
+  - ratio=delta_usd / max_usd
+  - name: entry_price
+    value: mid_price
+    on: position == 0
+    initial_value: null
 ```
 
 **特点**：
 - 执行在 trading_pair instance level
-- 通过 `scope` 字段关联到正确的 Scope class ID
-- 可以访问 Strategy 注入的 `strategies` 命名空间变量
+- 可以访问 Strategy 注入的 `strategies` 命名空间变量（规范统一使用 `strategies["field"]`，避免 `strategies.field`）
 
 ---
 
@@ -232,31 +248,28 @@ executors:
 
 ## 完整示例
 
-### 示例 1：Strategy Scope vars
+### 示例 1：Scope vars（Scope 系统）
 
 ```yaml
-# conf/strategy/dynamic_positions.yaml
-class_name: keep_positions
-
-requires:
-  - equation  # 账户权益数据源
-  - rsi       # RSI 指标
-
+# conf/app/<app>.yaml（片段：scopes 在 app 配置里声明）
 scopes:
-  global:
-    class_name: GlobalScope
+  g:
+    class: GlobalScope
     vars:
       - max_position_ratio=0.8
       - base_speed=0.5
 
+  exchange_class:
+    class: ExchangeClassScope
+
   exchange:
-    class_name: ExchangeScope
+    class: ExchangeScope
     vars:
       - exchange_fee=0.001
       - max_position_usd=equation_usd * max_position_ratio
 
   trading_pair:
-    class_name: TradingPairScope
+    class: TradingPairScope
     vars:
       - name: center_price
         value: mid_price
@@ -264,6 +277,20 @@ scopes:
         initial_value: mid_price
       - price_ratio=mid_price / center_price
       - direction=1 if rsi[-1] < 30 else (-1 if rsi[-1] > 70 else 0)
+```
+
+```yaml
+# conf/strategy/dynamic_positions.yaml
+class_name: static_positions
+
+requires:
+  - equation  # 账户权益数据源
+  - ticker    # 价格数据源（提供 mid_price）
+  - rsi       # RSI 指标
+
+links:
+  - id: link_main
+    value: [g, exchange_class, exchange, trading_pair]
 
 targets:
   - exchange: '*'
@@ -275,24 +302,24 @@ targets:
 ### 示例 2：Executor vars
 
 ```yaml
-# 在 app 配置中
-executors:
-  - class_name: market
-    scope: trading_pair
-    vars:
-      # 聚合所有 Strategy 的目标仓位
-      - target_usd=sum(strategies["position_usd"]) if "position_usd" in strategies else 0
-      - delta_usd=target_usd - current_usd
-      - ratio=abs(delta_usd) / max_usd if max_usd > 0 else 0
+# conf/executor/<executor>.yaml
+class_name: market
+scope: trading_pair  # 可选：使用 Scope 系统时，声明订单执行所在的 scope_class_id
 
-      # 条件变量：记录入场价格
-      - name: entry_price
-        value: mid_price
-        on: position == 0
-        initial_value: null
+vars:
+  # 聚合所有 Strategy 的目标仓位
+  - target_usd=sum(strategies["position_usd"]) if "position_usd" in strategies else 0
+  - delta_usd=target_usd - current_usd
+  - ratio=abs(delta_usd) / max_usd if max_usd > 0 else 0
 
-      # 计算盈亏
-      - pnl=(mid_price - entry_price) * position if entry_price else 0
+  # 条件变量：记录入场价格
+  - name: entry_price
+    value: mid_price
+    on: position == 0
+    initial_value: null
+
+  # 计算盈亏
+  - pnl=(mid_price - entry_price) * position if entry_price else 0
 ```
 
 ---
