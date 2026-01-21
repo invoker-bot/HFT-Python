@@ -143,6 +143,8 @@ class ScopeManager:
             link: Scope 链路，如 ["global", "exchange_class", "exchange", "trading_pair"]
             scope_configs: Scope 配置字典
             instance_ids_provider: 自定义实例发现函数（可选）
+                签名: (scope_class_id: str, parent_node: LinkedScopeNode | None) -> list[str]
+                注意：parent_node 是 LinkedScopeNode，可通过 parent_node.scope 访问 BaseScope
             app_core: AppCore 实例
             symbol_filter: 交易对过滤函数（可选）
             exchange_filter: 交易所过滤函数（可选）
@@ -231,7 +233,8 @@ class ScopeManager:
 
         # 获取当前层级的所有实例 ID
         if instance_ids_provider:
-            instance_ids = instance_ids_provider(current_scope_class_id, parent_scope)
+            # 注意：现在传递 parent_node 而不是 parent_scope
+            instance_ids = instance_ids_provider(current_scope_class_id, parent_node)
         elif app_core and current_scope_class and parent_scope_class:
             instance_ids = get_all_instance_ids(
                 app_core, parent_scope, parent_scope_class, current_scope_class,

@@ -25,8 +25,8 @@ _instance_ids_registry: dict[tuple[Optional[type], type], Callable] = {}
 
 
 def register_get_all_instance_ids(
-    parent_scope_class: Optional[type],
-    scope_class: type
+    parent_scope_class: Optional[type['BaseScope']],
+    scope_class: type['BaseScope']
 ) -> Callable:
     """
     注册 get_all_instance_ids 函数的装饰器

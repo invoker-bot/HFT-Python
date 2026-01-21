@@ -218,4 +218,3 @@ class BaseConfig(BaseModel, Generic[T]):
         data.pop("class_name", None)
         data["path"] = state["path"]
         self.__init__(**data)
-

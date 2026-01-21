@@ -312,14 +312,15 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
 
         return selected
 
-    def _compute_directions(self, all_scopes: List[Any]) -> None:
+    def _compute_directions(self, all_nodes: List[Any]) -> None:
         """
         计算所有 trading_pair_class scope 的 Direction
 
         Args:
-            all_scopes: 所有 Scope 列表
+            all_nodes: 所有 LinkedScopeNode 列表
         """
-        for scope in all_scopes:
+        for node in all_nodes:
+            scope = node.scope
             scope_class_name = scope.__class__.__name__
             if scope_class_name != "TradingPairClassScope":
                 continue
@@ -329,9 +330,10 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             if trading_pair_std_price is None:
                 continue
 
-            parent = scope.parent
-            if parent is None:
+            parent_node = node.parent
+            if parent_node is None:
                 continue
+            parent = parent_node.scope
 
             fair_price_min = parent.get_var("fair_price_min")
             fair_price_max = parent.get_var("fair_price_max")
@@ -372,22 +374,23 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
                     group_scopes[group_id] = scope
         return group_scopes
 
-    def _collect_pair_class_scopes(self, group_scope: Any) -> List[Any]:
+    def _collect_pair_class_scopes(self, group_node: Any) -> List[Any]:
         """
         收集 group 下的所有 TradingPairClassScope
 
         Args:
-            group_scope: TradingPairClassGroupScope
+            group_node: TradingPairClassGroupScope 的 LinkedScopeNode
 
         Returns:
             TradingPairClassScope 列表
         """
         pair_class_scopes = []
-        for child in group_scope.children.values():
-            if child.__class__.__name__ == "TradingPairClassScope":
+        for child_node in group_node.children:
+            child_scope = child_node.scope
+            if child_scope.__class__.__name__ == "TradingPairClassScope":
                 # 过滤掉 trading_pair_std_price 为 None 的
-                if child.get_var("trading_pair_std_price") is not None:
-                    pair_class_scopes.append(child)
+                if child_scope.get_var("trading_pair_std_price") is not None:
+                    pair_class_scopes.append(child_scope)
         return pair_class_scopes
 
     def _compute_initial_ratios(self, pair_class_scopes: List[Any]) -> None:

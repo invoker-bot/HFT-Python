@@ -3,8 +3,10 @@ VirtualMachine - 表达式求值引擎
 
 基于 simpleeval.safe_eval 实现安全的表达式求值。
 """
-from typing import Any, Dict, Optional
-from simpleeval import simple_eval, DEFAULT_FUNCTIONS, DEFAULT_OPERATORS
+from typing import Any, Optional, TYPE_CHECKING
+from simpleeval import EvalWithCompoundTypes, DEFAULT_FUNCTIONS, DEFAULT_OPERATORS, DEFAULT_NAMES
+if TYPE_CHECKING:
+    from .base import BaseScope
 
 
 class VirtualMachine:
@@ -19,6 +21,7 @@ class VirtualMachine:
 
     def __init__(self):
         """初始化虚拟机"""
+
         # 默认函数（来自 simpleeval）
         self.functions = DEFAULT_FUNCTIONS.copy()
 
@@ -36,28 +39,26 @@ class VirtualMachine:
 
         # 默认操作符（使用 simpleeval 的默认配置）
         self.operators = DEFAULT_OPERATORS.copy()
+        self.names = DEFAULT_NAMES.copy()
+        self.evaler = EvalWithCompoundTypes(operators=self.operators, functions=self.functions, names=self.names)
 
     def eval(
         self,
-        expression: str,
-        names: Optional[Dict[str, Any]] = None
+        expression: Any,
+        scope: Optional["BaseScope"] = None
     ) -> Any:
         """
         求值表达式
 
         Args:
-            expression: 表达式字符串
+            expression: 表达式
             names: 变量字典
 
         Returns:
             求值结果
         """
-        if names is None:
-            names = {}
-
-        return simple_eval(
-            expression,
-            functions=self.functions,
-            names=names,
-            operators=self.operators
-        )
+        if not isinstance(expression, str):
+            return expression
+        if scope is not None:
+            self.evaler.names = scope.vars
+        return self.eval(expression)

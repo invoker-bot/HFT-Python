@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
     from ..indicator.base import BaseIndicator
     from .group import StrategyGroup
+    from ..core.scope.tree import LinkedScopeTree, LinkedScopeNode
+    from ..core.scope.manager import ScopeManager
 
 
 # 旧版目标仓位类型（向后兼容）: {(exchange_path, symbol): (position_usd, speed)}
@@ -115,7 +117,9 @@ class BaseStrategy(Listener):
 
         # Feature 0012: Scope 系统
         self.scope_manager: Optional['ScopeManager'] = None
-        self.scope_trees: list[list['BaseScope']] = []
+        self.scope_trees: list['LinkedScopeTree'] = []
+        # 节点到树的映射（用于快速查找节点所属的树）
+        self._node_to_tree: dict['LinkedScopeNode', 'LinkedScopeTree'] = {}
 
     # ============================================================
     # Feature 0008: 变量计算机制
@@ -401,13 +405,13 @@ class BaseStrategy(Listener):
             return
 
         # 构建 instance_ids_provider 函数
-        def instance_ids_provider(scope_class_id: str, parent_scope) -> list[str]:
+        def instance_ids_provider(scope_class_id: str, parent_node) -> list[str]:
             """
             获取指定 scope_class_id 的所有实例 ID
 
             Args:
                 scope_class_id: Scope 类型 ID（如 "global", "exchange"）
-                parent_scope: 父 Scope（用于获取上下文信息）
+                parent_node: 父 LinkedScopeNode（用于获取上下文信息）
 
             Returns:
                 实例 ID 列表
@@ -458,10 +462,11 @@ class BaseStrategy(Listener):
 
             elif class_name == "TradingPairScope":
                 # 获取特定 exchange 的所有 trading pair
-                # 需要从 parent_scope 获取 exchange_path
-                if parent_scope is None:
+                # 需要从 parent_node 获取 exchange_path
+                if parent_node is None:
                     return []
 
+                parent_scope = parent_node.scope
                 # 根据 parent 类型获取 exchange_path
                 exchange_path = None
                 if parent_scope.scope_class_id == "exchange":
@@ -474,12 +479,12 @@ class BaseStrategy(Listener):
 
                     # 需要从更上层获取 exchange_path
                     # 向上遍历找到 ExchangeScope 或 ExchangeClassScope
-                    current = parent_scope.parent
+                    current = parent_node.parent
                     while current:
-                        if current.scope_class_id == "exchange":
-                            exchange_path = current.get_var("exchange_path")
+                        if current.scope.scope_class_id == "exchange":
+                            exchange_path = current.scope.get_var("exchange_path")
                             break
-                        elif current.scope_class_id == "exchange_class":
+                        elif current.scope.scope_class_id == "exchange_class":
                             # ExchangeClassScope，需要获取该 class 的所有 exchange
                             exchange_class = current.scope_instance_id
                             if self.root and hasattr(self.root, 'exchange_group'):
@@ -537,24 +542,51 @@ class BaseStrategy(Listener):
 
         # 为每条 link 构建 Scope 树
         self.scope_trees = []
+        self._node_to_tree = {}
         for link in self.config.links:
-            leaf_scopes = self.scope_manager.build_scope_tree(
+            trees = self.scope_manager.build_scope_tree(
                 link=link,
                 scope_configs=scope_configs,
                 instance_ids_provider=instance_ids_provider
             )
-            self.scope_trees.append(leaf_scopes)
+            # trees 是 list[LinkedScopeTree]
+            self.scope_trees.extend(trees)
 
-    def _evaluate_targets(self, scope, exchange_path: str, symbol: str) -> dict:
+            # 构建 node_to_tree 映射
+            for tree in trees:
+                self._build_node_to_tree_mapping(tree.root, tree)
+
+    def _build_node_to_tree_mapping(self, node: 'LinkedScopeNode', tree: 'LinkedScopeTree') -> None:
+        """
+        递归构建节点到树的映射
+
+        Args:
+            node: 当前节点
+            tree: 节点所属的树
+        """
+        self._node_to_tree[node] = tree
+        for child in node.children:
+            self._build_node_to_tree_mapping(child, tree)
+
+    def _evaluate_targets(
+        self,
+        scope,
+        exchange_path: str,
+        symbol: str,
+        node: 'LinkedScopeNode' = None,
+        tree: 'LinkedScopeTree' = None
+    ) -> dict:
         """
         匹配并求值 targets 配置（Feature 0012）
 
         支持新格式（vars 列表）和旧格式（直接字段）。
 
         Args:
-            scope: 当前 Scope
+            scope: 当前 Scope（向后兼容，优先使用 node）
             exchange_path: Exchange 路径
             symbol: 交易对
+            node: LinkedScopeNode（新 API）
+            tree: LinkedScopeTree（新 API）
 
         Returns:
             求值后的字段字典，如果没有匹配的 target 则返回 None
@@ -588,7 +620,12 @@ class BaseStrategy(Listener):
             # 检查 target 级 condition
             if target.condition:
                 try:
-                    context = dict(scope.vars)
+                    # 获取变量上下文
+                    if node and tree:
+                        context = dict(tree.get_vars(node))
+                    else:
+                        # 向后兼容：直接使用 scope._vars（不包含祖先变量）
+                        context = dict(scope._vars)
                     result = self._safe_eval(target.condition, context)
                     if not result:
                         continue
@@ -601,7 +638,12 @@ class BaseStrategy(Listener):
 
             # 求值所有字段
             output = {}
-            context = dict(scope.vars)
+            # 获取变量上下文
+            if node and tree:
+                context = dict(tree.get_vars(node))
+            else:
+                # 向后兼容：直接使用 scope._vars（不包含祖先变量）
+                context = dict(scope._vars)
 
             # 新格式：计算 vars 列表
             if target.vars:
@@ -823,34 +865,49 @@ class BaseStrategy(Listener):
     def _compute_scope_vars(
         self,
         scope: 'BaseScope',
-        post: bool = False
+        post: bool = False,
+        node: 'LinkedScopeNode' = None,
+        tree: 'LinkedScopeTree' = None
     ) -> None:
         """
         计算 Scope 配置中的 vars
 
         Args:
-            scope: 目标 Scope
+            scope: 目标 Scope（向后兼容）
             post: 是否只计算 post=True 的 vars（默认 False，只计算 post=False 的 vars）
+            node: LinkedScopeNode（新 API）
+            tree: LinkedScopeTree（新 API）
         """
         scope_config = self.config.scopes.get(scope.scope_class_id)
         if not scope_config or not scope_config.vars:
             return
 
         # 获取上下文（包含当前 scope 的变量 + parent/children 符号）
-        context = dict(scope._vars)
+        if node and tree:
+            # 新 API：使用 tree.get_vars(node) 获取包含祖先的变量
+            context = dict(tree.get_vars(node))
+        else:
+            # 向后兼容：只使用当前 scope 的变量
+            context = dict(scope._vars)
 
         # 注入 parent 和 children 符号
-        context['parent'] = scope.parent
-        context['children'] = scope.children
+        if node:
+            context['parent'] = node.parent.scope if node.parent else None
+            context['children'] = {child.scope.scope_instance_id: child.scope for child in node.children}
+        else:
+            # 向后兼容：parent 和 children 为 None
+            context['parent'] = None
+            context['children'] = {}
 
         # 辅助函数：聚合 children 的变量
         def child_values(children, var_name):
             """收集所有 children 的指定变量值"""
             values = []
-            for child in children.values():
-                val = child.get_var(var_name)
-                if val is not None:
-                    values.append(val)
+            if isinstance(children, dict):
+                for child in children.values():
+                    val = child.get_var(var_name)
+                    if val is not None:
+                        values.append(val)
             return values
 
         context['child_values'] = child_values
@@ -885,38 +942,58 @@ class BaseStrategy(Listener):
                     var_def.name, scope.scope_class_id, scope.scope_instance_id, e
                 )
 
-    def _breadth_first_traversal(self, root_scopes: list['BaseScope']) -> list['BaseScope']:
+    def _breadth_first_traversal(self, root_nodes: list['LinkedScopeNode']) -> list['LinkedScopeNode']:
         """
         广度优先遍历 Scope 树
 
         Args:
-            root_scopes: 根节点列表
+            root_nodes: 根节点列表
 
         Returns:
-            广度优先顺序的 Scope 列表
+            广度优先顺序的节点列表
         """
         from collections import deque
 
         result = []
         visited = set()
-        queue = deque(root_scopes)
+        queue = deque(root_nodes)
 
         while queue:
-            scope = queue.popleft()
-            scope_id = id(scope)
+            node = queue.popleft()
+            node_id = id(node)
 
-            if scope_id in visited:
+            if node_id in visited:
                 continue
 
-            visited.add(scope_id)
-            result.append(scope)
+            visited.add(node_id)
+            result.append(node)
 
             # 添加 children 到队列
-            for child in scope.children.values():
+            for child in node.children:
                 if id(child) not in visited:
                     queue.append(child)
 
         return result
+
+    def _collect_leaf_nodes(self, node: 'LinkedScopeNode') -> list['LinkedScopeNode']:
+        """
+        收集所有叶子节点
+
+        Args:
+            node: 根节点
+
+        Returns:
+            叶子节点列表
+        """
+        leaf_nodes = []
+        if not node.children:
+            # 当前节点是叶子节点
+            leaf_nodes.append(node)
+        else:
+            # 递归收集子节点的叶子节点
+            for child in node.children:
+                leaf_nodes.extend(self._collect_leaf_nodes(child))
+        return leaf_nodes
 
     def get_output(self) -> StrategyOutput:
         """
@@ -925,7 +1002,7 @@ class BaseStrategy(Listener):
         基于 Scope 系统计算策略输出。
 
         流程（三遍计算）：
-        1. 构建 LinkTree（按需创建 Scope）
+        1. 使用预构建的 scope_trees
         2. 第一遍：requires（Indicator 注入）
         3. 第二遍：计算 post=false 的 vars
         4. 第三遍：计算 post=true 的 vars
@@ -934,89 +1011,61 @@ class BaseStrategy(Listener):
         Returns:
             {(exchange_path, symbol): {"field": value, ...}}
         """
-        if not self.config.links or not self.scope_manager:
+        if not self.scope_trees or not self.scope_manager:
             return {}
 
         # 重置所有 scope 的 ready 状态
         self.scope_manager.reset_all_ready_states()
 
-        # 1. 构建 LinkTree（按需创建 Scope）
-        trading_pairs = self._get_all_trading_pairs()
-        if not trading_pairs:
-            return {}
-
-        # 为每条 link 构建 Scope 树
-        link_trees = []  # [(link_index, root_scopes, leaf_scopes)]
-        for link_index in range(len(self.config.links)):
-            root_scopes = []
-            leaf_scopes = []
-
-            for exchange_path, symbol in trading_pairs:
-                scope = self._get_or_create_scope_for_target(
-                    exchange_path, symbol, link_index
-                )
-                if scope:
-                    leaf_scopes.append(scope)
-                    # 找到 root scope
-                    root = scope
-                    while root.parent is not None:
-                        root = root.parent
-                    if root not in root_scopes:
-                        root_scopes.append(root)
-
-            if root_scopes:
-                link_trees.append((link_index, root_scopes, leaf_scopes))
-
-        # 对每条 link 执行三遍计算
         output = {}
-        for link_index, root_scopes, leaf_scopes in link_trees:
-            # 广度优先遍历
-            all_scopes = self._breadth_first_traversal(root_scopes)
 
-            # 追踪已计算的 scope（去重）
+        # 遍历所有树
+        for tree in self.scope_trees:
+            # 收集所有节点（广度优先）
+            all_nodes = self._breadth_first_traversal([tree.root])
+
+            # 追踪已计算的节点（去重）
             computed_set = set()
 
             # 第一遍：requires（Indicator 注入）
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
 
                 # 注入 Indicator 变量
-                self._inject_indicator_vars_to_scope(scope)
+                self._inject_indicator_vars_to_scope(node.scope)
 
-                # 检查 Indicator 是否 ready（通过检查 scope 的 not_ready 标记）
-                # _inject_indicator_vars_to_scope 内部会检查 indicator.is_ready()
-                # 如果 not ready，应该标记 scope
-
-                computed_set.add(scope_id)
+                computed_set.add(node_id)
 
             # 第二遍：计算 post=false 的 vars
             computed_set.clear()
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
 
-                self._compute_scope_vars(scope, post=False)
-                computed_set.add(scope_id)
+                self._compute_scope_vars(node.scope, post=False, node=node, tree=tree)
+                computed_set.add(node_id)
 
             # 第三遍：计算 post=true 的 vars
             computed_set.clear()
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
 
-                self._compute_scope_vars(scope, post=True)
-                computed_set.add(scope_id)
+                self._compute_scope_vars(node.scope, post=True, node=node, tree=tree)
+                computed_set.add(node_id)
 
-            # target 匹配与输出（只处理叶子节点）
-            for scope in leaf_scopes:
-                if scope.is_not_ready:
+            # target 匹配与输出（收集叶子节点）
+            leaf_nodes = self._collect_leaf_nodes(tree.root)
+            for node in leaf_nodes:
+                if node.scope.is_not_ready:
                     continue
 
                 # 获取 exchange_path 和 symbol
+                scope = node.scope
                 exchange_path = scope.get_var("exchange_id") or scope.get_var("exchange_path")
                 symbol = scope.get_var("symbol")
 
@@ -1026,7 +1075,7 @@ class BaseStrategy(Listener):
                 # 检查全局 condition
                 if self.config.condition:
                     try:
-                        context = dict(scope.vars)
+                        context = dict(tree.get_vars(node))
                         result = self._safe_eval(self.config.condition, context)
                         if not result:
                             continue
@@ -1035,7 +1084,7 @@ class BaseStrategy(Listener):
                         continue
 
                 # 匹配并求值 targets 配置
-                target_output = self._evaluate_targets(scope, exchange_path, symbol)
+                target_output = self._evaluate_targets(scope, exchange_path, symbol, node=node, tree=tree)
 
                 if target_output:
                     key = (exchange_path, symbol)
