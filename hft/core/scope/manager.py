@@ -5,6 +5,7 @@ ScopeManager - Scope 实例管理器
 """
 from typing import Dict, Tuple, Optional, Type, Callable, TYPE_CHECKING
 from .base import BaseScope
+from .tree import LinkedScopeNode, LinkedScopeTree
 from .scopes import (
     GlobalScope,
     ExchangeClassScope,
@@ -134,27 +135,20 @@ class ScopeManager:
         app_core: "AppCore" = None,
         symbol_filter: Callable[[str], bool] = None,
         exchange_filter: Callable[[str], bool] = None,
-    ) -> list[BaseScope]:
+    ) -> list[LinkedScopeTree]:
         """
         根据 link 配置构建 Scope 树
 
         Args:
             link: Scope 链路，如 ["global", "exchange_class", "exchange", "trading_pair"]
-            scope_configs: Scope 配置字典，格式：
-                {
-                    "global": {"class": "GlobalScope"},
-                    "exchange": {"class": "ExchangeScope"},
-                    ...
-                }
+            scope_configs: Scope 配置字典
             instance_ids_provider: 自定义实例发现函数（可选）
-                签名：(scope_class_id: str, parent_scope: BaseScope) -> list[str]
-                如果不提供，使用注册的 get_all_instance_ids 函数
-            app_core: AppCore 实例（使用注册的实例发现函数时必需）
+            app_core: AppCore 实例
             symbol_filter: 交易对过滤函数（可选）
             exchange_filter: 交易所过滤函数（可选）
 
         Returns:
-            叶子节点 Scope 列表（target_scope 层级）
+            LinkedScopeTree 列表（每个 tree 对应一个根节点）
         """
         if not link:
             return []
@@ -177,54 +171,51 @@ class ScopeManager:
         else:
             instance_ids = ["global"] if first_class_name == "GlobalScope" else []
 
-        # 创建根节点
-        root_scopes = []
+        # 创建根节点（LinkedScopeNode）
+        trees = []
         for instance_id in instance_ids:
             scope = self.get_or_create(
                 scope_class_name=first_class_name,
                 scope_class_id=first_scope_class_id,
                 scope_instance_id=instance_id,
-                parent=None,
                 app_core=app_core,
             )
-            root_scopes.append(scope)
+            root_node = LinkedScopeNode(scope=scope, parent=None)
 
-        # 如果只有一个节点，直接返回
-        if len(link) == 1:
-            return root_scopes
+            # 如果只有一个节点，直接创建树并返回
+            if len(link) == 1:
+                trees.append(LinkedScopeTree(root=root_node))
+            else:
+                # 递归构建子树
+                self._build_scope_tree_recursive(
+                    link=link,
+                    current_index=1,
+                    parent_node=root_node,
+                    scope_configs=scope_configs,
+                    instance_ids_provider=instance_ids_provider,
+                    app_core=app_core,
+                    symbol_filter=symbol_filter,
+                    exchange_filter=exchange_filter,
+                )
+                trees.append(LinkedScopeTree(root=root_node))
 
-        # 递归构建子树
-        leaf_scopes = []
-        for root_scope in root_scopes:
-            leaves = self._build_scope_tree_recursive(
-                link=link,
-                current_index=1,
-                parent_scope=root_scope,
-                scope_configs=scope_configs,
-                instance_ids_provider=instance_ids_provider,
-                app_core=app_core,
-                symbol_filter=symbol_filter,
-                exchange_filter=exchange_filter,
-            )
-            leaf_scopes.extend(leaves)
-
-        return leaf_scopes
+        return trees
 
     def _build_scope_tree_recursive(
         self,
         link: list[str],
         current_index: int,
-        parent_scope: BaseScope,
+        parent_node: LinkedScopeNode,
         scope_configs: dict[str, dict],
         instance_ids_provider: Callable = None,
         app_core: "AppCore" = None,
         symbol_filter: Callable[[str], bool] = None,
         exchange_filter: Callable[[str], bool] = None,
-    ) -> list[BaseScope]:
-        """递归构建 Scope 树"""
+    ) -> None:
+        """递归构建 Scope 树（修改 parent_node 的 children）"""
         if current_index >= len(link):
             # 到达叶子节点
-            return [parent_scope]
+            return
 
         current_scope_class_id = link[current_index]
         current_config = scope_configs.get(current_scope_class_id, {})
@@ -232,6 +223,7 @@ class ScopeManager:
         current_scope_class = self._scope_classes.get(current_class_name)
 
         # 获取 parent 的 scope class
+        parent_scope = parent_node.scope
         parent_class_name = scope_configs.get(
             parent_scope.scope_class_id, {}
         ).get("class", "BaseScope")
@@ -256,35 +248,30 @@ class ScopeManager:
                 if exchange_filter(iid.split('/')[0] if '/' in iid else iid)
             ]
 
-        # 为每个实例 ID 创建子 Scope
-        leaf_scopes = []
+        # 为每个实例 ID 创建子节点
         for instance_id in instance_ids:
             child_scope = self.get_or_create(
                 scope_class_name=current_class_name,
                 scope_class_id=current_scope_class_id,
                 scope_instance_id=instance_id,
-                parent=parent_scope,
                 app_core=app_core,
             )
 
-            # 挂接 parent/children（由 LinkTree 构建逻辑负责）
-            if parent_scope is not None:
-                parent_scope.add_child(child_scope)
+            # 创建子节点并添加到父节点
+            child_node = LinkedScopeNode(scope=child_scope, parent=parent_node)
+            parent_node.add_child(child_node)
 
             # 递归构建子树
-            child_leaves = self._build_scope_tree_recursive(
+            self._build_scope_tree_recursive(
                 link=link,
                 current_index=current_index + 1,
-                parent_scope=child_scope,
+                parent_node=child_node,
                 scope_configs=scope_configs,
                 instance_ids_provider=instance_ids_provider,
                 app_core=app_core,
                 symbol_filter=symbol_filter,
                 exchange_filter=exchange_filter,
             )
-            leaf_scopes.extend(child_leaves)
-
-        return leaf_scopes
 
     def reset_all_ready_states(self) -> None:
         """
