@@ -70,7 +70,6 @@ class ScopeManager:
         scope_class_name: str,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: Optional[BaseScope] = None,
         **kwargs
     ) -> BaseScope:
         """
@@ -80,7 +79,6 @@ class ScopeManager:
             scope_class_name: Scope 类名（如 "GlobalScope"）
             scope_class_id: Scope 类型 ID（用户在配置中定义，如 "global", "my_scope"）
             scope_instance_id: Scope 实例 ID
-            parent: 父 Scope（仅用于传递给构造函数，不影响缓存 key）
             **kwargs: 传递给 Scope 构造函数的额外参数
 
         Returns:
@@ -98,10 +96,10 @@ class ScopeManager:
         if scope_class is None:
             raise ValueError(f"Unknown scope class: {scope_class_name}")
 
-        # 所有 Scope 类现在都有统一的构造函数签名
-        scope = scope_class(scope_class_id, scope_instance_id, parent, **kwargs)
+        # BaseScope 构造函数不再接受 parent 参数
+        scope = scope_class(scope_class_id, scope_instance_id, **kwargs)
 
-        # 缓存（不再在这里挂接 children，由 LinkTree 构建逻辑负责）
+        # 缓存
         self._cache[cache_key] = scope
 
         return scope
