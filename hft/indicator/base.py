@@ -70,6 +70,8 @@ class BaseIndicator(Listener, Generic[T]):
         ready_condition: Optional[str] = None,
         expire_seconds: float = DEFAULT_EXPIRE_SECONDS,
         interval: Optional[float] = None,
+        debug: bool = False,
+        debug_log_interval: Optional[float] = None,
     ):
         """
         Args:
@@ -78,12 +80,17 @@ class BaseIndicator(Listener, Generic[T]):
             ready_condition: 就绪条件表达式，如 "timeout < 60 and cv < 0.8"
             expire_seconds: 过期时间（秒），无 query 后自动停止
             interval: tick 间隔，None 表示事件驱动
+            debug: 是否开启调试模式，记录每次 calculate_vars 的结果
+            debug_log_interval: debug 日志输出间隔（秒），None 表示每次都输出
         """
         super().__init__(name=name, interval=interval)
         # Issue 0010: 归一化 window，None -> 0
         self._window = 0.0 if window is None else float(window)
         self._ready_condition = ready_condition
         self._expire_seconds = expire_seconds
+        self._debug = debug
+        self._debug_log_interval = debug_log_interval
+        self._last_debug_log_time: float = 0.0  # 上次 debug 日志时间
 
         # 数据存储（使用归一化后的 window）
         self._data: HealthyDataArray[T] = HealthyDataArray(max_seconds=self._window)
@@ -308,6 +315,20 @@ class BaseIndicator(Listener, Generic[T]):
     # 抽象方法
     # ============================================================
 
+    def _log_calculate_vars(self, direction: int, vars_dict: dict[str, Any]) -> None:
+        """
+        记录 calculate_vars 的结果（debug 模式）
+
+        Args:
+            direction: 交易方向
+            vars_dict: calculate_vars 返回的变量字典
+        """
+        if self._debug:
+            self.logger.info(
+                "[DEBUG] %s calculate_vars(direction=%d): %s",
+                self.name, direction, vars_dict
+            )
+
     @abstractmethod
     def calculate_vars(self, direction: int) -> dict[str, Any]:
         """
@@ -326,6 +347,9 @@ class BaseIndicator(Listener, Generic[T]):
             - 供 Executor.condition 表达式使用（Feature 0005）
             - 供 Strategy 决策使用
             - 不用于 ready_condition 求值
+
+        注意：
+            - 如果开启了 debug 模式，子类应在返回前调用 self._log_calculate_vars(direction, result)
         """
         ...
 
@@ -361,6 +385,8 @@ class GlobalIndicator(BaseIndicator[T]):
         ready_condition: Optional[str] = None,
         expire_seconds: float = GLOBAL_EXPIRE_SECONDS,
         interval: Optional[float] = None,
+        debug: bool = False,
+        debug_log_interval: Optional[float] = None,
     ):
         super().__init__(
             name=name,
@@ -368,6 +394,8 @@ class GlobalIndicator(BaseIndicator[T]):
             ready_condition=ready_condition,
             expire_seconds=expire_seconds,
             interval=interval,
+            debug=debug,
+            debug_log_interval=debug_log_interval,
         )
 
 
@@ -395,6 +423,8 @@ class BaseDataSource(BaseIndicator[T]):
         expire_seconds: float = DEFAULT_EXPIRE_SECONDS,
         interval: Optional[float] = None,
         mode: str = "watch",
+        debug: bool = False,
+        debug_log_interval: Optional[float] = None,
     ):
         """
         Args:
@@ -406,6 +436,8 @@ class BaseDataSource(BaseIndicator[T]):
             expire_seconds: 过期时间（秒）
             interval: tick 间隔，None 表示事件驱动
             mode: 数据获取模式，"watch" 或 "fetch"
+            debug: 是否开启调试模式
+            debug_log_interval: debug 日志输出间隔（秒）
         """
         super().__init__(
             name=name,
@@ -413,6 +445,8 @@ class BaseDataSource(BaseIndicator[T]):
             ready_condition=ready_condition,
             expire_seconds=expire_seconds,
             interval=interval,
+            debug=debug,
+            debug_log_interval=debug_log_interval,
         )
         self._exchange_class = exchange_class
         self._symbol = symbol

@@ -41,7 +41,7 @@ class IndicatorFactory:
     @staticmethod
     def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
         """
-        归一化参数，处理 window duration 字符串
+        归一化参数，处理 window 和 debug_log_interval duration 字符串
 
         Args:
             params: 原始参数
@@ -50,12 +50,22 @@ class IndicatorFactory:
             归一化后的参数
         """
         normalized = params.copy()
+        # 处理 window duration 字符串
         if 'window' in normalized:
             try:
                 normalized['window'] = parse_duration(normalized['window'])
             except (ValueError, TypeError) as e:
                 logger.warning("Failed to parse window duration: %s", e)
                 # 保留原值，让后续报错
+
+        # 处理 debug_log_interval duration 字符串
+        if 'debug_log_interval' in normalized:
+            try:
+                normalized['debug_log_interval'] = parse_duration(normalized['debug_log_interval'])
+            except (ValueError, TypeError) as e:
+                logger.warning("Failed to parse debug_log_interval duration: %s", e)
+                # 保留原值，让后续报错
+
         return normalized
 
     @classmethod

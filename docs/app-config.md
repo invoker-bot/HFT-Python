@@ -99,12 +99,16 @@ indicators:
     class: TickerDataSource
     params:
       window: 1m  # 支持 duration 字符串：60s, 1m, 5m, 1h, 1d, 500ms
+      debug: false  # 可选：开启调试模式，记录每次 calculate_vars 的结果
+      debug_log_interval: 60s  # 可选：debug 日志输出间隔（支持 duration 字符串）
     ready_condition: "timeout < 5"
 
   trades:
     class: TradesDataSource
     params:
       window: 5m  # 等价于 300.0 或 "300s"
+      debug: true  # 开启调试模式
+      debug_log_interval: 30s  # 每 30 秒输出一次 debug 日志
     ready_condition: "timeout < 60 and cv < 0.8"
 
   rsi:
@@ -188,6 +192,65 @@ window: 300   # 5分钟
 # 无窗口
 window: null  # 等价于 0
 ```
+
+## debug 参数（调试模式）
+
+`debug` 参数用于开启 Indicator 的调试模式，记录每次 `calculate_vars()` 的计算结果。
+
+**用途**：
+- 调试 Indicator 的变量输出
+- 排查 Executor 条件表达式问题
+- 观察 Indicator 的实时计算结果
+
+**配置参数**：
+- `debug`: 是否开启调试模式（`true`/`false`，默认 `false`）
+- `debug_log_interval`: 日志输出间隔（可选，支持 duration 字符串）
+  - 未设置时：每次 `calculate_vars()` 都输出日志
+  - 设置后：按指定间隔输出日志（避免日志过多）
+
+**配置示例**：
+
+```yaml
+indicators:
+  # 示例 1: 每次都输出日志
+  ticker:
+    class: TickerDataSource
+    params:
+      window: 1m
+      debug: true  # 开启调试模式，每次都输出
+    ready_condition: "timeout < 5"
+
+  # 示例 2: 每 60 秒输出一次日志
+  trades:
+    class: TradesDataSource
+    params:
+      window: 5m
+      debug: true
+      debug_log_interval: 60s  # 每 60 秒输出一次
+    ready_condition: "timeout < 60 and cv < 0.8"
+
+  # 示例 3: 每 1 分钟输出一次日志
+  rsi:
+    class: RSIIndicator
+    params:
+      ohlcv: ohlcv
+      period: 14
+      debug: true
+      debug_log_interval: 1m  # 等价于 60s
+```
+
+**日志输出示例**：
+
+```
+[INFO] [DEBUG] Indicator ticker calculate_vars(direction=1): {'last': 50000.0, 'bid': 49999.5, 'ask': 50000.5, 'mid': 50000.0, 'spread': 0.00002}
+```
+
+**注意事项**：
+- debug 模式会产生大量日志，仅在开发/调试时使用
+- 生产环境建议关闭（`debug: false` 或省略该参数）
+- 使用 `debug_log_interval` 可以控制日志频率，避免日志过多
+- `debug_log_interval` 支持 duration 字符串格式（如 `60s`, `1m`, `5m`）
+- 日志级别为 INFO，需要确保日志配置允许 INFO 级别输出
 
 ## 相关文档
 

@@ -714,6 +714,29 @@ class BaseExecutor(Listener):
             if indicator and indicator.is_ready():
                 try:
                     vars_dict = indicator.calculate_vars(direction)
+
+                    # Debug 模式：记录 calculate_vars 结果（带间隔控制）
+                    if getattr(indicator, '_debug', False):
+                        should_log = True
+                        debug_log_interval = getattr(indicator, '_debug_log_interval', None)
+
+                        if debug_log_interval is not None:
+                            # 检查是否到达日志间隔
+                            current_time = time.time()
+                            last_log_time = getattr(indicator, '_last_debug_log_time', 0.0)
+
+                            if current_time - last_log_time < debug_log_interval:
+                                should_log = False
+                            else:
+                                # 更新最后日志时间
+                                indicator._last_debug_log_time = current_time
+
+                        if should_log:
+                            self.logger.info(
+                                "[DEBUG] Indicator %s calculate_vars(direction=%d): %s",
+                                indicator_id, direction, vars_dict
+                            )
+
                     # Issue 0005: 检查并跳过保留变量名，避免覆盖
                     for key, value in vars_dict.items():
                         if key in self.RESERVED_CONTEXT_VARS:
