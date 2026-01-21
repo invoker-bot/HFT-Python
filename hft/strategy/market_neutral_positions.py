@@ -462,79 +462,66 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
         # 重置所有 scope 的 ready 状态
         self.scope_manager.reset_all_ready_states()
 
-        # 构建 LinkTree
-        trading_pairs = self._get_all_trading_pairs()
-        if not trading_pairs:
+        # 使用预构建的 scope_trees
+        if not self.scope_trees:
             return {}
 
-        # 为每条 link 构建 Scope 树
-        link_trees = []
-        for link_index in range(len(self.config.links)):
-            root_scopes = []
-            leaf_scopes = []
-
-            for exchange_path, symbol in trading_pairs:
-                scope = self._get_or_create_scope_for_target(
-                    exchange_path, symbol, link_index
-                )
-                if scope:
-                    leaf_scopes.append(scope)
-                    root = scope
-                    while root.parent is not None:
-                        root = root.parent
-                    if root not in root_scopes:
-                        root_scopes.append(root)
-
-            if root_scopes:
-                link_trees.append((link_index, root_scopes, leaf_scopes))
-
-        # 对每条 link 执行三遍计算
+        # 对每个树执行三遍计算
         output = {}
-        for link_index, root_scopes, leaf_scopes in link_trees:
-            all_scopes = self._breadth_first_traversal(root_scopes)
+        for tree in self.scope_trees:
+            all_nodes = self._breadth_first_traversal([tree.root])
             computed_set = set()
 
             # 第一遍：Indicator 注入
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
-                self._inject_indicator_vars_to_scope(scope)
-                computed_set.add(scope_id)
+                self._inject_indicator_vars_to_scope(node.scope)
+                computed_set.add(node_id)
 
             # 第二遍：计算 post=false 的 vars
             computed_set.clear()
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
-                self._compute_scope_vars(scope, post=False)
-                computed_set.add(scope_id)
+                self._compute_scope_vars(node.scope, post=False, node=node, tree=tree)
+                computed_set.add(node_id)
 
             # 第三遍：计算 post=true 的 vars
             computed_set.clear()
-            for scope in all_scopes:
-                scope_id = id(scope)
-                if scope_id in computed_set or scope.is_not_ready:
+            for node in all_nodes:
+                node_id = id(node)
+                if node_id in computed_set or node.scope.is_not_ready:
                     continue
-                self._compute_scope_vars(scope, post=True)
-                computed_set.add(scope_id)
+                self._compute_scope_vars(node.scope, post=True, node=node, tree=tree)
+                computed_set.add(node_id)
 
             # 步骤 2: 计算 Direction
-            self._compute_directions(all_scopes)
+            self._compute_directions(all_nodes)
 
-            # 步骤 3: 收集 group scopes
-            group_scopes = self._collect_group_scopes(all_scopes)
+            # 步骤 3: 收集 group nodes
+            group_nodes = {}
+            for node in all_nodes:
+                scope = node.scope
+                scope_class_name = scope.__class__.__name__
+                if scope_class_name == "TradingPairClassGroupScope":
+                    group_id = scope.get_var("group_id")
+                    if group_id:
+                        group_nodes[group_id] = node
 
             # 步骤 4: 选择 Top Groups
+            # 将 group_nodes 转换为 group_scopes 以兼容 _select_top_groups
+            group_scopes = {gid: node.scope for gid, node in group_nodes.items()}
             selected_groups = self._select_top_groups(group_scopes)
 
             # 步骤 5-7: 对每个选中的 group 进行 Ratio 计算和平衡
             for group_id in selected_groups:
-                group_scope = group_scopes[group_id]
+                group_node = group_nodes[group_id]
 
                 # 收集该 group 下的所有 trading_pair_class scopes
-                pair_class_scopes = self._collect_pair_class_scopes(group_scope)
+                pair_class_scopes = self._collect_pair_class_scopes(group_node)
 
                 if len(pair_class_scopes) < 2:
                     # 单个交易对无法套利，跳过
@@ -553,7 +540,9 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
                 self._adjust_hedge_ratios(pair_class_scopes)
 
             # 步骤 8: 生成输出（遍历叶子节点）
-            for scope in leaf_scopes:
+            leaf_nodes = self._collect_leaf_nodes(tree.root)
+            for node in leaf_nodes:
+                scope = node.scope
                 if scope.is_not_ready:
                     continue
 
@@ -564,9 +553,10 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
                     continue
 
                 # 获取 ratio（从 parent trading_pair_class scope）
-                parent = scope.parent
-                if parent is None:
+                parent_node = node.parent
+                if parent_node is None:
                     continue
+                parent = parent_node.scope
 
                 ratio = parent.get_var("ratio")
                 if ratio is None or abs(ratio) < 1e-10:
