@@ -34,14 +34,12 @@ class GlobalScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str = "global",
-        parent: Optional[BaseScope] = None,
         app_core: "AppCore" = None,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent  # 始终为 None，但保持接口一致
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
@@ -66,13 +64,11 @@ class ExchangeClassScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: BaseScope,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
@@ -97,14 +93,12 @@ class ExchangeScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: BaseScope,
         app_core: "AppCore" = None,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
@@ -137,13 +131,11 @@ class TradingPairClassScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: BaseScope,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
@@ -173,15 +165,13 @@ class TradingPairScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: BaseScope,
         exchange_path: Optional[str] = None,
         symbol: Optional[str] = None,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
@@ -228,13 +218,11 @@ class TradingPairClassGroupScope(BaseScope):
         self,
         scope_class_id: str,
         scope_instance_id: str,
-        parent: BaseScope,
         **kwargs
     ):
         super().__init__(
             scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            parent=parent
+            scope_instance_id=scope_instance_id
         )
         # 特殊变量
         self.set_var("instance_id", scope_instance_id)
