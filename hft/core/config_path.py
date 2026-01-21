@@ -5,14 +5,13 @@ ConfigPath - 配置路径系统
 """
 # pylint: disable=import-outside-toplevel
 import os
-from typing import ClassVar, TYPE_CHECKING, Any
+import yaml
+from typing import ClassVar, Any
 from functools import cached_property, lru_cache
 from pathlib import Path
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
-
-if TYPE_CHECKING:
-    from ...config.base import BaseConfig
+from ..config.base import BaseConfig
 
 
 class BaseConfigPath:
@@ -87,8 +86,6 @@ class BaseConfigPath:
         Returns:
             配置实例
         """
-        import yaml
-        from ..config.base import BaseConfig
 
         file_path = self._get_file_path()
         with open(file_path, "r", encoding="utf-8") as f:
@@ -106,7 +103,6 @@ class BaseConfigPath:
         Args:
             config: 配置实例
         """
-        import yaml
 
         file_path = self._get_file_path()
         # 确保目录存在
@@ -243,7 +239,7 @@ class ExchangeConfigPathGroup:
         Returns:
             匹配的配置 ID 集合
         """
-        from fnmatch import fnmatch
+        from younotyou import Matcher
 
         # 获取所有可用的配置 ID
         all_ids = set(_scan_exchange_config_ids())
@@ -262,12 +258,14 @@ class ExchangeConfigPathGroup:
             if selector.startswith("!"):
                 # exclude: 从结果集中移除
                 pattern = selector[1:]
-                to_remove = {id_ for id_ in result if fnmatch(id_, pattern)}
+                matcher = Matcher(include_patterns=[pattern])
+                to_remove = {id_ for id_ in result if id_ in matcher}
                 result -= to_remove
             else:
                 # include: 加入结果集
                 pattern = selector
-                to_add = {id_ for id_ in all_ids if fnmatch(id_, pattern)}
+                matcher = Matcher(include_patterns=[pattern])
+                to_add = {id_ for id_ in all_ids if id_ in matcher}
                 result |= to_add
 
         return frozenset(result)
@@ -371,7 +369,7 @@ class ExchangeConfigPathGroup:
         Returns:
             过滤后的 ID 集合
         """
-        from fnmatch import fnmatch
+        from younotyou import Matcher
 
         # 规则 1: 空列表等价于 ["*"]
         if not selectors:
@@ -387,12 +385,14 @@ class ExchangeConfigPathGroup:
             if selector.startswith("!"):
                 # exclude: 从结果集中移除
                 pattern = selector[1:]
-                to_remove = {id_ for id_ in result if fnmatch(id_, pattern)}
+                matcher = Matcher(include_patterns=[pattern])
+                to_remove = {id_ for id_ in result if id_ in matcher}
                 result -= to_remove
             else:
                 # include: 加入结果集
                 pattern = selector
-                to_add = {id_ for id_ in all_ids if fnmatch(id_, pattern)}
+                matcher = Matcher(include_patterns=[pattern])
+                to_add = {id_ for id_ in all_ids if id_ in matcher}
                 result |= to_add
 
         return frozenset(result)

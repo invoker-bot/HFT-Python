@@ -307,7 +307,7 @@ class BaseStrategy(Listener):
         Returns:
             符合过滤条件的交易对列表
         """
-        from fnmatch import fnmatch
+        from younotyou import Matcher
 
         # 获取所有可用的交易对（从所有 exchange 收集）
         all_symbols = set()
@@ -321,25 +321,15 @@ class BaseStrategy(Listener):
         if not all_symbols:
             return []
 
-        # 应用 include_symbols 过滤
-        included = set()
-        for pattern in self.config.include_symbols:
-            if pattern == '*':
-                included.update(all_symbols)
-            else:
-                for symbol in all_symbols:
-                    if fnmatch(symbol, pattern):
-                        included.add(symbol)
-
-        # 应用 exclude_symbols 过滤
-        excluded = set()
-        for pattern in self.config.exclude_symbols:
-            for symbol in included:
-                if fnmatch(symbol, pattern):
-                    excluded.add(symbol)
+        # 应用 include_symbols 和 exclude_symbols 过滤
+        matcher = Matcher(
+            include_patterns=self.config.include_symbols,
+            exclude_patterns=self.config.exclude_symbols
+        )
+        included = {symbol for symbol in all_symbols if symbol in matcher}
 
         # 返回过滤后的结果
-        return list(included - excluded)
+        return list(included)
 
     def _get_group_id_for_symbol(self, symbol: str) -> Optional[str]:
         """
@@ -673,8 +663,9 @@ class BaseStrategy(Listener):
         Returns:
             是否匹配
         """
-        from fnmatch import fnmatch
-        return pattern == "*" or fnmatch(value, pattern)
+        from younotyou import Matcher
+        matcher = Matcher(include_patterns=[pattern])
+        return value in matcher
 
     def _get_all_trading_pairs(self) -> list[tuple[str, str]]:
         """

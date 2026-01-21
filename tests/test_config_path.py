@@ -113,9 +113,10 @@ class TestExchangeConfigPathGroup:
         group = ExchangeConfigPathGroup(selectors=["demo/*"])
         result = group.get_id_map("")
 
-        assert len(result) == 2
+        assert len(result) == 3
         assert "demo/okx" in result
         assert "demo/binance" in result
+        assert "demo/mock" in result
         assert "binance" not in result
         assert "okx" not in result
 
@@ -124,9 +125,10 @@ class TestExchangeConfigPathGroup:
         group = ExchangeConfigPathGroup(selectors=["*"])
         result = group.get_id_map("demo/*")
 
-        assert len(result) == 2
+        assert len(result) == 3
         assert "demo/okx" in result
         assert "demo/binance" in result
+        assert "demo/mock" in result
         assert "binance" not in result
         assert "okx" not in result
 
@@ -145,8 +147,9 @@ class TestExchangeConfigPathGroup:
         group = ExchangeConfigPathGroup(selectors=["*"])
         result = group.get_id_map("demo/*,!demo/binance")
 
-        assert len(result) == 1
+        assert len(result) == 2
         assert "demo/okx" in result
+        assert "demo/mock" in result
         assert "demo/binance" not in result
         assert "binance" not in result
         assert "okx" not in result

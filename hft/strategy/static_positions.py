@@ -47,7 +47,7 @@ Example Config (展开式写法，Feature 0011):
 """
 from typing import ClassVar, Type, Optional, Any, Union, TYPE_CHECKING, cast
 from functools import cached_property
-from fnmatch import fnmatch
+from younotyou import Matcher
 from pydantic import Field, model_validator
 from rich.console import Console
 from rich.table import Table
@@ -270,12 +270,14 @@ class StaticPositionsStrategy(BaseStrategy):
         for exchange in self._get_all_exchanges():
             # 检查 exchange_path 匹配
             if target.exchange != '*':
-                if not fnmatch(exchange.config.path, target.exchange):
+                matcher = Matcher(include_patterns=[target.exchange])
+                if exchange.config.path not in matcher:
                     continue
 
             # 检查 exchange_class 匹配
             if target.exchange_class != '*':
-                if not fnmatch(exchange.class_name, target.exchange_class):
+                matcher = Matcher(include_patterns=[target.exchange_class])
+                if exchange.class_name not in matcher:
                     continue
 
             matches.append((exchange.config.path, target.symbol))
