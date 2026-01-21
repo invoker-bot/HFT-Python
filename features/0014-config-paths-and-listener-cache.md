@@ -113,7 +113,7 @@ class AppConfig(BaseConfig[AppCore]):
 - 空字符串 `""`：等价 `"*"`（匹配所有）
 - `"okx/*,!okx/a"`：先包含再排除
 
-> 实现建议：可用 `younoyou` 做 include/exclude 过滤；否则用 `fnmatch` + 简单 include/exclude 两段式也可。
+> 实现建议：使用 `younotyou` 包做 include/exclude 过滤。
 
 ### 3.3 API 设计
 

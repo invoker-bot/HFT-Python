@@ -94,7 +94,7 @@ exchanges:
 - `pattern`：包含匹配（include）
 - `!pattern`：排除匹配（exclude）
 - `*`：匹配全部
-- `pattern` 支持类 shell 通配（建议 `fnmatch` 语义），例如 `okx/*`、`*/main`
+- `pattern` 支持类 shell 通配符（使用 `younotyou` 包），例如 `okx/*`、`*/main`
 
 ### selector 求值规则（无歧义）
 

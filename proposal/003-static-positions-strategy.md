@@ -234,7 +234,7 @@ target:
 
 - `'*'`：匹配所有 exchange
 - `'okx/main'`：精确匹配 exchange path
-- `'okx/*'`：模式匹配（支持 fnmatch 语法）
+- `'okx/*'`：模式匹配（支持通配符语法，使用 younotyou 包）
 
 **兼容字段**：`exchange` 等价于 `exchange_id`（不推荐继续使用）
 
