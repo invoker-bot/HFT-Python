@@ -131,22 +131,20 @@ class BaseScope:
         检查当前 scope 是否 not_ready
 
         Returns:
-            True 如果该 scope 或其任何祖先被标记为 not_ready
+            True 如果该 scope 被标记为 not_ready
         """
-        if self._not_ready:
-            return True
-        # 检查祖先是否 not_ready（级联）
-        if self.parent is not None:
-            return self.parent.is_not_ready
-        return False
+        return self._not_ready
 
     def mark_not_ready(self) -> None:
         """
-        将当前 scope 标记为 not_ready
+        将当前 scope 及其所有 children 标记为 not_ready
 
-        注意：这也会使所有 children 变为 not_ready（通过 is_not_ready 级联检查）
+        注意：这会递归标记所有子 scope
         """
         self._not_ready = True
+        # 递归标记所有 children
+        for child in self.children.values():
+            child.mark_not_ready()
 
     def reset_ready_state(self) -> None:
         """
