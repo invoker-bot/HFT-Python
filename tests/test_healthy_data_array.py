@@ -2,6 +2,9 @@
 HealthyDataArray 单元测试
 """
 import time
+
+from freezegun import freeze_time
+
 from hft.core.healthy_data import HealthyDataArray
 
 
@@ -258,6 +261,27 @@ class TestHealthyDataArrayIsHealthy:
             range_threshold=0.6,
         )
         assert is_healthy is True
+
+
+class TestHealthyDataArrayBounds:
+    """窗口内存上界测试"""
+
+    def test_cache_bound_over_time_window(self):
+        """缓存大小应受窗口长度限制，不随时间无限增长。"""
+        window_seconds = 300.0
+        samples_per_second = 2.0
+        total_seconds = 1200.0
+        arr = HealthyDataArray[float](max_seconds=window_seconds)
+
+        with freeze_time("2024-01-01 00:00:00") as frozen:
+            steps = int(total_seconds * samples_per_second)
+            step_size = 1.0 / samples_per_second
+            for i in range(steps):
+                arr.append(time.time(), float(i))
+                frozen.tick(step_size)
+
+        expected_max = int(window_seconds * samples_per_second) + 2
+        assert len(arr) <= expected_max
 
     def test_is_healthy_timeout_fail(self):
         """测试超时导致不健康"""

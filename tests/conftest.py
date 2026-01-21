@@ -1,10 +1,53 @@
+import time
 import asyncio
 from typing import Optional
 from unittest.mock import AsyncMock
 
 import pytest
-
+from sleepfake import SleepFake
 from hft.core.listener import Listener
+
+
+class BenchmarkTimer:
+
+    def __init__(self):
+        self.time_delta = 0
+
+    def now(self):
+        return self.time_delta + time.time()
+
+
+g_benchmark_timer = BenchmarkTimer()
+
+
+class BenchmarkSleepFake(SleepFake):
+
+    def __init__(self, bench_mark_timer: BenchmarkTimer):
+        super().__init__()
+        self.timer = bench_mark_timer
+        self.start = time.time()
+
+    def __enter__(self):
+        result = super().__enter__()
+        self.start = time.time()
+        return result
+
+    async def __aenter__(self):
+        result = await super().__aenter__()
+        self.start = time.time()
+        return result
+
+    def calibrate(self):
+        self.timer.time_delta += time.time() - self.start
+        self.start = time.time()
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object):
+        self.calibrate()
+        super().__exit__(exc_type, exc_val, exc_tb)
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.calibrate()
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
 
 
 class MockListener(Listener):

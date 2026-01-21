@@ -3,11 +3,9 @@ BaseScope 基类
 
 提供多层级变量作用域的基础实现。
 """
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional
+from functools import cached_property
 from collections import ChainMap
-
-if TYPE_CHECKING:
-    pass
 
 
 class BaseScope:
@@ -55,7 +53,7 @@ class BaseScope:
         # not_ready 标记（每个 tick 重置）
         self._not_ready: bool = False
 
-    @property
+    @cached_property  # 缓存属性，首次计算后存储结果
     def vars(self) -> ChainMap:
         """
         获取变量 ChainMap（包含父 Scope 的变量）
