@@ -14,9 +14,12 @@
 | ID | 文件 | 状态 | 备注 |
 |---:|---|---|---|
 | 0001-0014 | `features/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
+| 0017 | `features/0017-config-template-generator.md` | 待审核 | 配置模板生成器功能设计 |
 
 ## Issues
 
 | ID | 文件 | 状态 | 备注 |
 |---:|---|---|---|
 | 0001-0016 | `issue/*.md` | 已通过 | 对应文件头均已标记 `> **状态**：全部通过` |
+| 0017 | `issue/0017-performance-watch-constant-and-requires-warning.md` | 待实现 | 运行性能回归所需的 watch 去重与 warning |
+| 0018 | `issue/0018-performance-test-framework.md` | 待审核 | 性能测试框架与复杂度验证 |
