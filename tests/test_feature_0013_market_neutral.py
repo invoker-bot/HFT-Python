@@ -301,45 +301,57 @@ class TestTradingPairClassGroupScope:
     def test_init(self):
         """测试初始化"""
         from hft.core.scope.scopes import TradingPairClassGroupScope, GlobalScope
+        from hft.core.scope.tree import LinkedScopeNode
 
-        parent = GlobalScope(scope_class_id="global")
+        parent_scope = GlobalScope(scope_class_id="global", scope_instance_id="global")
         scope = TradingPairClassGroupScope(
             scope_class_id="trading_pair_class_group",
-            scope_instance_id="ETH",
-            parent=parent
+            scope_instance_id="ETH"
         )
+
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child_node = LinkedScopeNode(scope=scope, parent=parent_node)
+        parent_node.add_child(child_node)
 
         assert scope.scope_class_id == "trading_pair_class_group"
         assert scope.scope_instance_id == "ETH"
         assert scope.get_var("instance_id") == "ETH"
         assert scope.get_var("group_id") == "ETH"
-        assert scope.parent == parent
+        assert child_node.parent == parent_node
 
     def test_children_via_add_child(self):
-        """测试通过 add_child 添加 children"""
+        """测试通过 LinkedScopeNode 添加 children"""
         from hft.core.scope.scopes import (
             TradingPairClassGroupScope,
             TradingPairClassScope,
             GlobalScope
         )
+        from hft.core.scope.tree import LinkedScopeNode
 
-        parent = GlobalScope(scope_class_id="global")
+        parent_scope = GlobalScope(scope_class_id="global", scope_instance_id="global")
         group_scope = TradingPairClassGroupScope(
             scope_class_id="trading_pair_class_group",
-            scope_instance_id="ETH",
-            parent=parent
+            scope_instance_id="ETH"
         )
 
-        # 通过 add_child 添加 child
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        group_node = LinkedScopeNode(scope=group_scope, parent=parent_node)
+        parent_node.add_child(group_node)
+
+        # 通过 LinkedScopeNode 添加 child
         child1 = TradingPairClassScope(
             scope_class_id="trading_pair_class",
-            scope_instance_id="okx-ETH/USDT",
-            parent=None  # 先不设置 parent
+            scope_instance_id="okx-ETH/USDT"
         )
-        group_scope.add_child(child1)
+        child1_node = LinkedScopeNode(scope=child1, parent=group_node)
+        group_node.add_child(child1_node)
 
-        assert "okx-ETH/USDT" in group_scope.children
-        assert group_scope.children["okx-ETH/USDT"] == child1
+        assert len(group_node.children) == 1
+        assert "okx-ETH/USDT" in group_node.children
+        assert group_node.children["okx-ETH/USDT"] == child1_node
+        assert child1_node.parent == group_node
 
 
 class TestBaseStrategyGroupIdProvider:

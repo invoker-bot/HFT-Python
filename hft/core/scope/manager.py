@@ -283,5 +283,4 @@ class ScopeManager:
         应在每个 tick 开始时调用
         """
         for scope in self._cache.values():
-            scope.reset_ready_state()
-
+            scope.not_ready = False

@@ -2,10 +2,10 @@
 Scope 系统变量计算 - 单元测试
 
 测试内容：
-1. Scope 变量继承（ChainMap）
+1. Scope 变量继承（通过 LinkedScopeTree）
 2. Scope 条件变量
 3. Scope 树构建
-4. parent/children 访问
+4. parent/children 访问（通过 LinkedScopeNode）
 """
 from hft.core.scope.scopes import (
     GlobalScope,
@@ -13,6 +13,7 @@ from hft.core.scope.scopes import (
     TradingPairScope,
 )
 from hft.core.scope.manager import ScopeManager
+from hft.core.scope.tree import LinkedScopeNode, LinkedScopeTree
 
 
 class TestScopeVariableInheritance:
@@ -20,83 +21,112 @@ class TestScopeVariableInheritance:
 
     def test_child_inherits_parent_vars(self):
         """测试子 Scope 继承父 Scope 的变量"""
-        parent = GlobalScope("global", "global", None)
-        parent.set_var("max_position", 10000)
-        parent.set_var("speed", 0.5)
+        parent_scope = GlobalScope("global", "global", None)
+        parent_scope.set_var("max_position", 10000)
+        parent_scope.set_var("speed", 0.5)
 
-        child = ExchangeScope("exchange", "okx/main", parent)
-        child.set_var("exchange_path", "okx/main")
+        child_scope = ExchangeScope("exchange", "okx/main")
+        child_scope.set_var("exchange_path", "okx/main")
+
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child_node = LinkedScopeNode(scope=child_scope, parent=parent_node)
+        parent_node.add_child(child_node)
+        tree = LinkedScopeTree(root=parent_node)
+
+        # 通过 tree.get_vars() 获取包含祖先的变量
+        child_vars = tree.get_vars(child_node)
 
         # 子节点可以访问父节点的变量
-        assert child.get_var("max_position") == 10000
-        assert child.get_var("speed") == 0.5
+        assert child_vars["max_position"] == 10000
+        assert child_vars["speed"] == 0.5
         # 子节点也有自己的变量
-        assert child.get_var("exchange_path") == "okx/main"
+        assert child_vars["exchange_path"] == "okx/main"
 
     def test_child_overrides_parent_vars(self):
         """测试子 Scope 覆盖父 Scope 的变量"""
-        parent = GlobalScope("global", "global", None)
-        parent.set_var("speed", 0.5)
+        parent_scope = GlobalScope("global", "global", None)
+        parent_scope.set_var("speed", 0.5)
 
-        child = ExchangeScope("exchange", "okx/main", parent)
-        child.set_var("speed", 0.8)  # 覆盖父节点的值
+        child_scope = ExchangeScope("exchange", "okx/main")
+        child_scope.set_var("speed", 0.8)  # 覆盖父节点的值
+
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child_node = LinkedScopeNode(scope=child_scope, parent=parent_node)
+        parent_node.add_child(child_node)
+        tree = LinkedScopeTree(root=parent_node)
 
         # 子节点的值覆盖父节点
-        assert child.get_var("speed") == 0.8
+        child_vars = tree.get_vars(child_node)
+        assert child_vars["speed"] == 0.8
         # 父节点的值不变
-        assert parent.get_var("speed") == 0.5
+        assert parent_scope.get_var("speed") == 0.5
 
     def test_multi_level_inheritance(self):
         """测试多层级继承"""
         global_scope = GlobalScope("global", "global", None)
         global_scope.set_var("max_position", 10000)
 
-        exchange_scope = ExchangeScope("exchange", "okx/main", global_scope)
+        exchange_scope = ExchangeScope("exchange", "okx/main")
         exchange_scope.set_var("exchange_path", "okx/main")
 
-        trading_pair_scope = TradingPairScope(
-            "trading_pair", "okx/main:BTC/USDT", exchange_scope
-        )
+        trading_pair_scope = TradingPairScope("trading_pair", "okx/main:BTC/USDT")
         trading_pair_scope.set_var("symbol", "BTC/USDT")
 
+        # 创建三层树结构
+        global_node = LinkedScopeNode(scope=global_scope, parent=None)
+        exchange_node = LinkedScopeNode(scope=exchange_scope, parent=global_node)
+        trading_pair_node = LinkedScopeNode(scope=trading_pair_scope, parent=exchange_node)
+        global_node.add_child(exchange_node)
+        exchange_node.add_child(trading_pair_node)
+        tree = LinkedScopeTree(root=global_node)
+
         # 最底层可以访问所有上层的变量
-        assert trading_pair_scope.get_var("max_position") == 10000
-        assert trading_pair_scope.get_var("exchange_path") == "okx/main"
-        assert trading_pair_scope.get_var("symbol") == "BTC/USDT"
+        tp_vars = tree.get_vars(trading_pair_node)
+        assert tp_vars["max_position"] == 10000
+        assert tp_vars["exchange_path"] == "okx/main"
+        assert tp_vars["symbol"] == "BTC/USDT"
 
 
 class TestScopeParentChildrenAccess:
-    """Scope parent/children 访问测试"""
+    """Scope parent/children 访问测试（通过 LinkedScopeNode）"""
 
     def test_parent_access(self):
         """测试访问 parent"""
-        parent = GlobalScope("global", "global", None)
-        parent.set_var("max_position", 10000)
+        parent_scope = GlobalScope("global", "global", None)
+        parent_scope.set_var("max_position", 10000)
 
-        child = ExchangeScope("exchange", "okx/main", parent)
+        child_scope = ExchangeScope("exchange", "okx/main")
 
-        # 子节点可以访问 parent
-        assert child.parent is parent
-        assert child.parent.get_var("max_position") == 10000
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child_node = LinkedScopeNode(scope=child_scope, parent=parent_node)
+        parent_node.add_child(child_node)
+
+        # 子节点可以通过 node.parent 访问父节点
+        assert child_node.parent is parent_node
+        assert child_node.parent.scope is parent_scope
 
     def test_children_access(self):
         """测试访问 children"""
-        parent = GlobalScope("global", "global", None)
+        parent_scope = GlobalScope("global", "global", None)
+        child1_scope = ExchangeScope("exchange", "okx/main")
+        child2_scope = ExchangeScope("exchange", "binance/spot")
 
-        child1 = ExchangeScope("exchange", "okx/main", parent)
-        child1.set_var("amount", 100)
-        parent.add_child(child1)
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child1_node = LinkedScopeNode(scope=child1_scope, parent=parent_node)
+        child2_node = LinkedScopeNode(scope=child2_scope, parent=parent_node)
+        parent_node.add_child(child1_node)
+        parent_node.add_child(child2_node)
 
-        child2 = ExchangeScope("exchange", "binance/spot", parent)
-        child2.set_var("amount", 200)
-        parent.add_child(child2)
-
-        # 父节点可以访问 children
-        assert len(parent.children) == 2
-        assert "okx/main" in parent.children
-        assert "binance/spot" in parent.children
-        assert parent.children["okx/main"].get_var("amount") == 100
-        assert parent.children["binance/spot"].get_var("amount") == 200
+        # 父节点可以通过 node.children 访问子节点
+        assert len(parent_node.children) == 2
+        assert "okx/main" in parent_node.children
+        assert "binance/spot" in parent_node.children
+        assert parent_node.children["okx/main"] == child1_node
+        assert parent_node.children["binance/spot"] == child2_node
 
 
 class TestScopeManager:
@@ -109,8 +139,7 @@ class TestScopeManager:
         scope = manager.get_or_create(
             scope_class_name="GlobalScope",
             scope_class_id="global",
-            scope_instance_id="global",
-            parent=None
+            scope_instance_id="global"
         )
 
         assert scope is not None
@@ -124,15 +153,13 @@ class TestScopeManager:
         scope1 = manager.get_or_create(
             scope_class_name="GlobalScope",
             scope_class_id="global",
-            scope_instance_id="global",
-            parent=None
+            scope_instance_id="global"
         )
 
         scope2 = manager.get_or_create(
             scope_class_name="GlobalScope",
             scope_class_id="global",
-            scope_instance_id="global",
-            parent=None
+            scope_instance_id="global"
         )
 
         # 应该返回同一个实例
@@ -142,27 +169,20 @@ class TestScopeManager:
         """测试相同 (scope_class_id, scope_instance_id) 返回同一实例（Issue 0012）"""
         manager = ScopeManager()
 
-        parent1 = GlobalScope("global", "global1", None)
-        parent2 = GlobalScope("global", "global2", None)
-
         scope1 = manager.get_or_create(
             scope_class_name="ExchangeScope",
             scope_class_id="exchange",
-            scope_instance_id="okx/main",
-            parent=parent1
+            scope_instance_id="okx/main"
         )
 
         scope2 = manager.get_or_create(
             scope_class_name="ExchangeScope",
             scope_class_id="exchange",
-            scope_instance_id="okx/main",
-            parent=parent2
+            scope_instance_id="okx/main"
         )
 
-        # 相同 cache key 应该返回同一实例（缓存 key 不包含 parent）
+        # 即使在不同的树中，相同的 (class_id, instance_id) 应该返回同一实例
         assert scope1 is scope2
-        # 第一次创建时的 parent 被保留
-        assert scope1.parent is parent1
 
 
 class TestScopeTreeBuilding:
@@ -171,36 +191,43 @@ class TestScopeTreeBuilding:
     def test_simple_tree(self):
         """测试简单的树结构"""
         global_scope = GlobalScope("global", "global", None)
+        exchange1_scope = ExchangeScope("exchange", "okx/main")
+        exchange2_scope = ExchangeScope("exchange", "binance/spot")
 
-        exchange1 = ExchangeScope("exchange", "okx/main", global_scope)
-        global_scope.add_child(exchange1)
-
-        exchange2 = ExchangeScope("exchange", "binance/spot", global_scope)
-        global_scope.add_child(exchange2)
+        # 创建树结构
+        global_node = LinkedScopeNode(scope=global_scope, parent=None)
+        exchange1_node = LinkedScopeNode(scope=exchange1_scope, parent=global_node)
+        exchange2_node = LinkedScopeNode(scope=exchange2_scope, parent=global_node)
+        global_node.add_child(exchange1_node)
+        global_node.add_child(exchange2_node)
 
         # 验证树结构
-        assert len(global_scope.children) == 2
-        assert exchange1.parent is global_scope
-        assert exchange2.parent is global_scope
+        assert len(global_node.children) == 2
+        assert exchange1_node.parent is global_node
+        assert exchange2_node.parent is global_node
 
     def test_three_level_tree(self):
         """测试三层树结构"""
         global_scope = GlobalScope("global", "global", None)
+        exchange_scope = ExchangeScope("exchange", "okx/main")
+        pair1_scope = TradingPairScope("trading_pair", "okx/main:BTC/USDT")
+        pair2_scope = TradingPairScope("trading_pair", "okx/main:ETH/USDT")
 
-        exchange_scope = ExchangeScope("exchange", "okx/main", global_scope)
-        global_scope.add_child(exchange_scope)
+        # 创建三层树结构
+        global_node = LinkedScopeNode(scope=global_scope, parent=None)
+        exchange_node = LinkedScopeNode(scope=exchange_scope, parent=global_node)
+        pair1_node = LinkedScopeNode(scope=pair1_scope, parent=exchange_node)
+        pair2_node = LinkedScopeNode(scope=pair2_scope, parent=exchange_node)
 
-        pair1 = TradingPairScope("trading_pair", "okx/main:BTC/USDT", exchange_scope)
-        exchange_scope.add_child(pair1)
-
-        pair2 = TradingPairScope("trading_pair", "okx/main:ETH/USDT", exchange_scope)
-        exchange_scope.add_child(pair2)
+        global_node.add_child(exchange_node)
+        exchange_node.add_child(pair1_node)
+        exchange_node.add_child(pair2_node)
 
         # 验证树结构
-        assert len(global_scope.children) == 1
-        assert len(exchange_scope.children) == 2
-        assert pair1.parent is exchange_scope
-        assert pair2.parent is exchange_scope
-        assert pair1.parent.parent is global_scope
+        assert len(global_node.children) == 1
+        assert len(exchange_node.children) == 2
+        assert pair1_node.parent is exchange_node
+        assert pair2_node.parent is exchange_node
+        assert exchange_node.parent is global_node
 
 

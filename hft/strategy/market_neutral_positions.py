@@ -475,7 +475,7 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             # 第一遍：Indicator 注入
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
                 self._inject_indicator_vars_to_scope(node.scope)
                 computed_set.add(node_id)
@@ -484,7 +484,7 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             computed_set.clear()
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
                 self._compute_scope_vars(node.scope, post=False, node=node, tree=tree)
                 computed_set.add(node_id)
@@ -493,7 +493,7 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             computed_set.clear()
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
                 self._compute_scope_vars(node.scope, post=True, node=node, tree=tree)
                 computed_set.add(node_id)
@@ -543,7 +543,7 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             leaf_nodes = self._collect_leaf_nodes(tree.root)
             for node in leaf_nodes:
                 scope = node.scope
-                if scope.is_not_ready:
+                if scope.not_ready:
                     continue
 
                 exchange_path = scope.get_var("exchange_id")

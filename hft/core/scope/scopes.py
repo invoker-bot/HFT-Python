@@ -24,10 +24,16 @@ class GlobalScope(BaseScope):
     - 没有 parent
     - 通常只有一个实例
     - 存储全局配置变量
+    - 提供常用函数（所有子节点都会继承）
 
     特殊变量：
     - instance_id: "global"
     - app_core: AppCore 实例引用
+
+    特殊函数：
+    - min, max, sum, len, abs, round
+    - clip: 限制值在范围内
+    - avg: 计算平均值
     """
 
     def __init__(
@@ -45,6 +51,16 @@ class GlobalScope(BaseScope):
         self.set_var("instance_id", scope_instance_id)
         if app_core is not None:
             self.set_var("app_core", app_core)
+
+        # 添加常用函数（所有子节点都会继承）
+        self.set_function('min', min)
+        self.set_function('max', max)
+        self.set_function('sum', sum)
+        self.set_function('len', len)
+        self.set_function('abs', abs)
+        self.set_function('round', round)
+        self.set_function('clip', lambda x, min_val, max_val: max(min_val, min(x, max_val)))
+        self.set_function('avg', lambda lst: sum(lst) / len(lst) if lst else 0)
 
 
 class ExchangeClassScope(BaseScope):

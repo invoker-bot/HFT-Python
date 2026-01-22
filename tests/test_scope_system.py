@@ -3,6 +3,7 @@ Scope 系统单元测试
 """
 from hft.core.scope import BaseScope, ScopeManager, VirtualMachine
 from hft.core.scope.scopes import GlobalScope
+from hft.core.scope.tree import LinkedScopeNode, LinkedScopeTree
 
 
 class TestBaseScope:
@@ -13,8 +14,7 @@ class TestBaseScope:
         scope = BaseScope("test", "test_instance")
         assert scope.scope_class_id == "test"
         assert scope.scope_instance_id == "test_instance"
-        assert scope.parent is None
-        assert len(scope.children) == 0
+        # parent 和 children 已移除，不再是 BaseScope 的属性
 
     def test_set_and_get_var(self):
         """测试设置和获取变量"""
@@ -27,20 +27,29 @@ class TestBaseScope:
         assert scope.get_var("key3", "default") == "default"
 
     def test_vars_inheritance(self):
-        """测试变量继承（ChainMap）"""
-        parent = BaseScope("parent", "parent_instance")
-        parent.set_var("parent_var", "parent_value")
-        parent.set_var("shared_var", "parent_shared")
+        """测试变量继承（通过 LinkedScopeTree）"""
+        parent_scope = BaseScope("parent", "parent_instance")
+        parent_scope.set_var("parent_var", "parent_value")
+        parent_scope.set_var("shared_var", "parent_shared")
 
-        child = BaseScope("child", "child_instance", parent=parent)
-        child.set_var("child_var", "child_value")
-        child.set_var("shared_var", "child_shared")
+        child_scope = BaseScope("child", "child_instance")
+        child_scope.set_var("child_var", "child_value")
+        child_scope.set_var("shared_var", "child_shared")
 
-        # 子 Scope 可以访问父 Scope 的变量
-        assert child.get_var("parent_var") == "parent_value"
-        assert child.get_var("child_var") == "child_value"
-        # 子 Scope 的变量会覆盖父 Scope 的同名变量
-        assert child.get_var("shared_var") == "child_shared"
+        # 创建树结构
+        parent_node = LinkedScopeNode(scope=parent_scope, parent=None)
+        child_node = LinkedScopeNode(scope=child_scope, parent=parent_node)
+        parent_node.add_child(child_node)
+        tree = LinkedScopeTree(root=parent_node)
+
+        # 通过 tree.get_vars() 获取包含祖先的变量
+        child_vars = tree.get_vars(child_node)
+
+        # 子节点可以访问父节点的变量
+        assert child_vars["parent_var"] == "parent_value"
+        assert child_vars["child_var"] == "child_value"
+        # 子节点的变量会覆盖父节点的同名变量
+        assert child_vars["shared_var"] == "child_shared"
 
     def test_dict_access(self):
         """测试字典式访问"""

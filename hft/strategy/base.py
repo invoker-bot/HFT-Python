@@ -565,7 +565,7 @@ class BaseStrategy(Listener):
             tree: 节点所属的树
         """
         self._node_to_tree[node] = tree
-        for child in node.children:
+        for child in node.children.values():
             self._build_node_to_tree_mapping(child, tree)
 
     def _evaluate_targets(
@@ -841,12 +841,12 @@ class BaseStrategy(Listener):
 
             if indicator is None:
                 # Indicator 不存在，标记为 not ready
-                scope.mark_not_ready()
+                scope.not_ready = True
                 continue
 
             if not indicator.is_ready():
                 # Indicator not ready → 标记该 scope 及其所有 children 为 not ready
-                scope.mark_not_ready()
+                scope.not_ready = True
                 continue
 
             try:
@@ -860,7 +860,7 @@ class BaseStrategy(Listener):
                     indicator_id, scope.scope_class_id, scope.scope_instance_id, e
                 )
                 # 注入失败也标记为 not ready
-                scope.mark_not_ready()
+                scope.not_ready = True
 
     def _compute_scope_vars(
         self,
@@ -893,7 +893,7 @@ class BaseStrategy(Listener):
         # 注入 parent 和 children 符号
         if node:
             context['parent'] = node.parent.scope if node.parent else None
-            context['children'] = {child.scope.scope_instance_id: child.scope for child in node.children}
+            context['children'] = {child.scope.scope_instance_id: child.scope for child in node.children.values()}
         else:
             # 向后兼容：parent 和 children 为 None
             context['parent'] = None
@@ -969,7 +969,7 @@ class BaseStrategy(Listener):
             result.append(node)
 
             # 添加 children 到队列
-            for child in node.children:
+            for child in node.children.values():
                 if id(child) not in visited:
                     queue.append(child)
 
@@ -991,7 +991,7 @@ class BaseStrategy(Listener):
             leaf_nodes.append(node)
         else:
             # 递归收集子节点的叶子节点
-            for child in node.children:
+            for child in node.children.values():
                 leaf_nodes.extend(self._collect_leaf_nodes(child))
         return leaf_nodes
 
@@ -1030,7 +1030,7 @@ class BaseStrategy(Listener):
             # 第一遍：requires（Indicator 注入）
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
 
                 # 注入 Indicator 变量
@@ -1042,7 +1042,7 @@ class BaseStrategy(Listener):
             computed_set.clear()
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
 
                 self._compute_scope_vars(node.scope, post=False, node=node, tree=tree)
@@ -1052,7 +1052,7 @@ class BaseStrategy(Listener):
             computed_set.clear()
             for node in all_nodes:
                 node_id = id(node)
-                if node_id in computed_set or node.scope.is_not_ready:
+                if node_id in computed_set or node.scope.not_ready:
                     continue
 
                 self._compute_scope_vars(node.scope, post=True, node=node, tree=tree)
@@ -1061,7 +1061,7 @@ class BaseStrategy(Listener):
             # target 匹配与输出（收集叶子节点）
             leaf_nodes = self._collect_leaf_nodes(tree.root)
             for node in leaf_nodes:
-                if node.scope.is_not_ready:
+                if node.scope.not_ready:
                     continue
 
                 # 获取 exchange_path 和 symbol
