@@ -513,10 +513,9 @@ class TestClassIndexBasic:
 
         # level2 is at depth 2 from root's perspective
         # But when added via level1, it should be registered at depth 2
-        entries = root._class_index.get(MockMarketExecutor, [])
-        assert len(entries) == 1
-        _, depth = entries[0]
-        assert depth == 2
+        depth_map = root._class_index.get(MockMarketExecutor, {})
+        assert 2 in depth_map
+        assert len(depth_map[2]) == 1
 
 
 class TestFindChildByClass:
