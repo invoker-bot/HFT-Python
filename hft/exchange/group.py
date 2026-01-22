@@ -83,16 +83,34 @@ class ExchangeGroup(Listener):
             if exchange.name not in exchange_id_map:
                 await self.remove_exchange(exchange)
 
-        # 添加新的 exchange
+        # 添加新的 exchange（使用 get_or_create 支持缓存恢复）
+        from ..core.listener_cache import get_or_create
+        cache_dict = getattr(app.config, '_cache_dict', {})
+
         for exchange_id, exchange_path in exchange_id_map.items():
             if exchange_id not in self.children:
                 try:
                     exchange_config = exchange_path.instance
-                    exchange_instance: BaseExchange = exchange_config.instance
+                    exchange_class = type(exchange_config.instance)
+
+                    # 使用 get_or_create 恢复或创建 exchange 实例
+                    exchange_instance: BaseExchange = get_or_create(
+                        cache_dict,
+                        exchange_class,
+                        exchange_id,
+                        parent=self,
+                        config=exchange_config
+                    )
                 except InvalidToken:
                     self.logger.error("Failed to decrypt exchange config file for %s, you should check password or config file.", exchange_id)
                     return True  # 配置文件解密失败，跳过加载该交易所
-                await self.add_exchange(exchange_instance)
+
+                # 注意：get_or_create 已经调用了 add_child，但我们还需要更新 exchanges_map
+                self.exchanges_map[exchange_instance.class_name].append(exchange_instance.name)
+
+                # 如果 ExchangeGroup 已经在运行，启动新添加的 exchange
+                if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
+                    await exchange_instance.start()
 
     def get_exchange_classes(self):
         classes = []

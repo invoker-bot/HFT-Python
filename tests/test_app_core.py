@@ -69,6 +69,7 @@ def create_mock_app_config(**kwargs):
     # Create a mock ExecutorConfigPath with instance property
     mock_executor_path = MagicMock()
     mock_executor_config = MagicMock()
+    mock_executor_config.path = "mock/executor"  # Real string for logging
     mock_executor_config.instance = MockExecutor()
     mock_executor_path.instance = mock_executor_config
 
@@ -100,6 +101,13 @@ def create_mock_app_config(**kwargs):
     for key, value in defaults.items():
         setattr(config, key, value)
 
+    # Mock get_cache_manager method
+    mock_cache_manager = MagicMock()
+    mock_cache_manager.start_daemon = MagicMock()
+    mock_cache_manager.stop_daemon = MagicMock()
+    mock_cache_manager.save_cache = MagicMock()
+    config.get_cache_manager = MagicMock(return_value=mock_cache_manager)
+
     return config
 
 
@@ -116,11 +124,11 @@ class TestAppCoreLifecycle:
         config = create_mock_app_config()
         app_core = AppCore(config)
 
-        # Should have 7 children: 3 utility listeners + 4 core components
-        assert len(app_core.children) >= 3
+        # Should have 6 children: 2 utility listeners + 4 core components
+        # (CacheListener removed, replaced by CacheManager)
+        assert len(app_core.children) >= 2
         assert 'StateLogListener' in app_core.children
         assert 'UnhealthyRestartListener' in app_core.children
-        assert 'CacheListener' in app_core.children
 
     @pytest.mark.asyncio
     async def test_appcore_start_transitions_to_running(self):

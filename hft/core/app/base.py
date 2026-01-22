@@ -34,7 +34,7 @@ from ...strategy.group import StrategyGroup
 from ...executor.base import BaseExecutor
 from ...plugin import pm
 from ..listener import Listener
-from .listeners import UnhealthyRestartListener, StateLogListener, CacheListener
+from .listeners import UnhealthyRestartListener, StateLogListener
 from .notify import NotifyService
 
 if TYPE_CHECKING:
@@ -51,7 +51,6 @@ class AppCore(Listener):
         AppCore
         ├── UnhealthyRestartListener  # 健康检查与自动重启
         ├── StateLogListener          # 状态日志输出
-        ├── CacheListener             # 状态持久化
         ├── ExchangeGroup            # 交易所连接
         │   └── [各交易所实例...]
         ├── IndicatorGroup           # 指标管理（Feature 0006/0007）
@@ -60,6 +59,10 @@ class AppCore(Listener):
         ├── StrategyGroup             # 策略组
         │   └── [各策略实例...]
         └── Executor                  # 交易执行器
+
+    缓存管理：
+        - CacheManager（守护线程）：定期保存 Listener 状态到磁盘
+        - 退出时同步保存，确保数据不丢失
 
     数据流（轮询模式）：
         Executor.on_tick()
@@ -70,7 +73,7 @@ class AppCore(Listener):
             -> 执行交易
     """
 
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify", "cache_manager")
 
     def __init__(self, config: "AppConfig"):
         """
@@ -79,41 +82,93 @@ class AppCore(Listener):
         Args:
             config: 应用配置对象
         """
-        super().__init__(interval=config.interval)
+        # 先设置 config，因为 initialize() 需要用到
         self.config = config
+        super().__init__(interval=config.interval)
 
         # === 通知服务 ===
         self.notify = NotifyService(self)
 
+        # === 缓存管理器（守护线程）===
+        self.cache_manager = config.get_cache_manager()
+
+    def initialize(self):
+        """
+        初始化 AppCore 的子组件
+
+        所有 add_child() 调用都在这里，支持缓存恢复时的 get_or_create 语义。
+        """
+        super().initialize()
+
+        # 确保 config 已设置（正常初始化时已设置，pickle 恢复时需要检查）
+        if not hasattr(self, 'config'):
+            return
+
+        # 获取缓存字典（如果有）
+        from ..listener_cache import get_or_create
+        cache_dict = getattr(self.config, '_cache_dict', {})
+
         # === 辅助监听器 ===
-        self.add_child(UnhealthyRestartListener(interval=config.health_check_interval))
-        self.add_child(StateLogListener(interval=config.log_interval))
-        self.add_child(CacheListener(interval=config.cache_interval))
+        # 使用 get_or_create 恢复或创建（不传递 name，使用类名作为默认值）
+        get_or_create(
+            cache_dict,
+            UnhealthyRestartListener,
+            parent=self,
+            interval=self.config.health_check_interval
+        )
+        get_or_create(
+            cache_dict,
+            StateLogListener,
+            parent=self,
+            interval=self.config.log_interval
+        )
 
         # === 核心组件 ===
         # 1. 交易所连接管理
-        self.exchange_group = ExchangeGroup()
-        self.add_child(self.exchange_group)
+        self.exchange_group = get_or_create(
+            cache_dict,
+            ExchangeGroup,
+            "ExchangeGroup",
+            parent=self
+        )
 
         # 2. 指标管理（Feature 0006/0007）
-        self.indicator_group = IndicatorGroup()
-        self.add_child(self.indicator_group)
+        self.indicator_group = get_or_create(
+            cache_dict,
+            IndicatorGroup,
+            "IndicatorGroup",
+            parent=self
+        )
         # 注册配置中的 indicator factory
         self._register_indicator_factories()
 
         # 3. Scope 管理器（Feature 0012）- 作为 Listener 挂载
         from ..scope.manager import ScopeManager
-        self.scope_manager = ScopeManager()
-        self.add_child(self.scope_manager)
+        self.scope_manager = get_or_create(
+            cache_dict,
+            ScopeManager,
+            "ScopeManager",
+            parent=self
+        )
 
         # 4. 策略组
-        self.strategy_group = StrategyGroup()
-        self.add_child(self.strategy_group)
+        self.strategy_group = get_or_create(
+            cache_dict,
+            StrategyGroup,
+            "StrategyGroup",
+            parent=self
+        )
 
         # 5. 交易执行器（从配置路径加载）
-        executor_config = config.executor.instance
-        self.executor: BaseExecutor = executor_config.instance
-        self.add_child(self.executor)
+        executor_config = self.config.executor.instance
+        executor_class = type(executor_config.instance)
+        self.executor: BaseExecutor = get_or_create(
+            cache_dict,
+            executor_class,
+            name=executor_config.path,
+            parent=self,
+            config=executor_config
+        )
 
     @cached_property
     def database(self) -> ClickHouseDatabase | None:
@@ -143,7 +198,7 @@ class AppCore(Listener):
         duration = -1 if self.config.max_duration is None else self.config.max_duration
         if self.config.debug:
             self.logger.info("Starting AppCore loop (DEBUG mode, duration=%.1fs)",
-                           duration if duration > 0 else float('inf'))
+                             duration if duration > 0 else float('inf'))
         else:
             self.logger.info("Starting AppCore loop")
 
@@ -187,6 +242,8 @@ class AppCore(Listener):
         for child in list(self.children.values()):
             if not child.lazy_start:
                 child.enabled = True
+        # 启动缓存守护线程
+        self.cache_manager.start_daemon(self)
         # 触发插件钩子
         pm.hook.on_app_start(app=self)
 
@@ -289,7 +346,12 @@ class AppCore(Listener):
             self.indicator_group.register_factory(indicator_id, factory)
 
     async def on_stop(self):
-        """停止回调，触发插件钩子"""
+        """停止回调，同步保存缓存并停止守护线程"""
+        # 同步保存缓存（确保数据不丢失）
+        self.cache_manager.save_cache()
+        # 停止守护线程
+        self.cache_manager.stop_daemon()
+        # 触发插件钩子
         pm.hook.on_app_stop(app=self)
         await super().on_stop()
 

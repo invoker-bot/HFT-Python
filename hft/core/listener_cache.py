@@ -1,12 +1,14 @@
 """
 Listener 缓存管理模块
-
++
 提供 Listener 实例的缓存和恢复机制：
 - get_or_create: 从缓存获取或创建 Listener 实例
 - ListenerCache: 收集和管理 Listener 状态缓存
 """
 # pylint: disable=import-outside-toplevel,protected-access
-from typing import Type, Optional, TypeVar, Dict, Any
+from typing import Type, Optional, TypeVar, Dict, Any, TYPE_CHECKING
+if TYPE_CHECKING:
+    from .listener import Listener
 
 T = TypeVar('T', bound='Listener')
 
@@ -41,7 +43,7 @@ def build_cache_key(
 def get_or_create(
     cache: Dict[str, Dict[str, Any]],
     listener_class: Type[T],
-    name: str,
+    name: Optional[str] = None,
     parent: Optional['Listener'] = None,
     **kwargs
 ) -> T:
@@ -54,14 +56,16 @@ def get_or_create(
     Args:
         cache: 缓存字典 {cache_key: state_dict}
         listener_class: Listener 类
-        name: Listener 名称
+        name: Listener 名称（可选，默认使用类名）
         parent: 父 Listener
         **kwargs: 传递给构造函数的参数（仅在创建新实例时使用）
 
     Returns:
         Listener 实例
     """
-    from .listener import Listener  # 延迟导入避免循环依赖
+    # 如果没有提供 name，使用类名作为默认值
+    if name is None:
+        name = listener_class.__name__
 
     cache_key = build_cache_key(listener_class, name, parent)
 
@@ -72,7 +76,12 @@ def get_or_create(
         instance.__setstate__(state)
     else:
         # 创建新实例
-        instance = listener_class(name=name, **kwargs)
+        # 如果构造函数接受 name 参数，则传递；否则不传递
+        try:
+            instance = listener_class(name=name, **kwargs)
+        except TypeError:
+            # 构造函数不接受 name 参数，尝试不传递 name
+            instance = listener_class(**kwargs)
 
     # 建立父子关系
     if parent is not None:
