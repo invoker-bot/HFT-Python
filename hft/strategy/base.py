@@ -121,6 +121,10 @@ class BaseStrategy(Listener):
         # 节点到树的映射（用于快速查找节点所属的树）
         self._node_to_tree: dict['LinkedScopeNode', 'LinkedScopeTree'] = {}
 
+        # VirtualMachine 用于表达式求值
+        from ..core.scope.vm import VirtualMachine
+        self.vm = VirtualMachine()
+
     # ============================================================
     # Feature 0008: 变量计算机制
     # ============================================================
@@ -258,37 +262,22 @@ class BaseStrategy(Listener):
         return context
 
     def _safe_eval(self, expr: str, context: dict[str, Any]) -> Any:
-        """安全求值表达式"""
-        from simpleeval import EvalWithCompoundTypes, DEFAULT_OPERATORS
+        """
+        安全求值表达式（使用 VirtualMachine）
 
-        # 辅助函数
-        def avg(values):
-            if not values:
-                return 0.0
-            return sum(values) / len(values)
+        Args:
+            expr: 表达式字符串
+            context: 上下文变量字典
 
-        def clip(value, min_val, max_val):
-            return max(min_val, min(max_val, value))
-
-        safe_functions = {
-            'len': len,
-            'abs': abs,
-            'min': min,
-            'max': max,
-            'sum': sum,
-            'round': round,
-            'avg': avg,
-            'clip': clip,
-        }
-
-        evaluator = EvalWithCompoundTypes(
-            names=context,
-            functions=safe_functions,
-            operators=DEFAULT_OPERATORS,
-        )
-
+        Returns:
+            求值结果，失败返回 None
+        """
         try:
-            return evaluator.eval(expr)
+            # 创建临时 scope 用于求值
+            from ..core.scope.base import BaseScope
+            temp_scope = BaseScope("temp", "temp")
+            temp_scope.update_vars(context)
+            return self.vm.eval(expr, temp_scope)
         except Exception as e:
             self.logger.warning("Expression eval failed: %s - %s", expr, e)
             return None
@@ -384,18 +373,7 @@ class BaseStrategy(Listener):
         """
         根据 links 配置构建 Scope 树
 
-        此方法会：
-        1. 遍历所有 links
-        2. 为每条 link 构建 Scope 树（遍历每一层的所有 children）
-        3. 将叶子节点存储到 self.scope_trees
-
-        Links 展开规则：
-        - Links 定义层级关系，而非单一路径
-        - 展开时会遍历每一层的所有 children
-        - 例如 ["global", "exchange", "trading_pair"] 会展开为：
-          - 第一层：global (1个实例)
-          - 第二层：所有 exchange (如 okx/main, binance/spot)
-          - 第三层：每个 exchange 的所有 trading_pair
+        简化版实现：直接在 BaseStrategy 中构建树，不依赖 ScopeManager
         """
         if not self.config.links:
             return
@@ -404,157 +382,213 @@ class BaseStrategy(Listener):
             self.logger.warning("ScopeManager not initialized")
             return
 
-        # 构建 instance_ids_provider 函数
-        def instance_ids_provider(scope_class_id: str, parent_node) -> list[str]:
-            """
-            获取指定 scope_class_id 的所有实例 ID
-
-            Args:
-                scope_class_id: Scope 类型 ID（如 "global", "exchange"）
-                parent_node: 父 LinkedScopeNode（用于获取上下文信息）
-
-            Returns:
-                实例 ID 列表
-            """
-            scope_config = self.config.scopes.get(scope_class_id)
-            if scope_config and scope_config.instance_id:
-                # 如果配置中指定了 instance_id，直接使用
-                return [scope_config.instance_id]
-
-            # 否则根据 scope_class_id 对应的 class_name 动态获取
-            if not scope_config:
-                self.logger.warning(
-                    "No config found for scope_class_id=%s, returning empty list",
-                    scope_class_id
-                )
-                return []
-
-            class_name = scope_config.class_name
-
-            # 根据 Scope 类型动态获取实例 ID
-            if class_name == "GlobalScope":
-                # GlobalScope 通常只有一个实例
-                return ["global"]
-
-            elif class_name == "ExchangeClassScope":
-                # 获取所有 exchange class 名称
-                if self.root is None or not hasattr(self.root, 'exchange_group'):
-                    return []
-                exchange_classes = set()
-                for exchange in self.root.exchange_group.children.values():
-                    exchange_classes.add(exchange.class_name)
-                return sorted(exchange_classes)
-
-            elif class_name == "ExchangeScope":
-                # 获取所有 exchange path
-                if self.root is None or not hasattr(self.root, 'exchange_group'):
-                    return []
-                exchange_paths = []
-                for exchange in self.root.exchange_group.children.values():
-                    exchange_paths.append(exchange.config.path)
-                return sorted(exchange_paths)
-
-            elif class_name == "TradingPairClassScope":
-                # 获取所有唯一的 symbol（从配置的 include_symbols/exclude_symbols）
-                # 这里返回所有符合过滤条件的 symbol
-                symbols = self._get_filtered_symbols()
-                return sorted(symbols)
-
-            elif class_name == "TradingPairScope":
-                # 获取特定 exchange 的所有 trading pair
-                # 需要从 parent_node 获取 exchange_path
-                if parent_node is None:
-                    return []
-
-                parent_scope = parent_node.scope
-                # 根据 parent 类型获取 exchange_path
-                exchange_path = None
-                if parent_scope.scope_class_id == "exchange":
-                    # 父节点是 ExchangeScope
-                    exchange_path = parent_scope.get_var("exchange_path")
-                elif parent_scope.scope_class_id == "trading_pair_class":
-                    # 父节点是 TradingPairClassScope
-                    # 从 parent 的 instance_id 获取 symbol
-                    symbol = parent_scope.scope_instance_id
-
-                    # 需要从更上层获取 exchange_path
-                    # 向上遍历找到 ExchangeScope 或 ExchangeClassScope
-                    current = parent_node.parent
-                    while current:
-                        if current.scope.scope_class_id == "exchange":
-                            exchange_path = current.scope.get_var("exchange_path")
-                            break
-                        elif current.scope.scope_class_id == "exchange_class":
-                            # ExchangeClassScope，需要获取该 class 的所有 exchange
-                            exchange_class = current.scope_instance_id
-                            if self.root and hasattr(self.root, 'exchange_group'):
-                                exchange_paths = []
-                                for exchange in self.root.exchange_group.children.values():
-                                    if exchange.class_name == exchange_class:
-                                        exchange_paths.append(exchange.config.path)
-                                # 为每个 exchange 创建 trading_pair instance_id
-                                return [f"{ep}:{symbol}" for ep in sorted(exchange_paths)]
-                            return []
-                        current = current.parent
-
-                    # 如果没有找到 exchange 上下文，返回空列表
-                    if not exchange_path:
-                        return []
-
-                    # 返回单个 trading_pair instance_id
-                    return [f"{exchange_path}:{symbol}"]
-
-                if not exchange_path:
-                    return []
-
-                # 获取该 exchange 的所有 symbols
-                symbols = self._get_filtered_symbols()
-                # 为每个 symbol 构建 trading_pair instance_id: "exchange_path:symbol"
-                return [f"{exchange_path}:{symbol}" for symbol in sorted(symbols)]
-
-            elif class_name == "TradingPairClassGroupScope":
-                # TradingPairClassGroupScope: 获取所有唯一的 group_id
-                # group_id 由 symbol 计算得出（通过 default_trading_pair_group 或 trading_pair_group 映射）
-                symbols = self._get_filtered_symbols()
-                group_ids = set()
-                for symbol in symbols:
-                    # 计算 group_id
-                    group_id = self._get_group_id_for_symbol(symbol)
-                    if group_id:
-                        group_ids.add(group_id)
-                return sorted(group_ids)
-
-            else:
-                # 未知类型，返回空列表
-                self.logger.warning(
-                    "Unknown scope class_name=%s for scope_class_id=%s",
-                    class_name, scope_class_id
-                )
-                return []
-
-        # 构建 scope_configs 字典
-        scope_configs = {}
-        for scope_class_id, scope_config in self.config.scopes.items():
-            scope_configs[scope_class_id] = {
-                "class": scope_config.class_name,
-                "instance_id": scope_config.instance_id
-            }
-
         # 为每条 link 构建 Scope 树
         self.scope_trees = []
         self._node_to_tree = {}
+
         for link in self.config.links:
-            trees = self.scope_manager.build_scope_tree(
-                link=link,
-                scope_configs=scope_configs,
-                instance_ids_provider=instance_ids_provider
-            )
-            # trees 是 list[LinkedScopeTree]
+            trees = self._build_single_link(link)
             self.scope_trees.extend(trees)
 
             # 构建 node_to_tree 映射
             for tree in trees:
                 self._build_node_to_tree_mapping(tree.root, tree)
+
+    def _build_single_link(self, link: list[str]) -> list['LinkedScopeTree']:
+        """
+        构建单条 link 的 Scope 树
+
+        Args:
+            link: Scope 链路，如 ["global", "exchange", "trading_pair"]
+
+        Returns:
+            LinkedScopeTree 列表
+        """
+        from ..core.scope.tree import LinkedScopeNode, LinkedScopeTree
+
+        if not link:
+            return []
+
+        # 获取第一层的所有实例 ID
+        first_scope_class_id = link[0]
+        instance_ids = self._get_instance_ids(first_scope_class_id, None)
+
+        # 为每个实例创建根节点
+        trees = []
+        for instance_id in instance_ids:
+            scope = self._create_scope(first_scope_class_id, instance_id)
+            root_node = LinkedScopeNode(scope=scope, parent=None)
+
+            # 递归构建子树
+            if len(link) > 1:
+                self._build_children(root_node, link, 1)
+
+            trees.append(LinkedScopeTree(root=root_node))
+
+        return trees
+
+    def _build_children(
+        self,
+        parent_node: 'LinkedScopeNode',
+        link: list[str],
+        index: int
+    ) -> None:
+        """
+        递归构建子节点
+
+        Args:
+            parent_node: 父节点
+            link: 完整的 link 链路
+            index: 当前处理的 link 索引
+        """
+        from ..core.scope.tree import LinkedScopeNode
+
+        if index >= len(link):
+            return
+
+        scope_class_id = link[index]
+        instance_ids = self._get_instance_ids(scope_class_id, parent_node)
+
+        for instance_id in instance_ids:
+            scope = self._create_scope(scope_class_id, instance_id)
+            child_node = LinkedScopeNode(scope=scope, parent=parent_node)
+            parent_node.add_child(child_node)
+
+            # 递归构建下一层
+            if index + 1 < len(link):
+                self._build_children(child_node, link, index + 1)
+
+    def _create_scope(self, scope_class_id: str, instance_id: str) -> 'BaseScope':
+        """
+        创建 Scope 实例
+
+        Args:
+            scope_class_id: Scope 类型 ID
+            instance_id: 实例 ID
+
+        Returns:
+            Scope 实例
+        """
+        scope_config = self.config.scopes.get(scope_class_id)
+        if not scope_config:
+            raise ValueError(f"No config for scope_class_id: {scope_class_id}")
+
+        return self.scope_manager.get_or_create(
+            scope_class_name=scope_config.class_name,
+            scope_class_id=scope_class_id,
+            scope_instance_id=instance_id,
+            app_core=self.root,
+        )
+
+    def _get_instance_ids(self, scope_class_id: str, parent_node: 'LinkedScopeNode') -> list[str]:
+        """
+        获取指定 scope_class_id 的所有实例 ID
+
+        Args:
+            scope_class_id: Scope 类型 ID（如 "global", "exchange"）
+            parent_node: 父 LinkedScopeNode（用于获取上下文信息）
+
+        Returns:
+            实例 ID 列表
+        """
+        scope_config = self.config.scopes.get(scope_class_id)
+        if not scope_config:
+            self.logger.warning("No config for scope_class_id=%s", scope_class_id)
+            return []
+
+        # 如果配置中指定了 instance_id，直接使用
+        if scope_config.instance_id:
+            return [scope_config.instance_id]
+
+        # 根据 class_name 动态获取实例 ID
+        class_name = scope_config.class_name
+
+        if class_name == "GlobalScope":
+            return ["global"]
+
+        elif class_name == "ExchangeClassScope":
+            return self._get_exchange_classes()
+
+        elif class_name == "ExchangeScope":
+            return self._get_exchange_paths()
+
+        elif class_name == "TradingPairClassScope":
+            return self._get_filtered_symbols()
+
+        elif class_name == "TradingPairScope":
+            return self._get_trading_pair_ids(parent_node)
+
+        elif class_name == "TradingPairClassGroupScope":
+            return self._get_group_ids()
+
+        else:
+            self.logger.warning("Unknown scope class_name=%s", class_name)
+            return []
+
+    def _get_exchange_classes(self) -> list[str]:
+        """获取所有 exchange class 名称"""
+        if not self.root or not hasattr(self.root, 'exchange_group'):
+            return []
+        classes = {ex.class_name for ex in self.root.exchange_group.children.values()}
+        return sorted(classes)
+
+    def _get_exchange_paths(self) -> list[str]:
+        """获取所有 exchange path"""
+        if not self.root or not hasattr(self.root, 'exchange_group'):
+            return []
+        paths = [ex.config.path for ex in self.root.exchange_group.children.values()]
+        return sorted(paths)
+
+    def _get_trading_pair_ids(self, parent_node: 'LinkedScopeNode') -> list[str]:
+        """获取 trading pair 实例 ID"""
+        if not parent_node:
+            return []
+
+        parent_scope = parent_node.scope
+
+        # 从 ExchangeScope 父节点获取
+        if parent_scope.scope_class_id == "exchange":
+            exchange_path = parent_scope.get_var("exchange_path")
+            if exchange_path:
+                symbols = self._get_filtered_symbols()
+                return [f"{exchange_path}:{s}" for s in sorted(symbols)]
+
+        # 从 TradingPairClassScope 父节点获取
+        elif parent_scope.scope_class_id == "trading_pair_class":
+            symbol = parent_scope.scope_instance_id
+            exchange_paths = self._find_exchange_paths_from_ancestors(parent_node)
+            if exchange_paths:
+                return [f"{ep}:{symbol}" for ep in sorted(exchange_paths)]
+
+        return []
+
+    def _find_exchange_paths_from_ancestors(self, node: 'LinkedScopeNode') -> list[str]:
+        """从祖先节点中查找 exchange paths"""
+        current = node.parent
+        while current:
+            scope = current.scope
+            if scope.scope_class_id == "exchange":
+                return [scope.get_var("exchange_path")]
+            elif scope.scope_class_id == "exchange_class":
+                return self._get_exchange_paths_by_class(scope.scope_instance_id)
+            current = current.parent
+        return []
+
+    def _get_exchange_paths_by_class(self, exchange_class: str) -> list[str]:
+        """根据 exchange class 获取所有 exchange paths"""
+        if not self.root or not hasattr(self.root, 'exchange_group'):
+            return []
+        paths = [
+            ex.config.path for ex in self.root.exchange_group.children.values()
+            if ex.class_name == exchange_class
+        ]
+        return sorted(paths)
+
+    def _get_group_ids(self) -> list[str]:
+        """获取所有 group IDs"""
+        symbols = self._get_filtered_symbols()
+        groups = {self._get_group_id_for_symbol(s) for s in symbols}
+        return sorted(g for g in groups if g)
 
     def _build_node_to_tree_mapping(self, node: 'LinkedScopeNode', tree: 'LinkedScopeTree') -> None:
         """

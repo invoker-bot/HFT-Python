@@ -71,20 +71,27 @@ class TestVirtualMachine:
     def test_eval_with_variables(self):
         """测试带变量的表达式求值"""
         vm = VirtualMachine()
-        names = {"x": 10, "y": 20}
-        assert vm.eval("x + y", names) == 30
-        assert vm.eval("x * y", names) == 200
+        scope = BaseScope("test", "test_instance")
+        scope.set_var("x", 10)
+        scope.set_var("y", 20)
+        assert vm.eval("x + y", scope=scope) == 30
+        assert vm.eval("x * y", scope=scope) == 200
 
     def test_eval_with_functions(self):
         """测试带函数的表达式求值"""
         vm = VirtualMachine()
-        assert vm.eval("min(1, 2, 3)") == 1
-        assert vm.eval("max(1, 2, 3)") == 3
+        # 使用 GlobalScope 以获得内置函数
+        scope = GlobalScope("global", "global")
+
+        assert vm.eval("min(1, 2, 3)", scope=scope) == 1
+        assert vm.eval("max(1, 2, 3)", scope=scope) == 3
+
         # 使用变量传递列表
-        assert vm.eval("sum(lst)", {"lst": [1, 2, 3]}) == 6
-        assert vm.eval("clip(5, 0, 10)") == 5
-        assert vm.eval("clip(-5, 0, 10)") == 0
-        assert vm.eval("clip(15, 0, 10)") == 10
+        scope.set_var("lst", [1, 2, 3])
+        assert vm.eval("sum(lst)", scope=scope) == 6
+        assert vm.eval("clip(5, 0, 10)", scope=scope) == 5
+        assert vm.eval("clip(-5, 0, 10)", scope=scope) == 0
+        assert vm.eval("clip(15, 0, 10)", scope=scope) == 10
 
 
 class TestScopeManager:

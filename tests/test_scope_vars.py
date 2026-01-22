@@ -231,3 +231,44 @@ class TestScopeTreeBuilding:
         assert exchange_node.parent is global_node
 
 
+class TestLinkedScopeNodeMethods:
+    """LinkedScopeNode 方法测试"""
+
+    def test_set_var(self):
+        """测试 LinkedScopeNode.set_var 方法"""
+        scope = GlobalScope("global", "global", None)
+        node = LinkedScopeNode(scope=scope, parent=None)
+
+        # 使用 node.set_var 设置变量
+        node.set_var("test_var", 100)
+        node.set_var("name", "test")
+
+        # 验证变量已设置到 scope
+        assert scope.get_var("test_var") == 100
+        assert scope.get_var("name") == "test"
+        # 也可以通过 node.vars 访问
+        assert node.vars["test_var"] == 100
+        assert node.vars["name"] == "test"
+
+    def test_set_function(self):
+        """测试 LinkedScopeNode.set_function 方法"""
+        scope = GlobalScope("global", "global", None)
+        node = LinkedScopeNode(scope=scope, parent=None)
+
+        # 定义测试函数
+        def double(x):
+            return x * 2
+
+        def add(a, b):
+            return a + b
+
+        # 使用 node.set_function 设置函数
+        node.set_function("double", double)
+        node.set_function("add", add)
+
+        # 验证函数已设置到 scope
+        assert scope.get_function("double") is double
+        assert scope.get_function("add") is add
+        # 也可以通过 node.functions 访问
+        assert node.functions["double"] is double
+        assert node.functions["add"] is add

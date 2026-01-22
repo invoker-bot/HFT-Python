@@ -56,6 +56,7 @@ class AppCore(Listener):
         │   └── [各交易所实例...]
         ├── IndicatorGroup           # 指标管理（Feature 0006/0007）
         │   └── [各指标实例...]
+        ├── ScopeManager             # Scope 管理器（Feature 0012）
         ├── StrategyGroup             # 策略组
         │   └── [各策略实例...]
         └── Executor                  # 交易执行器
@@ -100,9 +101,10 @@ class AppCore(Listener):
         # 注册配置中的 indicator factory
         self._register_indicator_factories()
 
-        # 3. Scope 管理器（Feature 0012）
+        # 3. Scope 管理器（Feature 0012）- 作为 Listener 挂载
         from ..scope.manager import ScopeManager
         self.scope_manager = ScopeManager()
+        self.add_child(self.scope_manager)
 
         # 4. 策略组
         self.strategy_group = StrategyGroup()

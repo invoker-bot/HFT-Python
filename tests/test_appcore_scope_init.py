@@ -23,7 +23,11 @@ class TestAppCoreScopeIntegration:
         # 验证关键方法存在
         assert hasattr(scope_manager, 'register_scope_class')
         assert hasattr(scope_manager, 'get_or_create')
-        assert hasattr(scope_manager, 'build_scope_tree')
+        assert hasattr(scope_manager, 'get')
+        assert hasattr(scope_manager, 'clear_cache')
+        assert hasattr(scope_manager, 'reset_all_ready_states')
         assert callable(scope_manager.register_scope_class)
         assert callable(scope_manager.get_or_create)
-        assert callable(scope_manager.build_scope_tree)
+        assert callable(scope_manager.get)
+        assert callable(scope_manager.clear_cache)
+        assert callable(scope_manager.reset_all_ready_states)

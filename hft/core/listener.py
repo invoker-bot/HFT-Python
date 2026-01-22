@@ -25,6 +25,7 @@ from typing import Optional, Coroutine, Iterator, TypeVar, Type
 from rich.console import Console
 from humanfriendly import format_timespan
 from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState, retry_if_not_exception_type
+from ..plugin import pm
 
 # 泛型类型变量，用于类型安全的查找方法
 T = TypeVar('T', bound='Listener')
@@ -78,10 +79,11 @@ class Listener(ABC):
     # - _alock: asyncio.Lock 不可序列化
     # - _class_index: 由 add_child 重建
     # - root: 缓存属性，由 parent 构建
-    __pickle_exclude__ = ("_parent", "_children", "_background_task", "_alock", "_class_index", "root")
+    __pickle_exclude__ = ("_parent", "_children", "_background_task", "_alock", "_class_index", "root", "depth")
 
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
+    disable_tick: bool = False  # 是否禁用 tick 回调，关闭以禁用定时任务，节约开销
 
     def __init__(self, name: Optional[str] = None, interval: Optional[float] = 1.0):
         """
@@ -99,9 +101,7 @@ class Listener(ABC):
         # Internal state
         self._enabled = True
         self._healthy = False
-        self._state = ListenerState.STOPPED  # Set initial state here (not in initialize)
         self.start_time = self.current_time
-        self._children: dict[str, 'Listener'] = {}
 
         self.initialize()
 
@@ -109,7 +109,7 @@ class Listener(ABC):
         self._parent: Optional[weakref.ReferenceType['Listener']] = None
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
-        # Note: _state is set in __init__, not here, to preserve state during pickle restore
+        self._state = ListenerState.STOPPED
         # 类索引: Type -> list[(weakref, depth)]
         # 只在根节点维护，用于快速按类查找子监听器
         self._class_index: dict[type, list[tuple[weakref.ReferenceType['Listener'], int]]] = defaultdict(list)
@@ -234,7 +234,7 @@ class Listener(ABC):
 
     async def __update_background_task_internal(self):
         # lazy_start 且未启动的 Listener 不应创建后台任务，需显式调用 start()
-        if self.lazy_start and self._state == ListenerState.STOPPED:
+        if self.disable_tick or (self.lazy_start and self._state == ListenerState.STOPPED):
             return
         if self.enabled:
             await self.__create_background_task_internal()
@@ -249,7 +249,7 @@ class Listener(ABC):
     def state(self) -> ListenerState:
         """获取当前状态"""
         return self._state
-    
+
     @state.setter
     def state(self, value: ListenerState):
         """设置当前状态"""
@@ -265,8 +265,8 @@ class Listener(ABC):
 
     def _clear_root_cache(self):
         """清除 root 缓存（在 parent 变化时调用）"""
-        if 'root' in self.__dict__:
-            del self.__dict__['root']
+        self.__dict__.pop("root", None)
+        self.__dict__.pop("depth", None)
         # 递归清除子节点的缓存
         for child in self._children.values():
             child._clear_root_cache()
@@ -326,19 +326,16 @@ class Listener(ABC):
     # 类索引相关方法
     # ============================================================
 
-    def _get_depth_from_root(self) -> int:
-        """
-        计算当前节点相对于根节点的深度
+    @cached_property
+    def depth(self) -> int:
+        """计算当前节点相对于根节点的深度
 
         Returns:
             深度值（根节点 = 0，直接子节点 = 1，孙节点 = 2，等等）
         """
-        depth = 0
-        node = self
-        while node.parent is not None:
-            depth += 1
-            node = node.parent
-        return depth
+        if self.parent is None:
+            return 0
+        return self.parent.depth + 1
 
     def _register_to_class_index(self, listener: 'Listener', relative_depth: int):
         """
@@ -352,7 +349,7 @@ class Listener(ABC):
         index = root._class_index
 
         # 计算相对于根节点的绝对深度
-        base_depth = self._get_depth_from_root()
+        base_depth = self.depth
         absolute_depth = base_depth + relative_depth
 
         # 注册该监听器本身（遍历其所有父类）
@@ -561,7 +558,7 @@ class Listener(ABC):
             # self.logger.info("Performing health check")
             # self.logger.info("Health check: running state is %s", self.state)
             async for attempt in AsyncRetrying(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS),
-                                               reraise=True, retry_error_callback=self.on_health_check_error, 
+                                               reraise=True, retry_error_callback=self.on_health_check_error,
                                                retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt))):
                 with attempt:
                     result = await self.on_health_check()
@@ -572,7 +569,6 @@ class Listener(ABC):
             self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
             # 插件钩子：健康检查失败
-            from ..plugin import pm
             pm.hook.on_health_check_failed(listener=self, error=e)
 
     @abstractmethod
@@ -584,7 +580,7 @@ class Listener(ABC):
             True 表示任务完成，将停止监听器；False 继续运行
         """
 
-    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True, 
+    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True,
            retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)))
     async def __tick_internal(self) -> bool:
         """
@@ -651,12 +647,14 @@ class Listener(ABC):
         """
         async with self._alock:
             self.enabled = True
-            if self.state == ListenerState.STOPPED:
-                self.state = ListenerState.STARTING
-            # interval=None 的 Listener 不创建 tick task，需要手动触发一次 tick
-            # 来完成 STARTING -> RUNNING 的状态转换（调用 on_start）
-            if self.interval is None:
-                await self.__tick_internal()
+            if not self.disable_tick:
+                if self.state == ListenerState.STOPPED:
+                    self.state = ListenerState.STARTING
+                # interval=None 的 Listener 不创建 tick task，需要手动触发一次 tick
+                # 来完成 STARTING -> RUNNING 的状态转换（调用 on_start）
+                if self.interval is None:
+                    await self.__tick_internal()
+
         if recursive:
             for child in list(self.children.values()):
                 # 跳过 lazy_start 的子节点，它们需要显式调用 start()
@@ -668,14 +666,7 @@ class Listener(ABC):
         """启动回调，子类可覆盖实现初始化逻辑"""
         self.logger.info("listener started")
         # 插件钩子：Listener 启动
-        from ..plugin import pm
         pm.hook.on_listener_start(listener=self)
-
-    # async def set_stop(self, recursive: bool = True):
-    #     self.enabled = False
-    #     if recursive:
-    #         for child in list(self.children.values()):
-    #             await child.set_stop(True)
 
     async def __stop_internal(self, recursive: bool = True):
         """stop() 的实际实现，被 shield 保护"""
@@ -685,6 +676,8 @@ class Listener(ABC):
             for child in list(self.children.values()):
                 await child.stop(True)
         self.enabled = False
+        if self.disable_tick:
+            return
         match self.state:
             case ListenerState.STARTING:
                 self.state = ListenerState.STOPPED
@@ -715,7 +708,6 @@ class Listener(ABC):
         """停止回调，子类可覆盖实现清理逻辑"""
         self.logger.info("listener stopped")
         # 插件钩子：Listener 停止
-        from ..plugin import pm
         pm.hook.on_listener_stop(listener=self)
 
     async def restart(self, recursive: bool = True):

@@ -54,7 +54,6 @@ def get_all_instance_ids(
     parent_scope: Optional["BaseScope"],
     parent_scope_class: Optional[type],
     scope_class: type,
-    **kwargs
 ) -> list[str]:
     """
     获取指定 Scope 类型的所有实例 ID
@@ -81,7 +80,7 @@ def get_all_instance_ids(
             f"({parent_scope_class.__name__ if parent_scope_class else 'None'}, {scope_class.__name__})"
         )
 
-    return func(app_core, parent_scope, **kwargs)
+    return func(app_core, parent_scope, scope_class)
 
 
 def has_instance_ids_provider(

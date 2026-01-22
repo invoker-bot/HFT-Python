@@ -57,6 +57,7 @@ class LinkedScopeNode:
         """设置父节点"""
         if value is None:
             self._parent = None
+            self.injected_vars['parent'] = None
         else:
             self._parent = weakref.ref(value)
             self.injected_vars['parent'] = value.current_chain_map
@@ -156,6 +157,26 @@ class LinkedScopeNode:
             chain.insert(0, current)
             current = current.parent
         return chain
+
+    def set_var(self, name: str, value: Any) -> None:
+        """
+        设置变量（委托给 scope）
+
+        Args:
+            name: 变量名
+            value: 变量值
+        """
+        self.scope.set_var(name, value)
+
+    def set_function(self, name: str, func: Any) -> None:
+        """
+        设置函数（委托给 scope）
+
+        Args:
+            name: 函数名
+            func: 函数对象
+        """
+        self.scope.set_function(name, func)
 
     def __repr__(self) -> str:
         """字符串表示"""
