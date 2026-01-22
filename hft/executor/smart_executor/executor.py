@@ -23,7 +23,7 @@ from ..base import BaseExecutor, ExecutionResult
 
 if TYPE_CHECKING:
     from .config import SmartExecutorConfig
-    from ...datasource.trades_datasource import TradeData
+    from ...indicator.datasource.trades_datasource import TradeData
     from ...exchange.base import BaseExchange
 
 

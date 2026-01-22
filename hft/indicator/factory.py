@@ -89,7 +89,7 @@ class IndicatorFactory:
             )
             # Feature 0013: MarketNeutralPositions 相关
             from .fair_price_indicator import FairPriceIndicator
-            from ..datasource.medal_amount_datasource import MedalAmountDataSource
+            from .datasource.medal_amount_datasource import MedalAmountDataSource
 
             cls._builtin_classes = {
                 # DataSource 类

@@ -94,7 +94,7 @@ class TestMedalAmountDataSource:
 
     def test_init(self):
         """测试初始化"""
-        from hft.datasource.medal_amount_datasource import MedalAmountDataSource
+        from hft.indicator.datasource.medal_amount_datasource import MedalAmountDataSource
 
         ds = MedalAmountDataSource(
             exchange_path="okx/main",
@@ -106,7 +106,7 @@ class TestMedalAmountDataSource:
 
     def test_calculate_vars_no_data(self):
         """测试无数据时的 calculate_vars"""
-        from hft.datasource.medal_amount_datasource import MedalAmountDataSource
+        from hft.indicator.datasource.medal_amount_datasource import MedalAmountDataSource
 
         ds = MedalAmountDataSource(
             exchange_path="okx/main"
@@ -118,7 +118,7 @@ class TestMedalAmountDataSource:
 
     def test_calculate_vars_with_data(self):
         """测试有数据时的 calculate_vars"""
-        from hft.datasource.medal_amount_datasource import (
+        from hft.indicator.datasource.medal_amount_datasource import (
             MedalAmountDataSource,
             AmountData
         )

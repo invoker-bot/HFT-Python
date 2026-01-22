@@ -5,17 +5,15 @@ MedalAmountDataSource - 账户余额数据源
 """
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, TYPE_CHECKING
-from ..indicator.base import BaseIndicator
+from typing import Optional, Dict, Any
 
-if TYPE_CHECKING:
-    from ..core.app.core import AppCore
+from ..base import BaseIndicator
 
 
 @dataclass
 class AmountData:
     """账户余额数据"""
-    amount: float  # 账户余额（币的数量）
+    amount: float  # 账户余额（USD 价值）
     timestamp: float
 
 
@@ -113,4 +111,3 @@ class MedalAmountDataSource(BaseIndicator[AmountData]):
         if latest is None:
             return {"amount": 0.0}
         return {"amount": latest.amount}
-
