@@ -12,26 +12,58 @@ import logging
 import pickle
 import threading
 from os import makedirs, path, replace
-from typing import Any, ClassVar, Dict, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional, Type, TypeVar
 from functools import cached_property
 from pydantic import BaseModel, ClickHouseDsn, Field
 from ...config.base import BaseConfig
 from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
                            StrategyConfigPath)
-from ..listener_cache import ListenerCache, get_or_create
-from .base import AppCore
+
+if TYPE_CHECKING:
+    from ..listener import Listener
+    from .base import AppCore
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar('T', bound='Listener')
 
-class CacheManager(ListenerCache):
+
+def build_cache_key(
+    listener_class: Type['Listener'],
+    name: str,
+    parent: Optional['Listener'] = None
+) -> str:
+    """
+    构建缓存键
+
+    格式："ClassName:name/parent_key"
+
+    Args:
+        listener_class: Listener 类
+        name: Listener 名称
+        parent: 父 Listener
+
+    Returns:
+        缓存键字符串
+    """
+    current = f"{listener_class.__name__}:{name}"
+    if parent is None:
+        return current
+
+    # 递归构建父路径
+    parent_key = build_cache_key(type(parent), parent.name, parent.parent)
+    return f"{current}/{parent_key}"
+
+
+class CacheManager:
     """
     缓存管理器
 
-    继承 ListenerCache，增加定期保存功能。
+    负责 Listener 实例的缓存、恢复和定期保存。
 
     特性：
-    - 继承 ListenerCache 的 get_or_create() 等方法
+    - get_or_create() 从缓存获取或创建 Listener 实例
+    - collect() 收集 Listener 树的状态
     - 守护线程定期保存缓存
     - AppCore 退出时同步保存
     - 使用 threading.RLock 保护写操作
@@ -48,13 +80,66 @@ class CacheManager(ListenerCache):
             interval: 保存间隔（秒）
             cache: 初始缓存字典（可选）
         """
-        super().__init__(cache)
+        self._cache: Dict[str, Dict[str, Any]] = cache if cache is not None else {}
         self.cache_file = cache_file
         self.interval = interval
         self._lock = threading.RLock()
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._app_core: Optional['AppCore'] = None
+
+    @property
+    def cache(self) -> Dict[str, Dict[str, Any]]:
+        """获取缓存字典"""
+        return self._cache
+
+    def get_or_create(
+        self,
+        listener_class: Type[T],
+        name: Optional[str] = None,
+        parent: Optional['Listener'] = None,
+        **kwargs
+    ) -> T:
+        """
+        从缓存获取或创建 Listener 实例
+
+        如果缓存中存在对应的状态，则创建实例并恢复状态；
+        否则创建新实例。
+
+        Args:
+            listener_class: Listener 类
+            name: Listener 名称（可选，默认使用类名）
+            parent: 父 Listener
+            **kwargs: 传递给构造函数的参数（仅在创建新实例时使用）
+
+        Returns:
+            Listener 实例
+        """
+        # 如果没有提供 name，使用类名作为默认值
+        if name is None:
+            name = listener_class.__name__
+
+        cache_key = build_cache_key(listener_class, name, parent)
+
+        if cache_key in self._cache:
+            # 从缓存恢复
+            state = self._cache[cache_key]
+            instance = listener_class.__new__(listener_class)
+            instance.__setstate__(state)
+        else:
+            # 创建新实例
+            # 如果构造函数接受 name 参数，则传递；否则不传递
+            try:
+                instance = listener_class(name=name, **kwargs)
+            except TypeError:
+                # 构造函数不接受 name 参数，尝试不传递 name
+                instance = listener_class(**kwargs)
+
+        # 建立父子关系
+        if parent is not None:
+            parent.add_child(instance)
+
+        return instance
 
     def start_daemon(self, app_core: 'AppCore'):
         """
@@ -137,6 +222,49 @@ class CacheManager(ListenerCache):
 
         # 原子重命名
         replace(temp_file, self.cache_file)
+
+    def collect(self, listener: 'Listener') -> Dict[str, Dict[str, Any]]:
+        """
+        递归收集 Listener 树的状态
+
+        Args:
+            listener: 根 Listener
+
+        Returns:
+            缓存字典 {cache_key: state_dict}
+        """
+        result: Dict[str, Dict[str, Any]] = {}
+        self._collect_recursive(listener, None, result)
+        return result
+
+    def _collect_recursive(
+        self,
+        listener: 'Listener',
+        parent: Optional['Listener'],
+        result: Dict[str, Dict[str, Any]]
+    ) -> None:
+        """
+        递归收集单个 Listener 及其子节点的状态
+
+        Args:
+            listener: 当前 Listener
+            parent: 父 Listener（用于构建 cache key）
+            result: 结果字典
+        """
+        # 构建缓存键
+        cache_key = build_cache_key(type(listener), listener.name, parent)
+
+        # 获取状态（不含 children）
+        state = listener.__getstate__()
+        result[cache_key] = state
+
+        # 递归收集子节点
+        for child in listener.children.values():
+            self._collect_recursive(child, listener, result)
+
+    def clear(self) -> None:
+        """清空缓存"""
+        self._cache.clear()
 
     @staticmethod
     def load_cache(cache_file: str) -> Dict[str, Dict[str, Any]]:
