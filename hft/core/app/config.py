@@ -28,33 +28,6 @@ logger = logging.getLogger(__name__)
 T = TypeVar('T', bound='Listener')
 
 
-def build_cache_key(
-    listener_class: Type['Listener'],
-    name: str,
-    parent: Optional['Listener'] = None
-) -> str:
-    """
-    构建缓存键
-
-    格式："ClassName:name/parent_key"
-
-    Args:
-        listener_class: Listener 类
-        name: Listener 名称
-        parent: 父 Listener
-
-    Returns:
-        缓存键字符串
-    """
-    current = f"{listener_class.__name__}:{name}"
-    if parent is None:
-        return current
-
-    # 递归构建父路径
-    parent_key = build_cache_key(type(parent), parent.name, parent.parent)
-    return f"{current}/{parent_key}"
-
-
 class CacheManager:
     """
     缓存管理器
@@ -69,6 +42,33 @@ class CacheManager:
     - 使用 threading.RLock 保护写操作
     - 原子写入（临时文件 + 重命名）
     """
+
+    @staticmethod
+    def build_cache_key(
+        listener_class: Type['Listener'],
+        name: str,
+        parent: Optional['Listener'] = None
+    ) -> str:
+        """
+        构建缓存键
+
+        格式："ClassName:name/parent_key"
+
+        Args:
+            listener_class: Listener 类
+            name: Listener 名称
+            parent: 父 Listener
+
+        Returns:
+            缓存键字符串
+        """
+        current = f"{listener_class.__name__}:{name}"
+        if parent is None:
+            return current
+
+        # 递归构建父路径
+        parent_key = CacheManager.build_cache_key(type(parent), parent.name, parent.parent)
+        return f"{current}/{parent_key}"
 
     def __init__(self, cache_file: str, interval: float = 300.0,
                  cache: Optional[Dict[str, Dict[str, Any]]] = None):
@@ -119,7 +119,7 @@ class CacheManager:
         if name is None:
             name = listener_class.__name__
 
-        cache_key = build_cache_key(listener_class, name, parent)
+        cache_key = self.build_cache_key(listener_class, name, parent)
 
         if cache_key in self._cache:
             # 从缓存恢复
@@ -252,7 +252,7 @@ class CacheManager:
             result: 结果字典
         """
         # 构建缓存键
-        cache_key = build_cache_key(type(listener), listener.name, parent)
+        cache_key = self.build_cache_key(type(listener), listener.name, parent)
 
         # 获取状态（不含 children）
         state = listener.__getstate__()
