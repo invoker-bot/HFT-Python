@@ -8,23 +8,22 @@
 - 可选持久化配置
 - 缓存管理（守护线程定期保存 + 退出时同步保存）
 """
-from os import path, makedirs, replace
 import logging
 import pickle
 import threading
-import time
-from typing import ClassVar, Type, Dict, Any, Optional, TYPE_CHECKING
-from pydantic import Field, ClickHouseDsn, BaseModel
+from os import makedirs, path, replace
+from typing import Any, ClassVar, Dict, Optional, Type
+
+from pydantic import BaseModel, ClickHouseDsn, Field
+
 from ...config.base import BaseConfig
-from ..listener_cache import ListenerCache
 from ..config_path import (
     ExchangeConfigPathGroup,
-    StrategyConfigPath,
     ExecutorConfigPath,
+    StrategyConfigPath,
 )
-
-if TYPE_CHECKING:
-    from .base import AppCore
+from ..listener_cache import ListenerCache, get_or_create
+from .base import AppCore
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +213,6 @@ class AppConfig(BaseConfig["AppCore"]):
     @classmethod
     def get_class_type(cls) -> Type["AppCore"]:
         """返回 AppCore 类型"""
-        from .base import AppCore
         return AppCore
 
     def create_instance(self) -> "AppCore":
@@ -227,9 +225,6 @@ class AppConfig(BaseConfig["AppCore"]):
         Returns:
             AppCore 实例
         """
-        from .base import AppCore
-        from ..listener_cache import get_or_create
-
         cache_dict = getattr(self, '_cache_dict', {})
 
         # 使用 get_or_create 恢复或创建 AppCore
@@ -297,15 +292,23 @@ class AppConfig(BaseConfig["AppCore"]):
     # Scope 配置（Feature 0012）
     scopes: dict[str, dict] = Field(
         default_factory=dict,
-        description="全局 Scope 配置，格式: {scope_class_id: {class_name: 类名, instance_id: 实例ID, vars: [...]}}"
+        description=(
+            "全局 Scope 配置，格式: "
+            "{scope_class_id: {class_name: 类名, instance_id: 实例ID, vars: [...]}}"
+        )
     )
 
     # 调试和测试
     debug: bool = Field(False, description="调试模式，验证流程而不实际下单")
-    max_duration: float | None = Field(None, description="最大运行时长（秒），None 表示无限运行直到策略退出")
+    max_duration: float | None = Field(
+        None, description="最大运行时长（秒），None 表示无限运行直到策略退出"
+    )
 
     # 通知配置
     notify_urls: list[str] = Field(
         default_factory=list,
-        description="Apprise 通知 URL 列表，支持 Telegram/Discord/Slack 等，参考 https://github.com/caronc/apprise"
+        description=(
+            "Apprise 通知 URL 列表，支持 Telegram/Discord/Slack 等，"
+            "参考 https://github.com/caronc/apprise"
+        )
     )

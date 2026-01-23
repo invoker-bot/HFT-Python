@@ -12,19 +12,28 @@
 - 类索引：按类快速查找子监听器（O(1) 查找）
 """
 # pylint: disable=import-outside-toplevel,protected-access
-import time
 import asyncio
 import logging
+import time
 import weakref
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
-from functools import cached_property
-from abc import ABC, abstractmethod
 from enum import StrEnum
+from functools import cached_property
 from typing import Optional, Coroutine, Iterator, TypeVar, Type
-from rich.console import Console
+
 from humanfriendly import format_timespan
-from tenacity import retry, stop_after_attempt, wait_fixed, AsyncRetrying, RetryCallState, retry_if_not_exception_type
+from rich.console import Console
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_fixed,
+    AsyncRetrying,
+    RetryCallState,
+    retry_if_not_exception_type,
+)
+
 from ..plugin import pm
 
 # 泛型类型变量，用于类型安全的查找方法
@@ -79,7 +88,15 @@ class Listener(ABC):
     # - _alock: asyncio.Lock 不可序列化
     # - _class_index: 由 add_child 重建
     # - root: 缓存属性，由 parent 构建
-    __pickle_exclude__ = ("_parent", "_children", "_background_task", "_alock", "_class_index", "root", "depth")
+    __pickle_exclude__ = (
+        "_parent",
+        "_children",
+        "_background_task",
+        "_alock",
+        "_class_index",
+        "root",
+        "depth",
+    )
 
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
@@ -96,7 +113,7 @@ class Listener(ABC):
         if name is None:
             name = f"{self.__class__.__name__}"
         self.name = name
-        self.interval: Optional[float] = interval  # None = 事件驱动，不创建 tick task
+        self._interval: Optional[float] = interval  # None = 事件驱动，不创建 tick task
 
         # Internal state
         self._enabled = True
@@ -105,15 +122,27 @@ class Listener(ABC):
 
         self.initialize()
 
-    def initialize(self):  # 这里面初始化不可序列化的对象
-        self._parent: Optional[weakref.ReferenceType['Listener']] = None
+    @property
+    def interval(self) -> Optional[float]:
+        """获取 tick 间隔（秒），None 表示事件驱动，不创建 tick task"""
+        return self._interval
+
+    @interval.setter
+    def interval(self, interval: Optional[float]):
+        self._interval = interval
+
+    def initialize(self):
+        """初始化不可序列化的对象（在 __init__ 和 unpickle 时调用）"""
+        self._parent: Optional[weakref.ReferenceType["Listener"]] = None
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
         self._state = ListenerState.STOPPED
         # 类索引: Type -> {depth: [weakref1, weakref2, ...]}
         # 只在根节点维护，用于快速按类查找子监听器
         # 优化：按深度分组，避免每次查找都排序
-        self._class_index: dict[type, dict[int, list[weakref.ReferenceType['Listener']]]] = defaultdict(lambda: defaultdict(list))
+        self._class_index: dict[
+            type, dict[int, list[weakref.ReferenceType["Listener"]]]
+        ] = defaultdict(lambda: defaultdict(list))
         # children 由 get_or_create 重建，不从 pickle 恢复
         self._children: dict[str, 'Listener'] = {}
 
@@ -178,8 +207,13 @@ class Listener(ABC):
         """将秒数转换为可读的时长字符串"""
         return format_timespan(seconds)
 
-    async def loop_coro_in_background(self, coro: Coroutine, interval: float = 0.001,
-                                      finalizer: Optional[Coroutine] = None, params: Optional[dict] = None):
+    async def loop_coro_in_background(
+        self,
+        coro: Coroutine,
+        interval: float = 0.001,
+        finalizer: Optional[Coroutine] = None,
+        params: Optional[dict] = None,
+    ):
         """
         在后台循环执行协程
 
@@ -215,6 +249,7 @@ class Listener(ABC):
             return
         bt = self._background_task
         if bt is None or bt.done():  # 没有任务或已完成
+            # pylint: disable=attribute-defined-outside-init
             self._background_task = asyncio.create_task(
                 self.loop_coro_in_background(self.tick, self.interval, self.stop),
                 name=f"{self.name}-background-task"
@@ -237,6 +272,7 @@ class Listener(ABC):
                     raise
                 # 否则是框架主动取消后台任务，正常结束
             finally:
+                # pylint: disable=attribute-defined-outside-init
                 self._background_task = None
 
     async def __update_background_task_internal(self):
@@ -249,6 +285,7 @@ class Listener(ABC):
             await self.__delete_background_task_internal()
 
     async def update_background_task(self):
+        """更新后台任务（重启 tick 循环）"""
         async with self._alock:
             await self.__update_background_task_internal()
 
@@ -314,6 +351,7 @@ class Listener(ABC):
         self._register_to_class_index(child, relative_depth=1)
 
     async def add_child_with_start(self, child: 'Listener'):
+        """添加子监听器并启动"""
         self.add_child(child)
         await child.start(True)
 
@@ -334,6 +372,7 @@ class Listener(ABC):
             self._children.pop(child_name, None)
 
     async def remove_child_with_end(self, child_name: str):
+        """移除子监听器并停止"""
         child = self._children.get(child_name, None)
         if child is not None:
             await child.stop(True)
@@ -661,9 +700,15 @@ class Listener(ABC):
         try:
             # self.logger.info("Performing health check")
             # self.logger.info("Health check: running state is %s", self.state)
-            async for attempt in AsyncRetrying(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS),
-                                               reraise=True, retry_error_callback=self.on_health_check_error,
-                                               retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt))):
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(RETRY_ATTEMPTS),
+                wait=wait_fixed(RETRY_WAIT_SECONDS),
+                reraise=True,
+                retry_error_callback=self.on_health_check_error,
+                retry=retry_if_not_exception_type(
+                    (asyncio.CancelledError, KeyboardInterrupt)
+                ),
+            ):
                 with attempt:
                     result = await self.on_health_check()
             if not result:
@@ -684,8 +729,12 @@ class Listener(ABC):
             True 表示任务完成，将停止监听器；False 继续运行
         """
 
-    @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), reraise=True,
-           retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)))
+    @retry(
+        stop=stop_after_attempt(RETRY_ATTEMPTS),
+        wait=wait_fixed(RETRY_WAIT_SECONDS),
+        reraise=True,
+        retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)),
+    )
     async def __tick_internal(self) -> bool:
         """
         内部 tick 实现（带重试机制）

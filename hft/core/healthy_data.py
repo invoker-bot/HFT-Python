@@ -142,8 +142,8 @@ class HealthyData(Generic[T]):
     @property
     def age(self) -> float:
         """数据年龄（秒）"""
-        if self._timestamp == 0:
-            return float('inf')
+        # if self._timestamp == 0:
+        #     return float('inf')
         return time.time() - self._timestamp
 
     @property
@@ -253,12 +253,12 @@ class HealthyDataWithFallback(HealthyData[T]):
             return False
 
 
-def _default_is_duplicate(x: Any, y: Any) -> bool:
+def _default_is_duplicate(_x: Any, _y: Any) -> bool:
     """默认去重函数：同时间戳视为重复（可 pickle）"""
     return True
 
 
-def _never_duplicate(x: Any, y: Any) -> bool:
+def _never_duplicate(_x: Any, _y: Any) -> bool:
     """永不去重函数：用于事件类数据如 Trades（可 pickle）"""
     return False
 
@@ -290,7 +290,9 @@ class HealthyDataArray(Generic[T]):
         """
         self._max_seconds = max_seconds
         self._duplicate_tolerance = duplicate_tolerance
-        self._is_duplicate_fn = is_duplicate_fn if is_duplicate_fn is not None else _default_is_duplicate
+        self._is_duplicate_fn = (
+            is_duplicate_fn if is_duplicate_fn is not None else _default_is_duplicate
+        )
         self._data: list[tuple[float, T]] = []
 
     def append(self, timestamp: float, value: T) -> None:

@@ -5,12 +5,14 @@ ConfigPath - 配置路径系统
 """
 # pylint: disable=import-outside-toplevel
 import os
-import yaml
-from typing import ClassVar, Any
 from functools import cached_property, lru_cache
 from pathlib import Path
+from typing import Any, ClassVar
+
+import yaml
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
+
 from ..config.base import BaseConfig
 
 
@@ -39,8 +41,8 @@ class BaseConfigPath:
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
-        source_type: Any,
-        handler: GetCoreSchemaHandler,
+        _source_type: Any,
+        _handler: GetCoreSchemaHandler,
     ) -> core_schema.CoreSchema:
         """
         Pydantic v2 验证器
@@ -197,8 +199,8 @@ class ExchangeConfigPathGroup:
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
-        source_type: Any,
-        handler: GetCoreSchemaHandler,
+        _source_type: Any,
+        _handler: GetCoreSchemaHandler,
     ) -> core_schema.CoreSchema:
         """
         Pydantic v2 验证器

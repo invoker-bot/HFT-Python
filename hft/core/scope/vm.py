@@ -5,10 +5,17 @@ VirtualMachine - 表达式求值引擎
 """
 import time
 from typing import Union, Any, Optional, TYPE_CHECKING
-from simpleeval import EvalWithCompoundTypes, DEFAULT_FUNCTIONS, DEFAULT_OPERATORS, DEFAULT_NAMES
+
+from simpleeval import (
+    EvalWithCompoundTypes,
+    DEFAULT_FUNCTIONS,
+    DEFAULT_OPERATORS,
+    DEFAULT_NAMES,
+)
+
+from .tree import LinkedScopeNode
 
 if TYPE_CHECKING:
-    from .tree import LinkedScopeNode
     from .base import BaseScope
 
 
@@ -33,7 +40,9 @@ class VirtualMachine:
         # 默认操作符（使用 simpleeval 的默认配置）
         self.operators = DEFAULT_OPERATORS.copy()
         self.names = DEFAULT_NAMES.copy()
-        self.evaler = EvalWithCompoundTypes(operators=self.operators, functions=self.functions, names=self.names)
+        self.evaler = EvalWithCompoundTypes(
+            operators=self.operators, functions=self.functions, names=self.names
+        )
 
     def eval(
         self,
@@ -121,7 +130,6 @@ class VirtualMachine:
             ], scope)
         """
         # 获取实际的 BaseScope 对象
-        from .tree import LinkedScopeNode
         target_scope = scope.scope if isinstance(scope, LinkedScopeNode) else scope
 
         # 标准化为 list[dict] 格式
