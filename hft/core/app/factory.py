@@ -263,17 +263,30 @@ class AppFactory:
         """清空缓存"""
         self._cache.clear()
 
-    def load_cache(self) -> Dict[str, Dict[str, Any]]:
+    @staticmethod
+    def load_cache_from_file(cache_file: str) -> Dict[str, Dict[str, Any]]:
         """
-        从缓存文件加载状态字典
+        从缓存文件加载状态字典（静态方法）
+
+        Args:
+            cache_file: 缓存文件路径
 
         Returns:
             缓存字典 {cache_key: state_dict}
         """
         try:
-            with open(self.cache_file, 'rb') as f:
+            with open(cache_file, 'rb') as f:
                 cache_dict = pickle.load(f)
-            self._cache = cache_dict
+            return cache_dict
         except FileNotFoundError:  # 文件不存在，返回空字典
-            self._cache = {}
+            return {}
+
+    def load_cache(self) -> Dict[str, Dict[str, Any]]:
+        """
+        从缓存文件加载状态字典（实例方法）
+
+        Returns:
+            缓存字典 {cache_key: state_dict}
+        """
+        self._cache = self.load_cache_from_file(self.cache_file)
         return self._cache

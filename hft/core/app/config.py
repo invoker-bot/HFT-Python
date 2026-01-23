@@ -111,14 +111,10 @@ class AppConfig(BaseConfig["AppCore"]):
         data_path = path.join(cls.data_dir, f"{app}.pkl")
         if restore_cache and path.exists(data_path):
             try:
-                cache_dict = AppFactory.load_cache(data_path)
+                cache_dict = AppFactory.load_cache_from_file(data_path)
                 logger.info("Loaded cache from %s (%d listeners)", data_path, len(cache_dict))
                 # 直接创建 AppFactory 并传入缓存字典，覆盖 @cached_property
-                config.cache_manager = AppFactory(
-                    cache_file=data_path,
-                    interval=config.cache_interval,
-                    cache=cache_dict
-                )
+                config.cache_manager = AppFactory(cache_file=data_path)
             except Exception as e:
                 logger.warning("Failed to load cache from %s: %s", data_path, e)
 
