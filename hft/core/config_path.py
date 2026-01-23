@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 import yaml
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
+from younotyou import Matcher
 
 from ..config.base import BaseConfig
 
@@ -241,8 +242,6 @@ class ExchangeConfigPathGroup:
         Returns:
             匹配的配置 ID 集合
         """
-        from younotyou import Matcher
-
         # 获取所有可用的配置 ID
         all_ids = set(_scan_exchange_config_ids())
 
@@ -371,8 +370,6 @@ class ExchangeConfigPathGroup:
         Returns:
             过滤后的 ID 集合
         """
-        from younotyou import Matcher
-
         # 规则 1: 空列表等价于 ["*"]
         if not selectors:
             return all_ids

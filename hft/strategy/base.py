@@ -27,7 +27,10 @@ Feature 0008: Strategy 数据驱动增强
 # pylint: disable=import-outside-toplevel,protected-access
 import time
 from abc import abstractmethod
+from collections import deque
 from typing import TYPE_CHECKING, Any, Optional, Union
+
+from younotyou import Matcher
 
 from ..core.listener import Listener
 from .config import BaseStrategyConfig
@@ -301,8 +304,6 @@ class BaseStrategy(Listener):
         Returns:
             符合过滤条件的交易对列表
         """
-        from younotyou import Matcher
-
         # 获取所有可用的交易对（从所有 exchange 收集）
         all_symbols = set()
         if self.root is not None and hasattr(self.root, 'exchange_group'):
@@ -740,7 +741,6 @@ class BaseStrategy(Listener):
         Returns:
             是否匹配
         """
-        from younotyou import Matcher
         matcher = Matcher(include_patterns=[pattern])
         return value in matcher
 
@@ -987,8 +987,6 @@ class BaseStrategy(Listener):
         Returns:
             广度优先顺序的节点列表
         """
-        from collections import deque
-
         result = []
         visited = set()
         queue = deque(root_nodes)
