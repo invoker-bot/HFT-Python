@@ -9,9 +9,11 @@ import threading
 from os import makedirs, path, replace
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, TypeVar
 
+from .base import AppCore
+from .config import AppConfig
+
 if TYPE_CHECKING:
     from ..listener import Listener
-    from .base import AppCore
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +68,6 @@ class AppFactory:
             app_name: 应用名称（如 "main"）
             restore_cache: 是否从缓存恢复状态
         """
-        from .config import AppConfig
-
         self.app_name = app_name
         self.restore_cache = restore_cache
 
@@ -105,8 +105,6 @@ class AppFactory:
         Returns:
             AppCore 实例
         """
-        from .base import AppCore
-
         app_core = self.get_or_create(
             AppCore,
             name="AppCore",
