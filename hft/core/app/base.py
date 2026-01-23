@@ -62,7 +62,7 @@ class AppCore(Listener):
         └── Executor                  # 交易执行器
 
     缓存管理：
-        - CacheManager（守护线程）：定期保存 Listener 状态到磁盘
+        - AppFactory（守护线程）：定期保存 Listener 状态到磁盘
         - 退出时同步保存，确保数据不丢失
 
     数据流（轮询模式）：
