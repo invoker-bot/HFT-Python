@@ -3,11 +3,12 @@ ScopeManager - Scope 实例管理器
 
 负责 Scope 实例的创建、缓存和管理。
 """
-from typing import Dict, Tuple, Optional, Type, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Type
+
 from ..listener import Listener
 from .base import BaseScope
-from .tree import LinkedScopeNode, LinkedScopeTree
 from .instance_ids import get_all_instance_ids
+from .tree import LinkedScopeNode, LinkedScopeTree
 
 if TYPE_CHECKING:
     from ...core.app.base import AppCore

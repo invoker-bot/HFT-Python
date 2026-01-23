@@ -8,9 +8,9 @@ BaseExecutorConfig 提供执行器通用配置字段：
 - condition: 执行条件表达式
 - vars: 变量列表（Feature 0010，支持条件变量）
 """
-from typing import ClassVar, Type, Optional, Any, Union
+from typing import Any, ClassVar, Optional, Type, Union
 
-from pydantic import Field, BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from ..config.base import BaseConfig
 from .base import BaseExecutor

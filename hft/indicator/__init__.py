@@ -24,55 +24,25 @@ Feature 0005: Executor 动态条件与变量注入机制
 兼容类（待迁移）：
 - LazyIndicator: 挂载到 TradingPairDataSource，轮询计算
 """
-from .base import (
-    BaseIndicator,
-    GlobalIndicator,
-    BaseDataSource,
-    DEFAULT_EXPIRE_SECONDS,
-    GLOBAL_EXPIRE_SECONDS,
-)
-from .group import (
-    IndicatorGroup,
-    TradingPairIndicators,
-    GlobalIndicators,
-)
-# Feature 0006: DataSource classes
-from .datasource import (
-    TickerDataSource,
-    TickerData,
-    TradesDataSource,
-    TradeData,
-    OrderBookDataSource,
-    OrderBookData,
-    OrderBookLevel,
-    OHLCVDataSource,
-    CandleData,
-)
+from .base import (DEFAULT_EXPIRE_SECONDS, GLOBAL_EXPIRE_SECONDS,
+                   BaseDataSource, BaseIndicator, GlobalIndicator)
 # Feature 0005: Computed indicators
-from .computed import (
-    MidPriceIndicator as ComputedMidPriceIndicator,
-    MedalEdgeIndicator,
-    VolumeIndicator,
-    RSIIndicator,
-)
+from .computed import MedalEdgeIndicator
+from .computed import MidPriceIndicator as ComputedMidPriceIndicator
+from .computed import RSIIndicator, VolumeIndicator
+# Feature 0006: DataSource classes
+from .datasource import (CandleData, OHLCVDataSource, OrderBookData,
+                         OrderBookDataSource, OrderBookLevel, TickerData,
+                         TickerDataSource, TradeData, TradesDataSource)
+from .group import GlobalIndicators, IndicatorGroup, TradingPairIndicators
+from .intensity_indicator import (IntensityResult, TradeIntensityCalculator,
+                                  TradeIntensityIndicator)
 # Legacy lazy indicators
-from .lazy_indicator import (
-    LazyIndicator,
-    VWAPIndicator,
-    SpreadIndicator,
-    MidPriceIndicator,  # Legacy version
-)
-from .intensity_indicator import (
-    IntensityResult,
-    TradeIntensityCalculator,
-    TradeIntensityIndicator,
-)
-from .persist import (
-    DataListener,
-    ExchangeFundingRateBillListener,
-    ExchangeBalanceUsdListener,
-    FundingRatePersistListener,
-)
+from .lazy_indicator import MidPriceIndicator  # Legacy version
+from .lazy_indicator import LazyIndicator, SpreadIndicator, VWAPIndicator
+from .persist import (DataListener, ExchangeBalanceUsdListener,
+                      ExchangeFundingRateBillListener,
+                      FundingRatePersistListener)
 
 __all__ = [
     # Feature 0006 core classes

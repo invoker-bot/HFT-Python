@@ -5,8 +5,10 @@ Feature 0008: Strategy 数据驱动增强
 - 支持 requires 依赖声明
 - 支持 vars / conditional_vars 变量计算
 """
-from typing import ClassVar, Type, Any, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type, Union
+
 from pydantic import BaseModel, Field, model_validator
+
 from ..config.base import BaseConfig
 
 if TYPE_CHECKING:

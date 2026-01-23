@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 
 from ..base import BaseExecutor, ExecutionResult, OrderIntent
-from ..intensity import TradeIntensityCalculator, IntensityResult
+from ..intensity import IntensityResult, TradeIntensityCalculator
 
 if TYPE_CHECKING:
     from ...exchange.base import BaseExchange

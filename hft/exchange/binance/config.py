@@ -3,10 +3,13 @@ Binance 交易所配置
 """
 from functools import cached_property
 from typing import ClassVar, Type
+
+from ccxt.pro import Exchange as CCXTExchange
+from ccxt.pro import binance
 from pydantic import Field
-from ccxt.pro import binance, Exchange as CCXTExchange
-from ..config import BaseExchangeConfig
+
 from ...config.crypto import SecretStrAnnotated
+from ..config import BaseExchangeConfig
 from .base import BinanceExchange
 
 

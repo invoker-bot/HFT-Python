@@ -1,11 +1,5 @@
-from .spread import (
-    ASSpread,
-    BaseSpread,
-    DynamicSpread,
-    FixedSpread,
-    SpreadResult,
-    StdSpread,
-)
+from .spread import (ASSpread, BaseSpread, DynamicSpread, FixedSpread,
+                     SpreadResult, StdSpread)
 
 __all__ = [
     "SpreadResult",

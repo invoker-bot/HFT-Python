@@ -15,16 +15,16 @@ SmartExecutor - 智能路由执行器
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Any, Optional
 
-from simpleeval import simple_eval, NameNotDefined
+from simpleeval import NameNotDefined, simple_eval
 
 from ..base import BaseExecutor, ExecutionResult
 
 if TYPE_CHECKING:
-    from .config import SmartExecutorConfig
-    from ...indicator.datasource.trades_datasource import TradeData
     from ...exchange.base import BaseExchange
+    from ...indicator.datasource.trades_datasource import TradeData
+    from .config import SmartExecutorConfig
 
 
 @dataclass

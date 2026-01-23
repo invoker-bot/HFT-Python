@@ -10,24 +10,30 @@
 - WebSocket 订阅
 - 状态持久化
 """
-import time
 import asyncio
-from abc import abstractmethod, ABCMeta
-from enum import StrEnum
+import time
+from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, ClassVar, TYPE_CHECKING
-from cachetools import cached, TTLCache
-from pyee.asyncio import AsyncIOEventEmitter
-from ccxt.pro import Exchange as CCXTExchange
-from ccxt.base.types import OrderRequest, Order, Ticker, OrderBook, Trade, Position
+from enum import StrEnum
+from typing import TYPE_CHECKING, ClassVar, Optional
+
+from cachetools import TTLCache, cached
 from ccxt.base.errors import InvalidOrder
-from ..core.listener import Listener
+from ccxt.base.types import (Order, OrderBook, OrderRequest, Position, Ticker,
+                             Trade)
+from ccxt.pro import Exchange as CCXTExchange
+from pyee.asyncio import AsyncIOEventEmitter
+
 from ..core.healthy_data import HealthyDataWithFallback
+from ..core.listener import Listener
+from ..indicator.persist import (ExchangeBalanceUsdListener,
+                                 ExchangeFundingRateBillListener)
 from ..plugin import pm
-from ..indicator.persist import ExchangeFundingRateBillListener, ExchangeBalanceUsdListener
-from .listeners import ExchangeOrderBillListener, ExchangePositionListener, ExchangeBalanceListener, ExchangeCurrenciesListener
+from .listeners import (ExchangeBalanceListener, ExchangeCurrenciesListener,
+                        ExchangeOrderBillListener, ExchangePositionListener)
 from .utils import round_to_precision
+
 if TYPE_CHECKING:
     from .config import BaseExchangeConfig
 

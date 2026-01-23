@@ -12,12 +12,9 @@ Feature 0006: Indicator 与 DataSource 统一架构
 - ExchangeBalanceUsdListener: 账户余额快照采集
 - FundingRatePersistListener: 资金费率快照持久化
 """
-from .listeners import (
-    DataListener,
-    ExchangeFundingRateBillListener,
-    ExchangeBalanceUsdListener,
-    FundingRatePersistListener,
-)
+from .listeners import (DataListener, ExchangeBalanceUsdListener,
+                        ExchangeFundingRateBillListener,
+                        FundingRatePersistListener)
 
 __all__ = [
     "DataListener",

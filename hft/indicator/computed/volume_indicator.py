@@ -7,12 +7,12 @@ Issue 0005: 使用 volume_notional 避免与内置 notional 冲突
 """
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..base import BaseIndicator
 
 if TYPE_CHECKING:
-    from ..datasource.trades_datasource import TradesDataSource, TradeData
+    from ..datasource.trades_datasource import TradeData, TradesDataSource
 
 
 @dataclass

@@ -12,12 +12,10 @@ TradeIntensityCalculator - 交易强度计算器
 """
 
 # 向后兼容：从 indicator 模块重新导出
-from ..indicator.intensity_indicator import (
-    IntensityResult,
-    TradeIntensityCalculator,
-    TradeIntensityIndicator,
-    _get_trade_attr,
-)
+from ..indicator.intensity_indicator import (IntensityResult,
+                                             TradeIntensityCalculator,
+                                             TradeIntensityIndicator,
+                                             _get_trade_attr)
 
 __all__ = [
     "IntensityResult",

@@ -24,9 +24,9 @@ Feature 0008: Strategy 数据驱动增强 - Indicator 层级体系
 """
 import asyncio
 from collections import defaultdict
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from ..core.listener import Listener, GroupListener, ListenerState
+from ..core.listener import GroupListener, Listener, ListenerState
 from .base import BaseIndicator, GlobalIndicator
 
 if TYPE_CHECKING:

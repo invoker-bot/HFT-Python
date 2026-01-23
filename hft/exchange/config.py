@@ -3,9 +3,11 @@
 """
 import os
 from functools import cached_property
-from typing import Optional, ClassVar, Type, Union, Literal
-from pydantic import BaseModel, Field, AnyUrl, field_validator
+from typing import ClassVar, Literal, Optional, Type, Union
+
 from ccxt.pro import Exchange as CCXTExchange
+from pydantic import AnyUrl, BaseModel, Field, field_validator
+
 from ..config.base import BaseConfig
 from .base import BaseExchange, TradeType
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hft.core.healthy_data import _never_duplicate
+
 from ..base import BaseDataSource
 
 

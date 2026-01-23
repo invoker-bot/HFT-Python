@@ -1,12 +1,13 @@
 import asyncio
 import traceback
+
 import typer
 from rich.table import Table
-from .config import console
+
 from ..core.app.config import AppConfig
 from ..exchange import BaseExchangeConfig
 from ..test.exchange import test_exchange_async
-
+from .config import console
 
 app = typer.Typer()
 test_group = typer.Typer(help="Test commands")

@@ -23,17 +23,18 @@ Issue 0013: Strategy 数据驱动增强（单策略标量化）
 """
 # pylint: disable=import-outside-toplevel,protected-access
 from abc import abstractmethod
-from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING, Any
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Optional
+
 from ..core.listener import Listener
 from ..plugin import pm
 
 if TYPE_CHECKING:
-    from ..exchange.group import ExchangeGroup
     from ..exchange.base import BaseExchange
-    from ..strategy.group import StrategyGroup, AggregatedTargets
+    from ..exchange.group import ExchangeGroup
+    from ..strategy.group import AggregatedTargets, StrategyGroup
     from .config import BaseExecutorConfig
 
 
@@ -902,7 +903,7 @@ class BaseExecutor(Listener):
 
     def _safe_eval(self, expr: str, context: dict[str, Any]) -> Any:
         """安全求值表达式"""
-        from simpleeval import EvalWithCompoundTypes, DEFAULT_OPERATORS
+        from simpleeval import DEFAULT_OPERATORS, EvalWithCompoundTypes
 
         # 辅助函数
         def avg(values):

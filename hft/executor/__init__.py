@@ -12,21 +12,11 @@ Executor 执行器模块
         -> 计算当前仓位与目标的差值
         -> 差值超过 per_order_usd 时执行交易
 """
-from .base import (
-    ExecutorState,
-    ExecutionResult,
-    BaseExecutor,
-)
+from .base import BaseExecutor, ExecutionResult, ExecutorState
 from .market_executor import MarketExecutor
 from .smart_executor import SmartExecutor
-from .spread_executor import (
-    SpreadResult,
-    BaseSpread,
-    FixedSpread,
-    StdSpread,
-    ASSpread,
-    DynamicSpread,
-)
+from .spread_executor import (ASSpread, BaseSpread, DynamicSpread, FixedSpread,
+                              SpreadResult, StdSpread)
 
 __all__ = [
     # base

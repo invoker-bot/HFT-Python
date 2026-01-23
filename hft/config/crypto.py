@@ -8,11 +8,11 @@
 """
 import base64
 from typing import Annotated
-from pydantic import SecretStr, PlainSerializer, PlainValidator
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.fernet import Fernet
 
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from pydantic import PlainSerializer, PlainValidator, SecretStr
 
 # 固定盐值，用于密钥派生
 salt = b"326f74b7-b013-447b-b320-ce769ec0f4e8"

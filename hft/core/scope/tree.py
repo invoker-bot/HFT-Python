@@ -7,9 +7,10 @@ LinkedScopeTree - Scope 树形结构
 - LinkedScopeTree: 管理整个树，提供树操作方法
 """
 import weakref
-from typing import Optional, Any
-from functools import cached_property
 from collections import ChainMap
+from functools import cached_property
+from typing import Any, Optional
+
 from .base import BaseScope
 
 

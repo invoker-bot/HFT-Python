@@ -4,8 +4,8 @@ RSI 相对强弱指标
 Feature 0005: Executor 动态条件与变量注入机制
 Feature 0006: 计算类 Indicator 支持 requires 标记
 """
-from typing import Any, Optional, TYPE_CHECKING
 import time
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 

@@ -16,9 +16,11 @@ ExchangeGroup 按交易所类型（class_name）组织多账户：
                             -> 返回该类型所有账户
                             -> 依次在所有账户执行（老鼠仓模式）
 """
-from typing import TYPE_CHECKING, Optional
 from collections import defaultdict
+from typing import TYPE_CHECKING, Optional
+
 from cryptography.fernet import InvalidToken
+
 from ..core.listener import Listener, ListenerState
 from .base import BaseExchange
 

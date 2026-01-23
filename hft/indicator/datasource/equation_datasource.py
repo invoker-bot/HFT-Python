@@ -13,7 +13,7 @@ MedalEquationDataSource 是 ExchangePath 级别的 Indicator，
 """
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..base import BaseIndicator
 

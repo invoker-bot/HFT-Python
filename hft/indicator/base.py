@@ -23,16 +23,17 @@ calculate_vars 用途：
 - 供 Strategy 决策使用
 - 不用于 ready_condition 求值
 """
+import asyncio
 import re
 import time
-import asyncio
 from abc import abstractmethod
-from typing import Optional, Any, Generic, TypeVar, Callable, TYPE_CHECKING, Union
+from typing import (TYPE_CHECKING, Any, Callable, Generic, Optional, TypeVar,
+                    Union)
 
 from pyee.asyncio import AsyncIOEventEmitter
 
-from ..core.listener import Listener
 from ..core.healthy_data import HealthyDataArray
+from ..core.listener import Listener
 
 if TYPE_CHECKING:
     from ..core.app.core import AppCore
@@ -297,7 +298,7 @@ class BaseIndicator(Listener, Generic[T]):
         使用 simpleeval 库，显式限制可用的函数和操作符。
         只允许：比较运算、逻辑运算、基本算术运算。
         """
-        from simpleeval import EvalWithCompoundTypes, DEFAULT_OPERATORS
+        from simpleeval import DEFAULT_OPERATORS, EvalWithCompoundTypes
 
         # 创建受限的求值器
         evaluator = EvalWithCompoundTypes(

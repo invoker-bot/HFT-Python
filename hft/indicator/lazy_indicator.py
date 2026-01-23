@@ -31,13 +31,13 @@ Lazy Start 指标模块
 """
 import time
 from abc import abstractmethod
-from typing import Optional, Generic, TypeVar, TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Generic, Optional, TypeVar
 
 from ..core.listener import Listener
 
 if TYPE_CHECKING:
-    from .group import IndicatorGroup
     from .base import BaseIndicator as NewBaseIndicator
+    from .group import IndicatorGroup
 
 
 T = TypeVar('T')  # 指标值类型

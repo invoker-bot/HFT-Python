@@ -4,14 +4,10 @@ VirtualMachine - 表达式求值引擎
 基于 simpleeval 实现安全的表达式求值。
 """
 import time
-from typing import Union, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, Union
 
-from simpleeval import (
-    EvalWithCompoundTypes,
-    DEFAULT_FUNCTIONS,
-    DEFAULT_OPERATORS,
-    DEFAULT_NAMES,
-)
+from simpleeval import (DEFAULT_FUNCTIONS, DEFAULT_NAMES, DEFAULT_OPERATORS,
+                        EvalWithCompoundTypes)
 
 from .tree import LinkedScopeNode
 

@@ -5,7 +5,8 @@
 Feature 0013: MarketNeutralPositions 策略
 """
 import time
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
 from .base import BaseIndicator
 
 if TYPE_CHECKING:

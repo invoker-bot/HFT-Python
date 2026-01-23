@@ -11,22 +11,14 @@
 - PCAExecutorConfig: PCA 执行器配置
 - SmartExecutorConfig: 智能路由执行器配置
 """
-from .base_config import (
-    BaseExecutorConfig,
-    ExecutorVarDefinition,
-)
-from .order_config import (
-    OrderVarDefinition,
-    OrderConditionalVarDefinition,
-    OrderDefinition,
-    EntryExitOrderDefinition,
-)
 from .avellaneda_stoikov_executor.config import (
-    ASOrderLevel,
-    AvellanedaStoikovExecutorConfig,
-)
+    ASOrderLevel, AvellanedaStoikovExecutorConfig)
+from .base_config import BaseExecutorConfig, ExecutorVarDefinition
 from .limit_executor.config import LimitExecutorConfig, LimitOrderLevel
 from .market_executor.config import MarketExecutorConfig
+from .order_config import (EntryExitOrderDefinition,
+                           OrderConditionalVarDefinition, OrderDefinition,
+                           OrderVarDefinition)
 from .pca_executor.config import PCAExecutorConfig
 from .smart_executor.config import SmartExecutorConfig
 

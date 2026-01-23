@@ -6,7 +6,8 @@ Listener 缓存管理模块
 - ListenerCache: 收集和管理 Listener 状态缓存
 """
 # pylint: disable=import-outside-toplevel,protected-access
-from typing import Type, Optional, TypeVar, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, TypeVar
+
 if TYPE_CHECKING:
     from .listener import Listener
 

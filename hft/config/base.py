@@ -6,19 +6,20 @@
 - YAML 文件读写
 - 配置类的自动发现和注册
 """
+import inspect
 import os
 import textwrap
-import inspect
 from abc import abstractmethod
 from glob import glob
-from os import path, makedirs
-from typing import ClassVar, Self, Optional, Union, Generic, TypeVar, Type
+from os import makedirs, path
+from typing import ClassVar, Generic, Optional, Self, Type, TypeVar, Union
+
 import yaml
 from prompt_toolkit import prompt
-from prompt_toolkit.validation import Validator
 from prompt_toolkit.completion import WordCompleter
-from pydantic import BaseModel, Field, PrivateAttr
+from prompt_toolkit.validation import Validator
 from promptantic import ModelGenerator
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 def prompt_with_completion(message: str, choices: list[str], multiple: bool = False, default: Union[str, list[str]] = "") -> Union[str, list[str]]:

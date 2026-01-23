@@ -3,8 +3,10 @@ OKX 交易所实现
 """
 import logging
 from typing import ClassVar
+
 from cachetools import TTLCache
 from cachetools_async import cached
+
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
 logger = logging.getLogger(__name__)

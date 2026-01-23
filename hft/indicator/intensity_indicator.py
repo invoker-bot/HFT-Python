@@ -22,7 +22,7 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Optional, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 

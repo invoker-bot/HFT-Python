@@ -2,10 +2,12 @@
 OKX 交易所配置
 """
 from typing import ClassVar, Type
-from pydantic import Field
+
 from ccxt.pro import okx
-from ..config import BaseExchangeConfig
+from pydantic import Field
+
 from ...config.crypto import SecretStrAnnotated
+from ..config import BaseExchangeConfig
 from .base import OKXExchange
 
 

@@ -3,13 +3,13 @@ SmartExecutor 配置模块
 """
 # pylint: disable=import-outside-toplevel
 from functools import cached_property
-from typing import ClassVar, Type, Optional
+from typing import ClassVar, Optional, Type
 
 from pydantic import BaseModel, Field
 
-from ..base_config import BaseExecutorConfig
-from ..base import BaseExecutor
 from ...core.config_path import ExecutorConfigPath
+from ..base import BaseExecutor
+from ..base_config import BaseExecutorConfig
 
 
 class RouteConfig(BaseModel):

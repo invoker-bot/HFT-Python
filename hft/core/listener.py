@@ -21,18 +21,13 @@ from collections import defaultdict
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property
-from typing import Optional, Coroutine, Iterator, TypeVar, Type
+from typing import Coroutine, Iterator, Optional, Type, TypeVar
 
 from humanfriendly import format_timespan
 from rich.console import Console
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_fixed,
-    AsyncRetrying,
-    RetryCallState,
-    retry_if_not_exception_type,
-)
+from tenacity import (AsyncRetrying, RetryCallState, retry,
+                      retry_if_not_exception_type, stop_after_attempt,
+                      wait_fixed)
 
 from ..plugin import pm
 

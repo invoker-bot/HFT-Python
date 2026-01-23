@@ -10,8 +10,8 @@ Issue 0015: 支持 window duration 字符串
 import logging
 from typing import Any, Optional
 
-from .base import BaseIndicator
 from ..core.duration import parse_duration
+from .base import BaseIndicator
 
 logger = logging.getLogger(__name__)
 
@@ -72,24 +72,17 @@ class IndicatorFactory:
     def _get_builtin_classes(cls) -> dict[str, type[BaseIndicator]]:
         """延迟加载内置类映射"""
         if not cls._builtin_classes:
-            from .datasource import (
-                TickerDataSource,
-                TradesDataSource,
-                OrderBookDataSource,
-                OHLCVDataSource,
-                GlobalFundingRateIndicator,
-                FundingRateIndicator,
-                MedalEquationDataSource,
-            )
-            from .computed import (
-                MidPriceIndicator,
-                MedalEdgeIndicator,
-                VolumeIndicator,
-                RSIIndicator,
-            )
+            from .computed import (MedalEdgeIndicator, MidPriceIndicator,
+                                   RSIIndicator, VolumeIndicator)
+            from .datasource import (FundingRateIndicator,
+                                     GlobalFundingRateIndicator,
+                                     MedalEquationDataSource, OHLCVDataSource,
+                                     OrderBookDataSource, TickerDataSource,
+                                     TradesDataSource)
+            from .datasource.medal_amount_datasource import \
+                MedalAmountDataSource
             # Feature 0013: MarketNeutralPositions 相关
             from .fair_price_indicator import FairPriceIndicator
-            from .datasource.medal_amount_datasource import MedalAmountDataSource
 
             cls._builtin_classes = {
                 # DataSource 类

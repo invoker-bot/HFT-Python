@@ -15,8 +15,8 @@ Feature 0010 Phase 5: 使用统一的 Order 配置格式
 - 支持 reset 条件（重置统计）
 """
 import time
-from typing import TYPE_CHECKING, Optional, Any
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..base import BaseExecutor, ExecutionResult, OrderIntent
 from ..order_config import OrderDefinition

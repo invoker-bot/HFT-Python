@@ -6,10 +6,10 @@ Spread 计算模块
 - StdSpread: 基于标准差的点差
 - ASSpread: Avellaneda-Stoikov 模型点差
 """
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
-import math
 
 
 @dataclass

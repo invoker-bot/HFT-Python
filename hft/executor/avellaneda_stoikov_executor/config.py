@@ -7,8 +7,8 @@ from typing import ClassVar, Type
 
 from pydantic import BaseModel, Field
 
-from ..base_config import BaseExecutorConfig
 from ..base import BaseExecutor
+from ..base_config import BaseExecutorConfig
 
 
 class ASOrderLevel(BaseModel):

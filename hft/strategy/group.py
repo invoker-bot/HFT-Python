@@ -25,10 +25,11 @@ Feature 0008: Strategy 数据驱动增强
 - 向后兼容旧格式 TargetPositions
 - 聚合结果返回新格式 AggregatedTargets
 """
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
 from ..core.listener import Listener, ListenerState
 from ..plugin import pm
-from .base import BaseStrategy, TargetPositions, StrategyOutput
+from .base import BaseStrategy, StrategyOutput, TargetPositions
 
 if TYPE_CHECKING:
     from ..core.app import AppCore

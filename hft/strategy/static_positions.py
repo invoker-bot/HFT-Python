@@ -45,13 +45,15 @@ Example Config (展开式写法，Feature 0011):
       position_usd: 1000
       speed: 0.1
 """
-from typing import ClassVar, Type, Optional, Any, Union, TYPE_CHECKING, cast
 from functools import cached_property
-from younotyou import Matcher
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type, Union, cast
+
 from pydantic import Field, model_validator
 from rich.console import Console
 from rich.table import Table
-from .base import BaseStrategy, TargetPositions, StrategyOutput
+from younotyou import Matcher
+
+from .base import BaseStrategy, StrategyOutput, TargetPositions
 from .config import BaseStrategyConfig, TargetDefinition
 
 if TYPE_CHECKING:

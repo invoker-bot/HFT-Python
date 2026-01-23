@@ -10,6 +10,7 @@ from typing import Union
 
 from humanfriendly import parse_timespan
 
+
 def parse_duration(value: Union[str, int, float, None]) -> float:
     """
     解析 duration 字符串或数值为秒数。

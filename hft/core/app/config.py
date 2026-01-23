@@ -17,11 +17,8 @@ from typing import Any, ClassVar, Dict, Optional, Type
 from pydantic import BaseModel, ClickHouseDsn, Field
 
 from ...config.base import BaseConfig
-from ..config_path import (
-    ExchangeConfigPathGroup,
-    ExecutorConfigPath,
-    StrategyConfigPath,
-)
+from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
+                           StrategyConfigPath)
 from ..listener_cache import ListenerCache, get_or_create
 from .base import AppCore
 

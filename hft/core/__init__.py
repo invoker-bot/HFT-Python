@@ -1,8 +1,9 @@
 """
 Core 核心模块
 """
+from .healthy_data import (HealthyData, HealthyDataWithFallback,
+                           UnhealthyDataError)
 from .listener import Listener, ListenerState
-from .healthy_data import HealthyData, HealthyDataWithFallback, UnhealthyDataError
 from .scope import BaseScope, ScopeManager, VirtualMachine
 
 __all__ = [

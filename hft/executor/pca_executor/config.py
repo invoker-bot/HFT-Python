@@ -11,12 +11,12 @@ PCAExecutor 特点：
 """
 # pylint: disable=import-outside-toplevel
 from functools import cached_property
-from typing import ClassVar, Type, Optional
+from typing import ClassVar, Optional, Type
 
 from pydantic import Field
 
-from ..base_config import BaseExecutorConfig
 from ..base import BaseExecutor
+from ..base_config import BaseExecutorConfig
 from ..order_config import OrderDefinition
 
 

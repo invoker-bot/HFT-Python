@@ -27,16 +27,17 @@ Feature 0008: Strategy 数据驱动增强
 # pylint: disable=import-outside-toplevel,protected-access
 import time
 from abc import abstractmethod
-from typing import Optional, Any, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, Union
+
 from ..core.listener import Listener
 from .config import BaseStrategyConfig
 
 if TYPE_CHECKING:
+    from ..core.scope.manager import ScopeManager
+    from ..core.scope.tree import LinkedScopeNode, LinkedScopeTree
     from ..exchange.base import BaseExchange
     from ..indicator.base import BaseIndicator
     from .group import StrategyGroup
-    from ..core.scope.tree import LinkedScopeTree, LinkedScopeNode
-    from ..core.scope.manager import ScopeManager
 
 
 # 旧版目标仓位类型（向后兼容）: {(exchange_path, symbol): (position_usd, speed)}

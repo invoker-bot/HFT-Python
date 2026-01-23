@@ -25,16 +25,17 @@ AppCore 是整个 HFT 系统的入口，负责：
 # pylint: disable=import-outside-toplevel,protected-access
 import asyncio
 from functools import cached_property
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
 from ...database.client import ClickHouseDatabase
 from ...exchange.group import ExchangeGroup
-from ...indicator.group import IndicatorGroup
-from ...indicator.base import BaseIndicator
-from ...strategy.group import StrategyGroup
 from ...executor.base import BaseExecutor
+from ...indicator.base import BaseIndicator
+from ...indicator.group import IndicatorGroup
 from ...plugin import pm
+from ...strategy.group import StrategyGroup
 from ..listener import Listener
-from .listeners import UnhealthyRestartListener, StateLogListener
+from .listeners import StateLogListener, UnhealthyRestartListener
 from .notify import NotifyService
 
 if TYPE_CHECKING:

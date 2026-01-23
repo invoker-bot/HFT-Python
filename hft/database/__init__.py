@@ -8,7 +8,6 @@
 """
 from .client import ClickHouseDatabase
 
-
 __all__ = [
     'ClickHouseDatabase',
 ]

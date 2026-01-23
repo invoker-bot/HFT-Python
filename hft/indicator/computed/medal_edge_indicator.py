@@ -9,12 +9,12 @@ Feature 0006: 计算类 Indicator 支持 requires 标记
 """
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..base import BaseIndicator
 
 if TYPE_CHECKING:
-    from ..datasource.trades_datasource import TradesDataSource, TradeData
+    from ..datasource.trades_datasource import TradeData, TradesDataSource
 
 
 @dataclass

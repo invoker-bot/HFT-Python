@@ -16,6 +16,6 @@ Usage:
 
 详见 docs/plugin.md
 """
-from .base import pm, hookspec, hookimpl, PluginBase, HookSpec
+from .base import HookSpec, PluginBase, hookimpl, hookspec, pm
 
 __all__ = ["pm", "hookspec", "hookimpl", "PluginBase", "HookSpec"]

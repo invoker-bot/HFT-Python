@@ -8,11 +8,11 @@ Feature 0007: 移除 DataSourceGroup
 - FundingRateIndicator: 交易对级资金费率指标，监听全局指标的 update 事件
 """
 import time
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from ..base import GlobalIndicator, BaseIndicator
-from ..persist import FundingRatePersistListener
 from ...plugin import pm
+from ..base import BaseIndicator, GlobalIndicator
+from ..persist import FundingRatePersistListener
 
 if TYPE_CHECKING:
     from ...exchange.base import BaseExchange, FundingRate

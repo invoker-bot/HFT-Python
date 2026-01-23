@@ -3,15 +3,16 @@ import warnings
 from os import makedirs
 
 import pandas as pd
+import typer
 from rich.console import Console
 from rich.logging import RichHandler
-import typer
 
-from .config.crypto import init_fernet
-from .bin.run import app as run_app
-from .bin.config import app as config_app, password_option
 # from .bin.history import app as history_app
 from ._version import __appname__
+from .bin.config import app as config_app
+from .bin.config import password_option
+from .bin.run import app as run_app
+from .config.crypto import init_fernet
 
 # Suppress Pydantic warnings about field name shadowing
 warnings.filterwarnings('ignore', message='.*shadows an attribute.*', category=UserWarning)

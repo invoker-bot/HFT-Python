@@ -7,11 +7,13 @@
 """
 import asyncio
 import pickle
-from os import makedirs, path, replace
 from collections import Counter
 from functools import cached_property
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from os import makedirs, path, replace
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
 from rich.console import Console
+
 from ..._version import __version__
 from ..listener import Listener, ListenerState
 from ..listener_cache import ListenerCache

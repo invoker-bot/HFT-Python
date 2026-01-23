@@ -7,10 +7,11 @@ Mock Exchange - 用于性能测试
 - Fake time 时间加速
 - 模拟 ticker/orderbook/trades 数据
 """
-import time
 import asyncio
-from typing import Optional
+import time
 from collections import defaultdict
+from typing import Optional
+
 from ..base import BaseExchange, MarketTradingPair, TradeType
 from ..config import BaseExchangeConfig
 

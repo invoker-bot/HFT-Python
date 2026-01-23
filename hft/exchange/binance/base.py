@@ -2,8 +2,10 @@
 Binance 交易所实现
 """
 from typing import ClassVar
+
 from cachetools import TTLCache
 from cachetools_async import cached
+
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
 

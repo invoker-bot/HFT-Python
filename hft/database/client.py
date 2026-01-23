@@ -14,9 +14,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
 from ccxt.base.types import Order, OrderBook
 from clickhouse_connect import get_async_client
 from clickhouse_connect.driver.asyncclient import AsyncClient
+
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange, FundingRateBill
 

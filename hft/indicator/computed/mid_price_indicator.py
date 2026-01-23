@@ -7,7 +7,7 @@ Issue 0005: 使用 orderbook_mid_price 避免与执行器注入的 mid_price 冲
 """
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..base import BaseIndicator
 

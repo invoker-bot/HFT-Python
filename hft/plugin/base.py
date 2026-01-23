@@ -10,16 +10,18 @@ HFT 插件系统
 详见 docs/plugin.md
 """
 from typing import TYPE_CHECKING
+
 import pluggy
+
 from .._version import __appname__
 
 if TYPE_CHECKING:
-    from ..core.listener import Listener
     from ..core.app.base import AppCore
+    from ..core.listener import Listener
     from ..exchange.base import BaseExchange
-    from ..strategy.base import BaseStrategy, TargetPositions
-    from ..strategy.group import StrategyGroup, AggregatedTargets
     from ..executor.base import BaseExecutor
+    from ..strategy.base import BaseStrategy, TargetPositions
+    from ..strategy.group import AggregatedTargets, StrategyGroup
 
 # pluggy markers
 hookspec = pluggy.HookspecMarker(__appname__)

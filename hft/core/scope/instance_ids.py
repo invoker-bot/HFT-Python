@@ -13,11 +13,11 @@ get_all_instance_ids 注册机制
    instance_ids = get_all_instance_ids(app_core, parent_scope, parent_scope_class, scope_class)
 """
 # pylint: disable=import-outside-toplevel
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
-    from .base import BaseScope
     from ...core.app.base import AppCore
+    from .base import BaseScope
 
 # 全局注册表：{(ParentScopeClass, ScopeClass): func}
 # 其中 ParentScopeClass 可以是 None（表示根节点）
@@ -106,13 +106,8 @@ def has_instance_ids_provider(
 
 def _register_standard_instance_ids():
     """注册内置标准 Scope 的实例发现函数"""
-    from .scopes import (
-        GlobalScope,
-        ExchangeClassScope,
-        ExchangeScope,
-        TradingPairClassScope,
-        TradingPairScope,
-    )
+    from .scopes import (ExchangeClassScope, ExchangeScope, GlobalScope,
+                         TradingPairClassScope, TradingPairScope)
 
     # (None, GlobalScope) -> ["global"]
     @register_get_all_instance_ids(None, GlobalScope)

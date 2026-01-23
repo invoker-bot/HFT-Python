@@ -8,7 +8,8 @@ BaseScope 基类
 """
 import inspect
 from functools import cache
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
+
 if TYPE_CHECKING:
     from ...core.app.base import AppCore
 
