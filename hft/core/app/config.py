@@ -9,14 +9,17 @@
 """
 import logging
 from functools import cached_property
-from typing import ClassVar
+from os import path
+from typing import TYPE_CHECKING, ClassVar, Type
 
 from pydantic import BaseModel, ClickHouseDsn, Field
 
 from ...config.base import BaseConfig
 from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
                            StrategyConfigPath)
-from .factory import AppFactory
+
+if TYPE_CHECKING:
+    from .base import AppCore
 
 logger = logging.getLogger(__name__)
 

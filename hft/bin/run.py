@@ -4,6 +4,7 @@ import traceback
 import typer
 from rich.table import Table
 
+from ..core.app.factory import AppFactory
 from ..core.app.config import AppConfig
 from ..exchange import BaseExchangeConfig
 from ..test.exchange import test_exchange_async
@@ -19,8 +20,14 @@ STABLE_COINS = {'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USD', 'FDUSD'}
 
 @app.command()
 def main(app_name: str):
-    app_config: AppConfig = AppConfig.load_from_path(app_name)
-    app_core = app_config.instance  # AppCore(app_config)
+    """
+    Run the HFT application.
+
+    Args:
+        app_name: Name of the application config file (without .yaml extension)
+    """
+    factory = AppFactory(app_name)
+    app_core = factory.create_app_core()
     app_core.loop()
 
 
