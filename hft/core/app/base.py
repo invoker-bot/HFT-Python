@@ -74,24 +74,23 @@ class AppCore(Listener):
             -> 执行交易
     """
 
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify", "cache_manager")
+    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify", "factory")
 
-    def __init__(self, config: "AppConfig"):
+    def __init__(self, config: "AppConfig", factory: Optional['AppFactory'] = None):
         """
         初始化应用核心
 
         Args:
             config: 应用配置对象
+            factory: 应用工厂实例（可选）
         """
         # 先设置 config，因为 initialize() 需要用到
         self.config = config
+        self.factory = factory
         super().__init__(interval=config.interval)
 
         # === 通知服务 ===
         self.notify = NotifyService(self)
-
-        # === 缓存管理器（守护线程）===
-        self.cache_manager = config.cache_manager
 
     def initialize(self):
         """
@@ -107,13 +106,13 @@ class AppCore(Listener):
 
         # === 辅助监听器 ===
         # 使用 cache_manager.get_or_create 恢复或创建
-        self.config.cache_manager.get_or_create(
+        self.factory.get_or_create(
             UnhealthyRestartListener,
             parent=self,
             interval=self.config.health_check_interval
         )
 
-        self.config.cache_manager.get_or_create(
+        self.factory.get_or_create(
             StateLogListener,
             parent=self,
             interval=self.config.log_interval
@@ -121,14 +120,14 @@ class AppCore(Listener):
 
         # === 核心组件 ===
         # 1. 交易所连接管理
-        self.exchange_group = self.config.cache_manager.get_or_create(
+        self.exchange_group = self.factory.get_or_create(
             ExchangeGroup,
             "ExchangeGroup",
             parent=self
         )
 
         # 2. 指标管理（Feature 0006/0007）
-        self.indicator_group = self.config.cache_manager.get_or_create(
+        self.indicator_group = self.factory.get_or_create(
             IndicatorGroup,
             "IndicatorGroup",
             parent=self
@@ -138,14 +137,14 @@ class AppCore(Listener):
 
         # 3. Scope 管理器（Feature 0012）- 作为 Listener 挂载
         from ..scope.manager import ScopeManager
-        self.scope_manager = self.config.cache_manager.get_or_create(
+        self.scope_manager = self.factory.get_or_create(
             ScopeManager,
             "ScopeManager",
             parent=self
         )
 
         # 4. 策略组
-        self.strategy_group = self.config.cache_manager.get_or_create(
+        self.strategy_group = self.factory.get_or_create(
             StrategyGroup,
             "StrategyGroup",
             parent=self
@@ -154,7 +153,7 @@ class AppCore(Listener):
         # 5. 交易执行器（从配置路径加载）
         executor_config = self.config.executor.instance
         executor_class = type(executor_config.instance)
-        self.executor: BaseExecutor = self.config.cache_manager.get_or_create(
+        self.executor: BaseExecutor = self.factory.get_or_create(
             executor_class,
             name=executor_config.path,
             parent=self,
@@ -234,7 +233,7 @@ class AppCore(Listener):
             if not child.lazy_start:
                 child.enabled = True
         # 启动缓存守护线程
-        self.cache_manager.start_daemon(self)
+        self.factory.start_daemon(self)
         # 触发插件钩子
         pm.hook.on_app_start(app=self)
 
@@ -339,9 +338,9 @@ class AppCore(Listener):
     async def on_stop(self):
         """停止回调，同步保存缓存并停止守护线程"""
         # 同步保存缓存（确保数据不丢失）
-        self.cache_manager.save_cache()
+        self.factory.save_cache()
         # 停止守护线程
-        self.cache_manager.stop_daemon()
+        self.factory.stop_daemon()
         # 触发插件钩子
         pm.hook.on_app_stop(app=self)
         await super().on_stop()

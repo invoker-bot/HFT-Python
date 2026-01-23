@@ -60,65 +60,10 @@ class AppConfig(BaseConfig["AppCore"]):
         """获取数据缓存文件路径"""
         return path.join(self.data_dir, f"{self.path}.pkl")
 
-    @cached_property
-    def cache_manager(self) -> AppFactory:
-        """
-        创建 AppFactory 实例
-
-        Returns:
-            AppFactory 实例
-        """
-        return AppFactory(cache_file=self.data_path)
-
     @classmethod
     def get_class_type(cls) -> Type["AppCore"]:
         """返回 AppCore 类型"""
         return AppCore
-
-    def create_instance(self) -> "AppCore":
-        """
-        创建 AppCore 实例，支持从缓存恢复
-
-        如果 cache_manager 存在且包含 AppCore 的缓存，则恢复；
-        否则创建新实例。
-
-        Returns:
-            AppCore 实例
-        """
-        return self.cache_manager.get_or_create(
-            AppCore,
-            name="AppCore",
-            parent=None,
-            config=self
-        )
-
-    @classmethod
-    def load_from_path(cls, app: str, restore_cache: bool = True) -> "AppConfig":
-        """
-        加载应用配置并可选地恢复缓存
-
-        Args:
-            app: 应用配置路径（如 "app"）
-            restore_cache: 是否从缓存恢复 AppCore 状态（默认 True）
-
-        Returns:
-            AppConfig 实例
-        """
-        config = cls.load(app)
-        logger.info("Loaded app config: %s", app)
-
-        # 尝试加载缓存
-        data_path = path.join(cls.data_dir, f"{app}.pkl")
-        if restore_cache and path.exists(data_path):
-            try:
-                cache_dict = AppFactory.load_cache_from_file(data_path)
-                logger.info("Loaded cache from %s (%d listeners)", data_path, len(cache_dict))
-                # 直接创建 AppFactory 并传入缓存字典，覆盖 @cached_property
-                config.cache_manager = AppFactory(cache_file=data_path)
-            except Exception as e:
-                logger.warning("Failed to load cache from %s: %s", data_path, e)
-
-        return config
 
     interval: float = Field(1.0, description="主循环间隔（秒）")
     health_check_interval: float = Field(60.0, description="健康检查间隔（秒）")

@@ -58,15 +58,31 @@ class AppFactory:
         parent_key = AppFactory.build_cache_key(parent.name, parent.parent)
         return f"{current}/{parent_key}"
 
-    def __init__(self, cache_file: str):
+    def __init__(self, app_name: str, restore_cache: bool = True):
         """
         初始化应用工厂
 
         Args:
-            cache_file: 缓存文件路径
+            app_name: 应用名称（如 "main"）
+            restore_cache: 是否从缓存恢复状态
         """
-        self.cache_file = cache_file
-        self.load_cache()
+        from .config import AppConfig
+
+        self.app_name = app_name
+        self.restore_cache = restore_cache
+
+        # 加载配置
+        self.config = AppConfig.load(app_name)
+
+        # 设置缓存文件路径
+        self.cache_file = self.config.data_path
+
+        # 加载缓存
+        if restore_cache:
+            self.load_cache()
+        else:
+            self._cache = {}
+
         self._lock = threading.RLock()
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -75,12 +91,31 @@ class AppFactory:
     @property
     def interval(self) -> float:
         """获取缓存保存间隔"""
-        return self._app_core.config.cache_interval
+        return self.config.cache_interval
 
     @property
     def cache(self) -> Dict[str, Dict[str, Any]]:
         """获取缓存字典"""
         return self._cache
+
+    def create_app_core(self) -> 'AppCore':
+        """
+        创建或恢复 AppCore 实例
+
+        Returns:
+            AppCore 实例
+        """
+        from .base import AppCore
+
+        app_core = self.get_or_create(
+            AppCore,
+            name="AppCore",
+            parent=None,
+            config=self.config,
+            factory=self
+        )
+        self._app_core = app_core
+        return app_core
 
     def get_or_create(
         self,
