@@ -85,19 +85,15 @@ class ExchangeGroup(Listener):
             if exchange.name not in exchange_id_map:
                 await self.remove_exchange(exchange)
 
-        # 添加新的 exchange（使用 get_or_create 支持缓存恢复）
-        from ..core.listener_cache import get_or_create
-        cache_dict = getattr(app.config, '_cache_dict', {})
-
+        # 添加新的 exchange（使用 cache_manager.get_or_create 支持缓存恢复）
         for exchange_id, exchange_path in exchange_id_map.items():
             if exchange_id not in self.children:
                 try:
                     exchange_config = exchange_path.instance
                     exchange_class = type(exchange_config.instance)
 
-                    # 使用 get_or_create 恢复或创建 exchange 实例
-                    exchange_instance: BaseExchange = get_or_create(
-                        cache_dict,
+                    # 使用 cache_manager.get_or_create 恢复或创建 exchange 实例
+                    exchange_instance: BaseExchange = app.config.cache_manager.get_or_create(
                         exchange_class,
                         exchange_id,
                         parent=self,

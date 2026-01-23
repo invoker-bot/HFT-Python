@@ -13,9 +13,8 @@ import pickle
 import threading
 from os import makedirs, path, replace
 from typing import Any, ClassVar, Dict, Optional, Type
-
+from functools import cached_property
 from pydantic import BaseModel, ClickHouseDsn, Field
-
 from ...config.base import BaseConfig
 from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
                            StrategyConfigPath)
@@ -98,6 +97,7 @@ class CacheManager:
         使用 RLock 保护写操作，使用临时文件 + 原子重命名确保文件完整性。
         """
         if not self._app_core:
+            logger.warning("AppCore not set, cannot save cache")
             return
 
         with self._lock:
@@ -195,7 +195,8 @@ class AppConfig(BaseConfig["AppCore"]):
         """获取数据缓存文件路径"""
         return path.join(self.data_dir, f"{self.path}.pkl")
 
-    def get_cache_manager(self) -> CacheManager:
+    @cached_property
+    def cache_manager(self) -> CacheManager:
         """
         创建缓存管理器实例
 
@@ -216,25 +217,18 @@ class AppConfig(BaseConfig["AppCore"]):
         """
         创建 AppCore 实例，支持从缓存恢复
 
-        如果 _cache_dict 存在且包含 AppCore 的缓存，则恢复；
+        如果 cache_manager 存在且包含 AppCore 的缓存，则恢复；
         否则创建新实例。
 
         Returns:
             AppCore 实例
         """
-        cache_dict = getattr(self, '_cache_dict', {})
-
-        # 使用 get_or_create 恢复或创建 AppCore
-        # 注意：AppCore 没有 parent，所以 parent=None
-        app_core = get_or_create(
-            cache_dict,
+        return self.cache_manager.get_or_create(
             AppCore,
             name="AppCore",
             parent=None,
             config=self
         )
-
-        return app_core
 
     @classmethod
     def load_from_path(cls, app: str, restore_cache: bool = True) -> "AppConfig":
@@ -257,13 +251,13 @@ class AppConfig(BaseConfig["AppCore"]):
             try:
                 cache_dict = CacheManager.load_cache(data_path)
                 logger.info("Loaded cache from %s (%d listeners)", data_path, len(cache_dict))
-                # 将缓存字典存储到 config 中，供 AppCore 使用
-                config._cache_dict = cache_dict
+                # 创建 ListenerCache 实例并传入缓存字典
+                config.cache_manager = ListenerCache(cache_dict)
             except Exception as e:
                 logger.warning("Failed to load cache from %s: %s", data_path, e)
-                config._cache_dict = {}
+                config.cache_manager = ListenerCache()
         else:
-            config._cache_dict = {}
+            config.cache_manager = ListenerCache()
 
         return config
 

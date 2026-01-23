@@ -105,20 +105,15 @@ class AppCore(Listener):
         if not hasattr(self, 'config'):
             return
 
-        # 获取缓存字典（如果有）
-        from ..listener_cache import get_or_create
-        cache_dict = getattr(self.config, '_cache_dict', {})
-
         # === 辅助监听器 ===
-        # 使用 get_or_create 恢复或创建（不传递 name，使用类名作为默认值）
-        get_or_create(
-            cache_dict,
+        # 使用 cache_manager.get_or_create 恢复或创建
+        self.config.cache_manager.get_or_create(
             UnhealthyRestartListener,
             parent=self,
             interval=self.config.health_check_interval
         )
-        get_or_create(
-            cache_dict,
+
+        self.config.cache_manager.get_or_create(
             StateLogListener,
             parent=self,
             interval=self.config.log_interval
@@ -126,16 +121,14 @@ class AppCore(Listener):
 
         # === 核心组件 ===
         # 1. 交易所连接管理
-        self.exchange_group = get_or_create(
-            cache_dict,
+        self.exchange_group = self.config.cache_manager.get_or_create(
             ExchangeGroup,
             "ExchangeGroup",
             parent=self
         )
 
         # 2. 指标管理（Feature 0006/0007）
-        self.indicator_group = get_or_create(
-            cache_dict,
+        self.indicator_group = self.config.cache_manager.get_or_create(
             IndicatorGroup,
             "IndicatorGroup",
             parent=self
@@ -145,16 +138,14 @@ class AppCore(Listener):
 
         # 3. Scope 管理器（Feature 0012）- 作为 Listener 挂载
         from ..scope.manager import ScopeManager
-        self.scope_manager = get_or_create(
-            cache_dict,
+        self.scope_manager = self.config.cache_manager.get_or_create(
             ScopeManager,
             "ScopeManager",
             parent=self
         )
 
         # 4. 策略组
-        self.strategy_group = get_or_create(
-            cache_dict,
+        self.strategy_group = self.config.cache_manager.get_or_create(
             StrategyGroup,
             "StrategyGroup",
             parent=self
@@ -163,8 +154,7 @@ class AppCore(Listener):
         # 5. 交易执行器（从配置路径加载）
         executor_config = self.config.executor.instance
         executor_class = type(executor_config.instance)
-        self.executor: BaseExecutor = get_or_create(
-            cache_dict,
+        self.executor: BaseExecutor = self.config.cache_manager.get_or_create(
             executor_class,
             name=executor_config.path,
             parent=self,

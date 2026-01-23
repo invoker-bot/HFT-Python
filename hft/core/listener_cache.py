@@ -98,14 +98,42 @@ class ListenerCache:
     负责收集和恢复 Listener 树的状态。
     """
 
-    def __init__(self):
-        """初始化缓存管理器"""
-        self._cache: Dict[str, Dict[str, Any]] = {}
+    def __init__(self, cache: Optional[Dict[str, Dict[str, Any]]] = None):
+        """
+        初始化缓存管理器
+
+        Args:
+            cache: 初始缓存字典（可选）
+        """
+        self._cache: Dict[str, Dict[str, Any]] = cache if cache is not None else {}
 
     @property
     def cache(self) -> Dict[str, Dict[str, Any]]:
         """获取缓存字典"""
         return self._cache
+
+    def get_or_create(
+        self,
+        listener_class: Type[T],
+        name: Optional[str] = None,
+        parent: Optional['Listener'] = None,
+        **kwargs
+    ) -> T:
+        """
+        从缓存获取或创建 Listener 实例
+
+        这是 get_or_create 函数的实例方法版本，使用 self._cache
+
+        Args:
+            listener_class: Listener 类
+            name: Listener 名称（可选）
+            parent: 父 Listener
+            **kwargs: 传递给构造函数的参数
+
+        Returns:
+            Listener 实例
+        """
+        return get_or_create(self._cache, listener_class, name, parent, **kwargs)
 
     def collect(self, listener: 'Listener') -> Dict[str, Dict[str, Any]]:
         """
