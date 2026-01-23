@@ -91,7 +91,7 @@ class AppCore(Listener):
         self.notify = NotifyService(self)
 
         # === 缓存管理器（守护线程）===
-        self.cache_manager = config.get_cache_manager()
+        self.cache_manager = config.cache_manager
 
     def initialize(self):
         """

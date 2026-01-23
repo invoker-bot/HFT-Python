@@ -24,33 +24,36 @@ from .base import AppCore
 logger = logging.getLogger(__name__)
 
 
-class CacheManager:
+class CacheManager(ListenerCache):
     """
     缓存管理器
 
-    负责定期保存和恢复 Listener 状态，使用守护线程避免阻塞主线程。
+    继承 ListenerCache，增加定期保存功能。
 
     特性：
+    - 继承 ListenerCache 的 get_or_create() 等方法
     - 守护线程定期保存缓存
     - AppCore 退出时同步保存
     - 使用 threading.RLock 保护写操作
     - 原子写入（临时文件 + 重命名）
     """
 
-    def __init__(self, cache_file: str, interval: float = 300.0):
+    def __init__(self, cache_file: str, interval: float = 300.0,
+                 cache: Optional[Dict[str, Dict[str, Any]]] = None):
         """
         初始化缓存管理器
 
         Args:
             cache_file: 缓存文件路径
             interval: 保存间隔（秒）
+            cache: 初始缓存字典（可选）
         """
+        super().__init__(cache)
         self.cache_file = cache_file
         self.interval = interval
         self._lock = threading.RLock()
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._listener_cache = ListenerCache()
         self._app_core: Optional['AppCore'] = None
 
     def start_daemon(self, app_core: 'AppCore'):
@@ -102,8 +105,8 @@ class CacheManager:
 
         with self._lock:
             try:
-                # 收集所有 Listener 状态
-                cache_dict = self._listener_cache.collect(self._app_core)
+                # 收集所有 Listener 状态（使用继承的 collect 方法）
+                cache_dict = self.collect(self._app_core)
 
                 # 序列化
                 data = pickle.dumps(cache_dict, protocol=pickle.HIGHEST_PROTOCOL)
@@ -198,14 +201,15 @@ class AppConfig(BaseConfig["AppCore"]):
     @cached_property
     def cache_manager(self) -> CacheManager:
         """
-        创建缓存管理器实例
+        创建 CacheManager 实例
 
         Returns:
             CacheManager 实例
         """
         return CacheManager(
             cache_file=self.data_path,
-            interval=self.cache_interval
+            interval=self.cache_interval,
+            cache=None
         )
 
     @classmethod
@@ -251,13 +255,14 @@ class AppConfig(BaseConfig["AppCore"]):
             try:
                 cache_dict = CacheManager.load_cache(data_path)
                 logger.info("Loaded cache from %s (%d listeners)", data_path, len(cache_dict))
-                # 创建 ListenerCache 实例并传入缓存字典
-                config.cache_manager = ListenerCache(cache_dict)
+                # 直接创建 CacheManager 并传入缓存字典，覆盖 @cached_property
+                config.cache_manager = CacheManager(
+                    cache_file=data_path,
+                    interval=config.cache_interval,
+                    cache=cache_dict
+                )
             except Exception as e:
                 logger.warning("Failed to load cache from %s: %s", data_path, e)
-                config.cache_manager = ListenerCache()
-        else:
-            config.cache_manager = ListenerCache()
 
         return config
 
