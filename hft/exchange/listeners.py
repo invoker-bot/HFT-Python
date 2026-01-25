@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from ccxt.base.errors import UnsubscribeError
 
 from ..core.listener import GroupListener, Listener
-from ..database.client import OrderBillController
+# from ..database.client import OrderBillController
 from ..indicator.persist import DataListener
 from ..plugin import pm
 

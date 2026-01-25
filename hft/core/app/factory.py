@@ -3,6 +3,7 @@
 
 负责 Listener 实例的缓存、恢复和定期保存。
 """
+# import time
 import logging
 import pickle
 import threading
@@ -43,7 +44,7 @@ class AppFactory:
         """
         构建缓存键
 
-        格式："name/parent_key"
+        格式："parent_key/name"
 
         Args:
             name: Listener 名称
@@ -58,7 +59,7 @@ class AppFactory:
 
         # 递归构建父路径
         parent_key = AppFactory.build_cache_key(parent.name, parent.parent)
-        return f"{current}/{parent_key}"
+        return f"{parent_key}/{current}"
 
     def __init__(self, app_name: str, restore_cache: bool = True):
         """
@@ -87,6 +88,7 @@ class AppFactory:
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._app_core: Optional['AppCore'] = None
+        # self._start = time.time()
 
     @property
     def interval(self) -> float:
@@ -110,7 +112,7 @@ class AppFactory:
             name="AppCore",
             parent=None,
             config=self.config,
-            factory=self
+            factory=self,
         )
         self._app_core = app_core
         return app_core
@@ -120,7 +122,7 @@ class AppFactory:
         listener_class: Type[T],
         name: Optional[str] = None,
         parent: Optional['Listener'] = None,
-        **kwargs
+        **kwargs  # 构造函数参数
     ) -> T:
         """
         从缓存获取或创建 Listener 实例
@@ -140,22 +142,17 @@ class AppFactory:
         # 如果没有提供 name，使用类名作为默认值
         if name is None:
             name = listener_class.__name__
-
+        kwargs['name'] = name
         cache_key = self.build_cache_key(name, parent)
-
         if cache_key in self._cache:
             # 从缓存恢复
             state = self._cache[cache_key]
+            state['kwargs'] = kwargs  # 将构造函数参数传入
             instance = listener_class.__new__(listener_class)
             instance.__setstate__(state)
         else:
-            # 创建新实例
             # 如果构造函数接受 name 参数，则传递；否则不传递
-            try:
-                instance = listener_class(name=name, **kwargs)
-            except TypeError:
-                # 构造函数不接受 name 参数，尝试不传递 name
-                instance = listener_class(**kwargs)
+            instance = listener_class(**kwargs)
 
         # 建立父子关系
         if parent is not None:

@@ -16,7 +16,7 @@ import asyncio
 # pylint: disable=import-outside-toplevel
 import logging
 from typing import TYPE_CHECKING, Optional
-
+import apprise
 from ...plugin import pm
 
 if TYPE_CHECKING:
@@ -112,7 +112,6 @@ class NotifyService:
             return False
 
         try:
-            import apprise
 
             # 映射通知类型
             type_map = {

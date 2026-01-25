@@ -5,8 +5,9 @@
 - StateLogListener: 定期打印 Listener 树的状态
 - UnhealthyRestartListener: 自动重启不健康的监听器
 """
+from functools import cached_property
 from collections import Counter
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
@@ -29,23 +30,24 @@ class StateLogListener(Listener):
         ├── Controller [running] ♥
         └── Executor [running] ♥
     """
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_console")
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "_console"}
 
-    def __init__(self, interval: float = 300, max_depth: int = 6, console: Optional[Console] = None):
-        """
-        Args:
-            interval: 日志输出间隔（秒）
-            max_depth: 最大显示深度
-            console: Rich Console 实例
-        """
-        super().__init__(interval=interval)
+    @property
+    def max_depth(self) -> int:
+        """获取最大显示深度"""
+        app_core: 'AppCore' = self.root
+        return app_core.config.log_max_depth
+
+    @property
+    def interval(self) -> float:
+        """获取日志输出间隔"""
+        app_core: 'AppCore' = self.root
+        return app_core.config.log_interval
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self._console = kwargs.get("console", None) or Console(width=300)
         self._start = self.current_time
-        self._console = console or Console(width=300)
-        self._max_depth = max_depth
-
-    def __setstate__(self, state):
-        super().__setstate__(state)
-        self._console = Console(width=300)
 
     def _get_state_icon(self, listener: Listener) -> str:
         """获取状态图标"""
@@ -77,7 +79,7 @@ class StateLogListener(Listener):
             is_last: 是否是最后一个子节点
             depth: 当前深度
         """
-        if depth > self._max_depth:
+        if depth > self.max_depth:
             return
 
         # 确定连接符
@@ -106,12 +108,6 @@ class StateLogListener(Listener):
             is_last_child = (i == len(children_list) - 1)
             self._print_tree(child, child_prefix, is_last_child, depth + 1)
 
-    async def on_start(self):
-        await super().on_start()
-        self._start = self.current_time
-        app: 'AppCore' = self.root
-        self.interval = app.config.log_interval
-
     async def on_tick(self) -> None:
         """输出状态日志"""
         if self.current_time - self._start < self.interval:  # initial delay
@@ -139,17 +135,17 @@ class UnhealthyRestartListener(Listener):
     定期检查所有监听器的健康状态，自动重启不健康的监听器。
     健康检查会触发每个监听器的 on_health_check() 回调。
     """
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "reconfirm_cache"}
 
-    def __init__(self, interval: float = 120.0, reconfirm=3):
-        """
-        初始化不健康重启监听器
+    @cached_property
+    def reconfirm_cache(self) -> Counter:
+        return Counter()
 
-        Args:
-            interval: 健康检查间隔（秒），默认 2 分钟
-        """
-        super().__init__(interval=interval)
-        self.reconfirm_cache = Counter()
-        self.reconfirm = reconfirm
+    @property
+    def reconfirm(self) -> int:
+        """获取重启确认次数"""
+        app_core: 'AppCore' = self.root
+        return app_core.config.health_check_restart_reconfirm
 
     async def on_start(self):
         await super().on_start()
@@ -165,12 +161,16 @@ class UnhealthyRestartListener(Listener):
         root = self.root
         assert root is not None, "UnhealthyRestartListener must be attached to a root Listener"
         await root.health_check(True)
+        if self.reconfirm <= 0:  # 不重启
+            return
         for listener in list(root):
             if listener.enabled and not listener.healthy:
+                self.logger.info("Listener %s is unhealthy", listener.name)
                 self.reconfirm_cache[listener.id] += 1
                 if self.reconfirm_cache[listener.id] >= self.reconfirm:
                     self.logger.warning("Listener %s is unhealthy, restarting...", listener.name)
                     await listener.restart(False)
                     self.reconfirm_cache[listener.id] = 0
             else:
+                self.logger.info("Listener %s is healthy", listener.name)
                 self.reconfirm_cache[listener.id] = 0

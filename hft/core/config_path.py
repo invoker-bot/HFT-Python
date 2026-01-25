@@ -7,6 +7,7 @@ ConfigPath - 配置路径系统
 import os
 from functools import cached_property, lru_cache
 from pathlib import Path
+from glob import glob
 from typing import Any, ClassVar
 
 import yaml
@@ -158,8 +159,6 @@ def _scan_exchange_config_ids() -> tuple[str, ...]:
     Returns:
         配置 ID 元组（不含 .yaml 扩展名）
     """
-    from glob import glob
-
     root = os.getenv('HFT_ROOT_PATH', '.')
     pattern = os.path.join(root, 'conf/exchange', '**', '*.yaml')
     files = glob(pattern, recursive=True)

@@ -17,7 +17,7 @@ defining-attr-methods=__init__,initialize
 
 [FORMAT]
 # Maximum number of characters on a single line
-max-line-length=100
+max-line-length=300
 
 [DESIGN]
 # Maximum number of attributes for a class

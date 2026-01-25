@@ -37,8 +37,8 @@ T = TypeVar('T', bound='Listener')
 class ListenerState(StrEnum):
     """
     监听器状态枚举
-                     ->   FINISHED
-    状态转换：       |
+
+    状态转换：
     STARTING -> RUNNING -> STOPPING -> STOPPED
                     |                      ^
                     v                      |
@@ -50,7 +50,7 @@ class ListenerState(StrEnum):
     RUNNING = "running"     # 运行中
     STOPPING = "stopping"   # 停止中
     STOPPED = "stopped"     # 已停止
-    FINISHED = "finished"   # 任务完成（正常退出）
+    # FINISHED = "finished"   # 任务完成（正常退出）
     ERROR = "error"         # 错误状态
 
 
@@ -86,15 +86,17 @@ class Listener(ABC):
         "_children",
         "_background_task",
         "_alock",
+        '_state',
         "root",
         "depth",
+        "kwargs",
     }
 
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
     disable_tick: bool = False  # 是否禁用 tick 回调，关闭以禁用定时任务，节约开销
 
-    def __init__(self, name: Optional[str] = None, interval: Optional[float] = 1.0):
+    def __init__(self, **kwargs):
         """
         初始化监听器
 
@@ -102,18 +104,27 @@ class Listener(ABC):
             name: 监听器名称，默认使用类名
             interval: tick 间隔（秒），None 表示不创建 tick task（事件驱动）
         """
-        if name is None:
-            name = f"{self.__class__.__name__}"
-        self.name = name
-        self._interval: Optional[float] = interval  # None = 事件驱动，不创建 tick task
+        self.name = kwargs.get("name", self.__class__.__name__)
+        self._interval: Optional[float] = kwargs.get("interval", 1.0)  # None = 事件驱动，不创建 tick task
 
         # Internal state
         self._enabled = True
         self._healthy = False
-        self._state = ListenerState.STOPPED
         self.start_time = self.current_time
+        self.finished = False  # 任务完成标志，有此标记的 Listener 不会被重启
+        self._auto_disable_start_time = self.current_time
+        self._auto_disable_duration: Optional[float] = None  # 自动禁用时长（秒），None 表示不启用
+        self.initialize(**kwargs)
 
-        self.initialize()
+    @property
+    def auto_disable_duration(self) -> Optional[float]:
+        """获取自动禁用时长（秒），None 表示不启用"""
+        return self._auto_disable_duration
+
+    @auto_disable_duration.setter
+    def auto_disable_duration(self, value: Optional[float]):
+        self._auto_disable_duration = value
+        self._auto_disable_start_time = self.current_time
 
     @property
     def interval(self) -> Optional[float]:
@@ -124,11 +135,12 @@ class Listener(ABC):
     def interval(self, interval: Optional[float]):
         self._interval = interval
 
-    def initialize(self):
+    def initialize(self, **kwargs):
         """初始化不可序列化的对象（在 __init__ 和 unpickle 时调用）"""
         self._parent: Optional[weakref.ReferenceType["Listener"]] = None
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
+        self._state = ListenerState.STOPPED
         # children 由 get_or_create 重建，不从 pickle 恢复
         self._children: dict[str, 'Listener'] = {}
 
@@ -153,7 +165,8 @@ class Listener(ABC):
         self.__dict__.update(state)
 
         # Reinitialize non-serializable objects (including empty _children)
-        self.initialize()
+        kwargs = state.get('kwargs', {})
+        self.initialize(**kwargs)
 
         # NOTE: children 现在不保存了，由 get_or_create 机制重建
         # 子类可以在 on_reload 中手动重建 children
@@ -222,6 +235,25 @@ class Listener(ABC):
                     await finalizer()
                 break
 
+    async def __finalize_background_task(self):
+        """
+        后台任务完成时的清理回调
+
+        当后台任务自然结束时（tick 返回 True），执行清理逻辑。
+        注意：此方法在后台任务内部被调用，不应尝试取消任务本身。
+        """
+        # 标记任务已完成
+        self._background_task = None
+
+        # 如果是因为任务完成（非手动停止），则执行停止逻辑
+        if self.enabled:
+            self.enabled = False
+            if not self.disable_tick:
+                # 触发状态转换到 STOPPING
+                if self.state == ListenerState.RUNNING:
+                    self.state = ListenerState.STOPPING
+                    await self.__tick_internal()
+
     async def __create_background_task_internal(self):
         # interval=None 表示事件驱动，不创建 tick task
         if self.interval is None:
@@ -229,16 +261,34 @@ class Listener(ABC):
         bt = self._background_task
         if bt is None or bt.done():  # 没有任务或已完成
             self._background_task = asyncio.create_task(
-                self.loop_coro_in_background(self.tick, self.interval, self.stop),
+                self.loop_coro_in_background(
+                    self.tick,
+                    self.interval,
+                    self.__finalize_background_task  # 使用专门的清理方法
+                ),
                 name=f"{self.name}-background-task"
             )
 
     async def __delete_background_task_internal(self):
-        """取消后台任务的实际实现"""
+        """
+        取消后台任务的实际实现
+
+        注意：如果当前代码正在后台任务内部执行，不会尝试取消自己。
+        """
         bt = self._background_task
-        if bt is not None and bt.cancel():
+        if bt is None:
+            return
+
+        # 检查是否在后台任务内部调用（避免取消自己）
+        current_task = asyncio.current_task()
+        if bt is current_task:
+            # 在后台任务内部，只清空引用，让任务自然结束
+            self._background_task = None
+            return
+
+        # 从外部取消后台任务
+        if bt.cancel():
             # 记录调用方当前的取消计数，用于区分"框架主动取消"和"调用方被取消"
-            current_task = asyncio.current_task()
             cancelling_before = current_task.cancelling() if current_task else 0
             try:
                 await bt  # 等待取消完成
@@ -256,7 +306,7 @@ class Listener(ABC):
         # lazy_start 且未启动的 Listener 不应创建后台任务，需显式调用 start()
         if self.disable_tick or (self.lazy_start and self._state == ListenerState.STOPPED):
             return
-        if self.enabled:
+        if self.enabled and not self.finished:
             await self.__create_background_task_internal()
         else:
             await self.__delete_background_task_internal()
@@ -477,8 +527,13 @@ class Listener(ABC):
     @enabled.setter
     def enabled(self, value: bool):
         """设置监听器启用状态"""
+        # import traceback
+        # old_value = self._enabled
         self._enabled = value
-        self.logger.debug("enabled status set to %s", value)
+        # self.logger.info("set enabled = %s", value)
+        # if old_value != value:
+        #     self.logger.warning("enabled status changed: %s -> %s, stack:\n%s",
+        #                       old_value, value, ''.join(traceback.format_stack()))
 
     @property
     def healthy(self) -> bool:
@@ -509,12 +564,11 @@ class Listener(ABC):
         Args:
             recursive: 是否递归检查子监听器
         """
+        if not self.enabled:
+            return
         if recursive:
             for child in list(self.children.values()):
                 await child.health_check(True)
-                # if child.state == ListenerState.FINISHED:
-                #     await child.delete_background()
-                #     self.remove_child(child.name)
         try:
             # self.logger.info("Performing health check")
             # self.logger.info("Health check: running state is %s", self.state)
@@ -532,6 +586,8 @@ class Listener(ABC):
             if not result:
                 raise ValueError("returned unhealthy status")
             self._healthy = True
+        except (asyncio.CancelledError, KeyboardInterrupt):  # 不处理退出异常
+            return
         except Exception as e:
             self._healthy = False
             self.logger.error("Health check failed: %s", e, exc_info=True)
@@ -560,6 +616,10 @@ class Listener(ABC):
         状态机核心逻辑，根据当前状态执行相应操作。
         """
         try:
+            if self.auto_disable_duration is not None and self.current_time - self._auto_disable_start_time > self.auto_disable_duration:
+                # self.logger.info("Auto disabling listener after %.2f seconds", self.auto_disable_duration)
+                self.enabled = False
+                self.auto_disable_duration = None
             match self.state:
                 case ListenerState.STARTING:
                     if self.enabled:
@@ -595,14 +655,14 @@ class Listener(ABC):
                         self.logger.error("Error during on_stop: %s", e, exc_info=True)
                     self.state = ListenerState.STOPPED
                 case ListenerState.STOPPED:
-                    if self.enabled:
+                    if self.enabled and not self.finished:
                         self.state = ListenerState.STARTING
                 # ListenerState.ERROR:
                 #     if self.enabled
         except Exception as e:
             self._healthy = False
             self.logger.error("Error during tick execution: %s", e, exc_info=True)
-        return self.state in (ListenerState.STOPPED, ListenerState.STOPPING)
+        return (not self.enabled) and self.state in (ListenerState.STOPPED, ListenerState.STOPPING)
 
     async def tick(self):
         """执行一次 tick（加锁保证线程安全）"""
@@ -611,8 +671,10 @@ class Listener(ABC):
 
     async def __start_internal(self, recursive: bool = True):
         self.enabled = True
+        if self.finished:
+            return
         if not self.disable_tick:
-            if self.state == ListenerState.STOPPED:
+            if self.state == ListenerState.STOPPED:  # 目前不会处理STOPPING状态的
                 self.state = ListenerState.STARTING
             # interval=None 的 Listener 不创建 tick task，需要手动触发一次 tick
             # 来完成 STARTING -> RUNNING 的状态转换（调用 on_start）
@@ -763,13 +825,13 @@ class GroupListener(Listener):
     """
 
     # 不 pickle children，启动时重建
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "_children", "children")
+    # __pickle_exclude__ = {*Listener.__pickle_exclude__, "_children", "children"}
 
-    def on_save(self):
-        """保存时排除 children"""
-        d = super().on_save()
-        d["_children"] = {}
-        return d
+    # def on_save(self):
+    #     """保存时排除 children"""
+    #     d = super().on_save()
+    #     d["_children"] = {}
+    #     return d
 
     def sync_children_params(self) -> dict[str, any]:
         """

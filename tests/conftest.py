@@ -62,7 +62,7 @@ class MockListener(Listener):
         on_stop_fn: Optional[AsyncMock] = None,
         on_health_check_fn: Optional[AsyncMock] = None,
     ):
-        super().__init__(name or "MockListener", interval)
+        super().__init__(name=name or "MockListener", interval=interval)
         self._on_tick_fn = on_tick_fn or AsyncMock(return_value=False)
         self._on_start_fn = on_start_fn or AsyncMock()
         self._on_stop_fn = on_stop_fn or AsyncMock()

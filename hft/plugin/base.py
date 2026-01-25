@@ -309,14 +309,14 @@ class PluginBase:
     # 插件名称，用于配置引用和日志
     name: str = "base_plugin"
 
-    def __init__(self, config: dict = None):
+    def __init__(self):
         """
         初始化插件
 
         Args:
             config: 插件配置字典
         """
-        self.config = config or {}
+        self.config = {}
 
 
 # 创建 PluginManager 实例

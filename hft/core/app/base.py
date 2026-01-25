@@ -27,7 +27,6 @@ import asyncio
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional
 
-from ...database.client import ClickHouseDatabase
 from ...exchange.group import ExchangeGroup
 from ...executor.base import BaseExecutor
 from ...indicator.base import BaseIndicator
@@ -40,6 +39,7 @@ from .notify import NotifyService
 
 if TYPE_CHECKING:
     from .config import AppConfig
+    from .factory import AppFactory
 
 
 class AppCore(Listener):
@@ -74,49 +74,32 @@ class AppCore(Listener):
             -> 执行交易
     """
 
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "database", "notify", "factory")
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "database", "notify", "factory", "config"}
 
-    def __init__(self, config: "AppConfig", factory: Optional['AppFactory'] = None):
-        """
-        初始化应用核心
-
-        Args:
-            config: 应用配置对象
-            factory: 应用工厂实例（可选）
-        """
-        # 先设置 config，因为 initialize() 需要用到
-        self.config = config
-        self.factory = factory
-        super().__init__(interval=config.interval)
-
-        # === 通知服务 ===
-        self.notify = NotifyService(self)
-
-    def initialize(self):
+    def initialize(self, **kwargs):
         """
         初始化 AppCore 的子组件
 
         所有 add_child() 调用都在这里，支持缓存恢复时的 get_or_create 语义。
         """
-        super().initialize()
-
+        super().initialize(**kwargs)
+        self.config: 'AppConfig' = kwargs['config']
+        self.config.instance = self
+        self.factory: 'AppFactory' = kwargs['factory']
+        self.notify = NotifyService(self)
         # 确保 config 已设置（正常初始化时已设置，pickle 恢复时需要检查）
-        if not hasattr(self, 'config'):
-            return
 
         # === 辅助监听器 ===
         # 使用 cache_manager.get_or_create 恢复或创建
         self.factory.get_or_create(
             UnhealthyRestartListener,
-            parent=self,
-            interval=self.config.health_check_interval
+            parent=self
         )
-
         self.factory.get_or_create(
             StateLogListener,
-            parent=self,
-            interval=self.config.log_interval
+            parent=self
         )
+        return
 
         # === 核心组件 ===
         # 1. 交易所连接管理
@@ -161,7 +144,7 @@ class AppCore(Listener):
         )
 
     @cached_property
-    def database(self) -> ClickHouseDatabase | None:
+    def database(self):   #  -> ClickHouseDatabase | None:
         """
         获取 ClickHouse 数据库连接
 
@@ -169,12 +152,11 @@ class AppCore(Listener):
         URL 格式: clickhouse://user:password@host:port/database
 
         Returns:
-            ClickHouseDatabase 实例，如果未配置 database_url 则返回 None
+            DatabaseClient 实例，如果未配置 database_url 则返回 None
         """
-        url = self.config.database_url
-        if url is None:
+        if self.config.database is None:
             return None
-        return ClickHouseDatabase(str(url))
+        return self.config.database.instance
 
     def loop(self):
         """
@@ -188,7 +170,7 @@ class AppCore(Listener):
         duration = -1 if self.config.max_duration is None else self.config.max_duration
         if self.config.debug:
             self.logger.info("Starting AppCore loop (DEBUG mode, duration=%.1fs)",
-                             duration if duration > 0 else float('inf'))
+                             duration if duration > 0 else 99999999)
         else:
             self.logger.info("Starting AppCore loop")
 
@@ -227,11 +209,13 @@ class AppCore(Listener):
     async def on_start(self):
         await super().on_start()
         # 只有配置了数据库才初始化
-        if self.config.database_url:
+        if self.database is not None:
             await self.database.init()
+        # if self.config.database_url:
+        #     await self.database.init()
         for child in list(self.children.values()):
             if not child.lazy_start:
-                child.enabled = True
+                child.enabled = True  # set enabled is enough, on_start will be called in background task
         # 启动缓存守护线程
         self.factory.start_daemon(self)
         # 触发插件钩子
@@ -253,11 +237,12 @@ class AppCore(Listener):
         """
         # 触发插件钩子
         pm.hook.on_app_tick(app=self)
-
+        self.logger.info("app tick")
         # 检查策略组是否已完成
-        if self.strategy_group.is_finished:
-            self.logger.info("StrategyGroup finished, AppCore exiting")
-            return True
+        # if self.strategy_group.finished:  # TODO: strategy_group is not defined
+        #     self.logger.info("StrategyGroup finished, AppCore exiting")
+        #     self.finished = True
+        #     return True
         return False
 
     # ============================================================
@@ -337,12 +322,14 @@ class AppCore(Listener):
 
     async def on_stop(self):
         """停止回调，同步保存缓存并停止守护线程"""
-        # 同步保存缓存（确保数据不丢失）
-        self.factory.save_cache()
         # 停止守护线程
         self.factory.stop_daemon()
+        # 同步保存缓存（确保数据不丢失）
+        self.factory.save_cache()
         # 触发插件钩子
         pm.hook.on_app_stop(app=self)
+        if self.database is not None:
+            await self.database.close()
         await super().on_stop()
 
     async def run_ticks(self, duration: float,
@@ -372,6 +359,9 @@ class AppCore(Listener):
                     # simple sleep interruptions
                     for child in list(self):
                         await child.update_background_task()
+                    # print("self:", self.state, self.enabled)
+                    # if self.state == ListenerState.STOPPED and not self.enabled:  # current app is stopped
+                    #     break
                     # print("on tick:", self.interval)
                     # for child in list(self):
                     #     await child.update_background_task()  # make sure background tasks are updated

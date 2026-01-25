@@ -544,7 +544,7 @@ class TestFindChildrenByClass:
         assert all(isinstance(r, MockMarketExecutor) for r in result)
 
     def test_find_children_returns_empty_list_when_not_found(self):
-        """find_children_by_class should return empty tuple when not found."""
+        """find_children_by_class should return empty list when not found."""
         root = MockListener(name="root")
         executor = MockMarketExecutor(name="executor")
 
@@ -552,7 +552,7 @@ class TestFindChildrenByClass:
 
         result = root.find_children_by_class(MockStrategy)
 
-        assert result == ()
+        assert result == []
 
     def test_find_children_includes_subclasses(self):
         """find_children_by_class should include subclass instances."""
@@ -645,10 +645,10 @@ class TestFindChildrenByClassAtNode:
         assert executor3 not in result
 
     def test_find_all_at_node_returns_empty_when_no_match(self):
-        """find_children_by_class_at_node returns empty tuple if no match."""
+        """find_children_by_class_at_node returns empty list if no match."""
         root = MockListener(name="root")
         branch = MockListener(name="branch")
         root.add_child(branch)
 
         result = root.find_children_by_class_at_node(MockMarketExecutor, branch)
-        assert result == ()
+        assert result == []

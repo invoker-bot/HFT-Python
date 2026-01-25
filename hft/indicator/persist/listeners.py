@@ -14,9 +14,9 @@ Feature 0006: Indicator 与 DataSource 统一架构
 from typing import TYPE_CHECKING, Optional
 
 from ...core.listener import Listener
-from ...database.client import (BalanceUSDController, ClickHouseDatabase,
-                                FundingRateBillController,
-                                FundingRateController)
+# from ...database.client import (BalanceUSDController, ClickHouseDatabase,
+#                                 FundingRateBillController,
+#                                 FundingRateController)
 
 if TYPE_CHECKING:
     from ...exchange.base import BaseExchange, FundingRate

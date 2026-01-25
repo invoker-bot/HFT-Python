@@ -8,39 +8,17 @@
 - 可选持久化配置
 """
 import logging
-from functools import cached_property
 from os import path
 from typing import TYPE_CHECKING, ClassVar, Type
 
-from pydantic import BaseModel, ClickHouseDsn, Field
-
+from pydantic import BaseModel, Field
 from ...config.base import BaseConfig
 from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
                            StrategyConfigPath)
-
-if TYPE_CHECKING:
-    from .base import AppCore
+from .base import AppCore
+from ...database.config import DatabaseConfig
 
 logger = logging.getLogger(__name__)
-
-
-
-class PersistConfig(BaseModel):
-    """
-    持久化配置
-
-    控制哪些数据类型需要保存到 ClickHouse。
-    默认全部启用，大数据量的 trades 和 orderbook 可以关闭。
-    """
-    order_bill: bool = Field(True, description="订单账单")
-    funding_rate_bill: bool = Field(True, description="资金费率账单")
-    balance_usd: bool = Field(True, description="账户余额快照")
-    positions: bool = Field(True, description="持仓快照")
-    balances: bool = Field(True, description="余额明细")
-    ohlcv: bool = Field(True, description="K线数据")
-    ticker: bool = Field(True, description="Ticker数据")
-    trades: bool = Field(False, description="成交记录（数据量大，默认关闭）")
-    order_book: bool = Field(False, description="订单簿（数据量大，默认关闭）")
 
 
 class AppConfig(BaseConfig["AppCore"]):
@@ -70,7 +48,9 @@ class AppConfig(BaseConfig["AppCore"]):
 
     interval: float = Field(1.0, description="主循环间隔（秒）")
     health_check_interval: float = Field(60.0, description="健康检查间隔（秒）")
+    health_check_restart_reconfirm: int = Field(3, description="健康检查重启确认次数")
     log_interval: float = Field(120.0, description="状态日志间隔（秒）")
+    log_max_depth: int = Field(6, description="状态日志打印的最大深度")
     cache_interval: float = Field(300.0, description="缓存保存间隔（秒）")
 
     # 使用配置路径引用
@@ -78,8 +58,8 @@ class AppConfig(BaseConfig["AppCore"]):
     strategy: StrategyConfigPath = Field(description="策略配置路径")
     executor: ExecutorConfigPath = Field(description="执行器配置路径")
 
-    database_url: ClickHouseDsn | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
-    persist: PersistConfig = Field(default_factory=PersistConfig, description="持久化配置")
+    database: DatabaseConfig | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
+    # persist: PersistConfig = Field(default_factory=PersistConfig, description="持久化配置")
 
     # Indicator 配置（Feature 0006）
     indicators: dict[str, dict] = Field(

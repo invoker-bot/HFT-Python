@@ -1,0 +1,24 @@
+[flake8]
+# 忽略的错误代码
+ignore =
+    F403,  # 'from module import *' used; unable to detect undefined names
+    E501,  # line too long (handled by pylint)
+    W503,  # line break before binary operator (deprecated)
+
+# 最大行长度
+max-line-length = 300
+
+# 排除的目录
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    build,
+    dist,
+    *.egg-info,
+    .pytest_cache,
+    .mypy_cache
+
+# 每个文件的最大复杂度
+max-complexity = 15
