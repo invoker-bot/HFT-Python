@@ -1,0 +1,30 @@
+[MASTER]
+# Use multiple processes to speed up Pylint
+jobs=0
+
+[MESSAGES CONTROL]
+# Disable specific warnings
+disable=
+    C0111,  # missing-docstring
+    C0103,  # invalid-name
+    R0903,  # too-few-public-methods
+    R0913,  # too-many-arguments
+    W0212,  # protected-access
+
+[BASIC]
+# Allow initialize() method to define attributes (in addition to __init__)
+defining-attr-methods=__init__,initialize
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=100
+
+[DESIGN]
+# Maximum number of attributes for a class
+max-attributes=15
+
+# Maximum number of locals for function / method body
+max-locals=20
+
+# Maximum number of branches for function / method body
+max-branches=15

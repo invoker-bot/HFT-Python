@@ -109,24 +109,22 @@ for child in listener:
 # add_child 自动注册到根节点的类索引
 root.add_child(executor)
 
-# 索引结构：{Type: [(weakref, depth), ...]}
-# root._class_index = {
-#     MarketExecutor: [(ref, 1)],
-#     BaseExecutor: [(ref, 1)],  # 父类也注册
-# }
+# 使用 lru_cache 缓存查找结果
+# 树变动时在 root 调用 cache_clear() 清理缓存
 ```
 
 ### 查找方法
 
 ```python
-# 查找第一个匹配（最浅）
+# 查找第一个匹配
 executor = root.find_child_by_class(BaseExecutor)
 
-# 查找所有匹配（按深度排序）
+# 查找所有匹配
 executors = root.find_children_by_class(BaseExecutor)
 
-# 查找指定深度的匹配
-level1_executors = root.find_children_by_class_at_depth(BaseExecutor, 1)
+# 从指定节点开始查找
+strategy = root.find_child_by_class_at_node(BaseStrategy, executor)
+strategies = root.find_children_by_class_at_node(BaseStrategy, executor)
 ```
 
 ## GroupListener
