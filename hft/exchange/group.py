@@ -59,19 +59,19 @@ class ExchangeGroup(Listener):
     """
 
     def __init__(self):
-        super().__init__("ExchangeGroup", interval=60.0)
+        super().__init__(interval=60.0)
         self.exchanges_map = defaultdict(list)
 
     async def add_exchange(self, exchange: BaseExchange):
         self.exchanges_map[exchange.class_name].append(exchange.name)
         self.add_child(exchange)
-        if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
-            await exchange.start()
+        exchange.enabled = self.enabled
 
     async def remove_exchange(self, exchange: BaseExchange):
-        await exchange.stop()
+        # await exchange.stop()
+        # self.exchanges_map[exchange.class_name].remove(exchange.name)
+        await self.remove_child_with_end(exchange.name)
         self.exchanges_map[exchange.class_name].remove(exchange.name)
-        self.remove_child(exchange.name)
 
     async def on_tick(self):
         # Placeholder for periodic tasks related to exchange groups

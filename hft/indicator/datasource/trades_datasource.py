@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from hft.core.healthy_data import _never_duplicate
+from hft.core.healthy_data import never_duplicate
 
 from ..base import BaseDataSource
 
@@ -20,7 +20,7 @@ class TradeData:
     timestamp: float  # 秒
     side: str  # "buy" or "sell"
     price: float
-    amount: float
+    amount: float  # 已经标准化后的数量
     cost: float  # price * amount
 
     @classmethod

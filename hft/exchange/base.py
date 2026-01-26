@@ -12,6 +12,7 @@
 """
 import asyncio
 import time
+from functools import cached_property
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
@@ -25,16 +26,17 @@ from ccxt.base.types import (Order, OrderBook, OrderRequest, Position, Ticker,
 from ccxt.pro import Exchange as CCXTExchange
 from pyee.asyncio import AsyncIOEventEmitter
 
-from ..core.healthy_data import HealthyDataWithFallback
+from ..core.healthy_data import HealthyData
 from ..core.listener import Listener
-from ..indicator.persist import (ExchangeBalanceUsdListener,
-                                 ExchangeFundingRateBillListener)
+# from ..indicator.persist import (ExchangeBalanceUsdListener,
+#                                  ExchangeFundingRateBillListener)
 from ..plugin import pm
-from .listeners import (ExchangeBalanceListener, ExchangeCurrenciesListener,
-                        ExchangeOrderBillListener, ExchangePositionListener)
+# from .listeners import (ExchangeBalanceListener, ExchangeCurrenciesListener,
+#                         ExchangeOrderBillListener, ExchangePositionListener)
 from .utils import round_to_precision
 
 if TYPE_CHECKING:
+    from ..core.app import AppCore
     from .config import BaseExchangeConfig
 
 
@@ -98,29 +100,6 @@ class OrderType(StrEnum):
 
 
 @dataclass
-class OrderParams:
-    """下单的参数"""
-    pass
-
-
-class MarketTradingPairRow:
-    """市场交易对列表"""
-
-    def __init__(self, symbol: str):
-        pass
-
-
-"""
------
-ALL
----
- a | a0 | a1 | a2 |  -> this is row
- b | 
-
-"""
-
-
-@dataclass
 class FundingRate:
     """资金费率数据"""
     exchange: str
@@ -177,32 +156,44 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     提供统一的交易所 API 封装
     """
     class_name: ClassVar[str] = "base_exchange"
-    __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "_positions_data")
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "config", "event", "_positions_data"}
 
     # 是否为统一账户模式（现货和合约共用账户）
     # OKX 等交易所为 True，Binance 等为 False（默认）
     unified_account: ClassVar[bool] = False
 
-    def __init__(self, config: "BaseExchangeConfig"):
-        super().__init__(name=config.path)
-        self.config = config
-        self.event = AsyncIOEventEmitter()
-        self._markets: dict = {}  # id -> market dict
-        self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
-        self._currencies: dict = {}  # 货币信息
-        # 持仓数据：使用 HealthyDataWithFallback 管理缓存和刷新
-        self._positions_data: HealthyDataWithFallback[dict[str, float]] = HealthyDataWithFallback(
-            max_age=5.0,  # 5秒过期
-            fetch_func=self._fetch_positions_internal
+    # def __init__(self, **kwargs):
+    #     super().__init__(name=config.path)
+    #     self.config = config
+    #     self._markets: dict = {}  # id -> market dict
+    #     self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
+    #     self._currencies: dict = {}  # 货币信息
+        # ccxt key -> {pair -> "used/free/total"}
+        # self.add_child(ExchangeFundingRateBillListener())
+        # self.add_child(ExchangeBalanceUsdListener(60))
+        # self.add_child(ExchangeOrderBillListener())
+        # self.add_child(ExchangePositionListener())
+        # self.add_child(ExchangeBalanceListener())
+        # self.add_child(ExchangeCurrenciesListener())
+
+    @cached_property
+    def config(self) -> "BaseExchangeConfig":  # name 必须是 config.path
+        app_core: 'AppCore' = self.root
+        return app_core.config.exchanges.exchanges_map[self.name].instance
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        # self.config.instance = self
+        self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
+        # 重新创建持仓数据管理器
+        # 持仓数据：使用 HealthyData 管理缓存和刷新
+        self._positions_data: HealthyData[dict[str, float]] = HealthyData(
+            max_age=10.0  # 此数据主要是对合约生效
         )
-        self._balances: dict[str, dict[str, dict[str, float]]] = defaultdict(
-            dict)  # ccxt key -> {pair -> "used/free/total"}
-        self.add_child(ExchangeFundingRateBillListener())
-        self.add_child(ExchangeBalanceUsdListener(60))
-        self.add_child(ExchangeOrderBillListener())
-        self.add_child(ExchangePositionListener())
-        self.add_child(ExchangeBalanceListener())
-        self.add_child(ExchangeCurrenciesListener())
+        # 余额数据：使用 HealthyData 管理缓存和刷新 (symbol -> {"used":..., "free":..., "total":...})
+        self._balances_data: dict[str, HealthyData[dict[str, dict[str, float]]]] = defaultdict(
+            lambda: HealthyData(max_age=10)
+        )
 
     @property
     def positions(self) -> dict[str, float]:
@@ -251,16 +242,6 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     def exchange_id(self) -> str:
         """交易所 ID"""
         return self.config.ccxt_instance.id
-
-    def on_reload(self, state):
-        super().on_reload(state)
-        self.config.instance = self
-        self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
-        # 重新创建持仓数据管理器
-        self._positions_data = HealthyDataWithFallback(
-            max_age=5.0,
-            fetch_func=self._fetch_positions_internal
-        )
 
     async def on_start(self) -> None:
         """启动时加载市场数据"""
@@ -1096,10 +1077,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     currs = ex.fetch_currencies() if ex.has.get("fetchCurrencies") else ex.load_currencies()
     usdt = currs["USDT"]
     nets = usdt.get("networks", {})
-    
+
     network = "TRC20"   # ⚠️ 用你 nets 里实际存在的 key（可能是 TRX/TRC20 等）
     fee = nets[network]["fee"]
-    
+
     def list_networks(ex, code: str):
     # 有些交易所只有 fetch_currencies 才会带 networks
     currs = ex.fetch_currencies() if ex.has.get("fetchCurrencies") else ex.load_currencies()

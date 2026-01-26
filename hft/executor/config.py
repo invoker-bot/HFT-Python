@@ -11,6 +11,8 @@
 - PCAExecutorConfig: PCA 执行器配置
 - SmartExecutorConfig: 智能路由执行器配置
 """
+from typing import ClassVar
+from ..config.base import BaseConfigPath
 from .avellaneda_stoikov_executor.config import (
     ASOrderLevel, AvellanedaStoikovExecutorConfig)
 from .base_config import BaseExecutorConfig, ExecutorVarDefinition
@@ -20,10 +22,11 @@ from .order_config import (EntryExitOrderDefinition,
                            OrderConditionalVarDefinition, OrderDefinition,
                            OrderVarDefinition)
 from .pca_executor.config import PCAExecutorConfig
-from .smart_executor.config import SmartExecutorConfig
+# from .smart_executor.config import SmartExecutorConfig
 
 __all__ = [
     "BaseExecutorConfig",
+    "ExecutorConfigPath",
     "ExecutorVarDefinition",
     "OrderVarDefinition",
     "OrderConditionalVarDefinition",
@@ -35,6 +38,9 @@ __all__ = [
     "ASOrderLevel",
     "AvellanedaStoikovExecutorConfig",
     "PCAExecutorConfig",
-    "SmartExecutorConfig",
+    # "SmartExecutorConfig",
 ]
 
+class ExecutorConfigPath(BaseConfigPath):
+    """执行器配置路径"""
+    class_dir: ClassVar[str] = "conf/executor"

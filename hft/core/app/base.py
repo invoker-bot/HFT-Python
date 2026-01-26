@@ -84,7 +84,6 @@ class AppCore(Listener):
         """
         super().initialize(**kwargs)
         self.config: 'AppConfig' = kwargs['config']
-        self.config.instance = self
         self.factory: 'AppFactory' = kwargs['factory']
         self.notify = NotifyService(self)
         # 确保 config 已设置（正常初始化时已设置，pickle 恢复时需要检查）
@@ -201,10 +200,9 @@ class AppCore(Listener):
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.close()
 
-    def on_reload(self, state):
-        super().on_reload(state)
-        self.config.instance = self
-        self.interval = self.config.interval
+    @property
+    def interval(self):
+        return self.config.interval
 
     async def on_start(self):
         await super().on_start()

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..config.base import BaseConfig
+from ..config.base import BaseConfig, BaseConfigPath
 
 if TYPE_CHECKING:
     from .base import BaseStrategy
@@ -372,3 +372,7 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
     def get_class_type(cls) -> Type["BaseStrategy"]:
         from .base import BaseStrategy
         return BaseStrategy
+
+class StrategyConfigPath(BaseConfigPath):
+    """Strategy 配置路径"""
+    class_dir: ClassVar[str] = "conf/strategy/"

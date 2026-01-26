@@ -12,14 +12,17 @@ import textwrap
 from abc import abstractmethod
 from glob import glob
 from os import makedirs, path
-from typing import ClassVar, Generic, Optional, Self, Type, TypeVar, Union
+from pathlib import Path
+# from functools import cached_property
+from typing import ClassVar, Generic, Optional, Self, Type, TypeVar, Union, Any
 
 import yaml
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator
 from promptantic import ModelGenerator
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 
 def prompt_with_completion(message: str, choices: list[str], multiple: bool = False, default: Union[str, list[str]] = "") -> Union[str, list[str]]:
@@ -73,7 +76,7 @@ class BaseConfig(BaseModel, Generic[T]):
     data_dir: ClassVar[str] = "data/"
     class_dir: ClassVar[str] = "conf/"
     class_name: ClassVar[Optional[str]] = None
-    _instance: Optional[T] = PrivateAttr(None, init=True)
+    # _instance: Optional[T] = PrivateAttr(None, init=True)
 
     @classmethod
     @abstractmethod
@@ -84,17 +87,17 @@ class BaseConfig(BaseModel, Generic[T]):
         """根据配置创建对应的实例对象"""
         return self.get_class_type()(self)
 
-    @property
-    def instance(self) -> T:
-        """根据配置创建并返回对应的实例对象"""
-        if self._instance is None:
-            self._instance = self.create_instance()
-        return self._instance
+    # @property
+    # def instance(self) -> T:
+    #     """根据配置创建并返回对应的实例对象"""
+    #     if self._instance is None:
+    #         self._instance = self.create_instance()
+    #     return self._instance
 
-    @instance.setter
-    def instance(self, value: T) -> None:
-        """设置实例对象"""
-        self._instance = value
+    # @instance.setter
+    # def instance(self, value: T) -> None:
+    #     """设置实例对象"""
+    #     self._instance = value
 
     @classmethod
     def all_classes(cls) -> dict[str, type[Self]]:
@@ -157,6 +160,13 @@ class BaseConfig(BaseModel, Generic[T]):
         """获取配置文件的绝对路径"""
         return path.join(cwd, self.class_dir, f"{self.path}.yaml")
 
+    def save_to_file(self, filepath: Union[str, Path]) -> None:
+        data = self.model_dump(mode="json", exclude={"path"})
+        data["class_name"] = self.class_name  # add class name for loading
+        makedirs(path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f)
+
     def save(self, cwd: str = None) -> None:
         """
         保存配置到 YAML 文件
@@ -165,14 +175,20 @@ class BaseConfig(BaseModel, Generic[T]):
         """
         if cwd is None:
             cwd = os.getenv('HFT_ROOT_PATH', '.')
-        data = self.model_dump(mode="json", exclude={"path"})
-        data["class_name"] = self.class_name  # add class name for loading
-        makedirs(path.dirname(self.get_abs_path(cwd)), exist_ok=True)
-        with open(self.get_abs_path(cwd), "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f)
+        filepath = self.get_abs_path(cwd)
+        self.save_to_file(filepath)
 
     @classmethod
-    def load(cls, pathname: str, cwd: str = None) -> Self:
+    def load_from_file(cls, filepath: Union[str, Path], name: str) -> Self:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        class_name = data.pop("class_name")
+        data["path"] = name
+        constructor = cls.all_classes()[class_name]
+        return constructor(**data)
+
+    @classmethod
+    def load(cls, name: str, cwd: str = None) -> Self:
         """
         从 YAML 文件加载配置
 
@@ -184,13 +200,8 @@ class BaseConfig(BaseModel, Generic[T]):
         """
         if cwd is None:
             cwd = os.getenv('HFT_ROOT_PATH', '.')
-        path_ = path.join(cwd, cls.class_dir, f"{pathname}.yaml")
-        with open(path_, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        class_name = data.pop("class_name")
-        data["path"] = pathname
-        constructor = cls.all_classes()[class_name]
-        return constructor(**data)
+        path_ = path.join(cwd, cls.class_dir, f"{name}.yaml")
+        return cls.load_from_file(path_, name=name)
 
     @classmethod
     def list_configs(cls, cwd: str = None) -> list[str]:
@@ -219,3 +230,113 @@ class BaseConfig(BaseModel, Generic[T]):
         data.pop("class_name", None)
         data["path"] = state["path"]
         self.__init__(**data)
+
+
+class BaseConfigPath:
+    """
+    配置路径基类
+
+    特性：
+    - 基于 HFT_ROOT_PATH 环境变量定位配置文件
+    - 支持 load/save 配置
+    - 使用 cached_property 缓存配置实例
+    - 支持 Pydantic 验证
+    """
+
+    class_dir: ClassVar[str] = "conf/"  # 子类覆盖
+
+    def __init__(self, name: str):
+        """
+        初始化配置路径
+
+        Args:
+            name: 配置文件名（不含扩展名）
+        """
+        self.name = name
+        self._instance: Optional[BaseConfig] = None
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: Any,
+        _handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        """
+        Pydantic v2 验证器
+
+        支持从字符串创建 ConfigPath 实例
+        """
+        return core_schema.no_info_after_validator_function(
+            cls._validate,
+            core_schema.str_schema(),
+        )
+
+    @classmethod
+    def _validate(cls, value: Any) -> 'BaseConfigPath':
+        """
+        验证并转换输入值
+
+        Args:
+            value: 输入值（字符串）
+
+        Returns:
+            ConfigPath 实例
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(name=value)
+        raise ValueError(f"Cannot convert {type(value)} to {cls.__name__}")
+
+    def _get_file_path(self) -> Path:
+        """
+        获取配置文件的完整路径
+
+        Returns:
+            配置文件路径
+        """
+        root = os.getenv('HFT_ROOT_PATH', '.')
+        return Path(root) / self.class_dir / f"{self.name}.yaml"
+
+    def load(self) -> 'BaseConfig':
+        """
+        从文件加载配置
+
+        Returns:
+            配置实例
+        """
+        return BaseConfig.load_from_file(self._get_file_path(), self.name)
+
+    def save(self, config: 'BaseConfig') -> None:
+        """
+        保存配置到文件
+
+        Args:
+            config: 配置实例
+        """
+        config.save_to_file(self._get_file_path())
+
+    # def instance(self) -> 'BaseConfig':
+    #     """
+    #     获取缓存的配置实例
+    #
+    #     Returns:
+    #         配置实例
+    #     """
+    #     if self._instance is None:
+    #         raise NotImplementedError("Please implement caching logic here.")
+    #     return self._instance
+    #     # return self._load()
+
+    # @cached_property
+    # def instance(self) -> 'BaseConfig':
+    #     """
+    #     获取缓存的配置实例
+    #
+    #     Returns:
+    #         配置实例
+    #     """
+    #     return self._load()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(name={self.name!r})"

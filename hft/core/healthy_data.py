@@ -20,13 +20,13 @@ Example:
     >>> # 5 秒后...
     >>> ticker.get()  # 抛出 UnhealthyDataError
 """
-import asyncio
-import bisect
 import time
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Generic, Optional, TypeVar
-
+import bisect
+import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, Awaitable, Callable, Generic, Optional, TypeVar, Union
 import numpy as np
+from .duration import parse_duration
 
 T = TypeVar('T')  # 泛型类型参数，表示存储的数据类型
 
@@ -40,8 +40,145 @@ class UnhealthyDataError(Exception):
     """
 
 
-@dataclass
-class HealthyData(Generic[T]):
+DataFunc = Callable[[], Awaitable[tuple[T, Optional[float]]]]
+
+
+class BaseHealthyData(ABC, Generic[T]):
+
+    __pickle_excludes__ = {'_data_lock', '_update_data_lock'}
+
+    def __init__(self, max_age: float = 10):
+        self.max_age = max_age
+        self._dirty: bool = False  # 数据脏标记
+        self.initialize()
+
+    def initialize(self):
+        self._data_lock = asyncio.Lock()  # 保护数据更新的锁，防止并发更新冲突
+        self._update_data_lock = asyncio.Lock()  # 减少多次更新数据
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if k not in self.__pickle_excludes__}
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.initialize()
+
+    @property
+    def data_lock(self) -> asyncio.Lock:
+        """获取数据锁，用于上次获取数据的并发保护"""
+        return self._data_lock
+
+    @property
+    @abstractmethod
+    def is_healthy(self) -> bool:
+        """检查当前数据是否健康"""
+
+    def is_stale(self) -> bool:
+        """数据是否过期"""
+        return not self.is_healthy
+
+    @property
+    def age(self) -> float:
+        """最近的数据年龄（秒）"""
+        return time.time() - self.timestamp
+
+    @property
+    def data(self) -> Optional[T]:
+        """获取最新数据（可能不健康）"""
+        return self.get()[0]
+
+    @property
+    def timestamp(self) -> float:
+        """最近数据的时间戳"""
+        return self.get()[1]
+
+    async def mark_dirty(self) -> None:
+        """标记数据为脏"""
+        async with self._data_lock:
+            self._dirty = True
+
+    @abstractmethod
+    def get(self) -> tuple[Optional[T], float]:
+        """获取最新数据"""
+        # return self._data_tuple
+
+    def get_data(self) -> Optional[T]:
+        """获取最新数据（可能不健康）"""
+        data, _ = self.get()
+        return data
+
+    async def get_or_raise(self) -> tuple[T, float]:
+        async with self._data_lock:
+            if not self.is_healthy:
+                raise UnhealthyDataError("Data is unhealthy")
+            return self.get()  # data is not None now
+
+    async def get_data_or_raise(self) -> T:
+        return (await self.get_or_raise())[0]
+
+    @abstractmethod
+    async def update(self, data: T, timestamp: Optional[float] = None) -> None:
+        """更新数据"""
+
+    async def update_by_func(self, update_func: DataFunc):
+        async with self._update_data_lock:
+            data, timestamp = await asyncio.wait_for(update_func(), timeout=self.max_age)
+        await self.update(data, timestamp)
+
+    async def get_or_update_by_func(self, update_func: DataFunc) -> tuple[T, float]:
+        """
+        获取数据，不健康时自动更新
+
+        Args:
+            update_func: 异步数据获取函数，返回 (data, timestamp)
+
+        Returns:
+            数据
+
+        Raises:
+            UnhealthyDataError: 更新后仍然不健康
+        """
+        try:
+            return await self.get_or_raise()  # 快速路径：数据健康时直接返回
+        except UnhealthyDataError:
+            async with self._update_data_lock:
+                try:
+                    return await self.get_or_raise()  # 双重检查：锁内再次检查，可能其他协程已经更新完成
+                except UnhealthyDataError:
+                    try:
+                        data, timestamp = await asyncio.wait_for(update_func(), timeout=self.max_age)
+                        await self.update(data, timestamp)
+                    except Exception as e:
+                        raise UnhealthyDataError(f"Update failed: {e}") from e
+                    return await self.get_or_raise()  # 更新后再次看是否健康
+
+    async def get_data_or_update_by_func(self, update_func: DataFunc) -> T:
+        return (await self.get_or_update_by_func(update_func))[0]
+
+    async def ensure_update(self, update_func: DataFunc, active: bool = True) -> bool:
+        """
+        确保数据健康（必要时 fetch）
+        Args:
+            update_func: 异步数据获取函数，返回 (data, timestamp)
+            active: 是否主动更新（True时为watch方式，False时为fetch方式）
+
+        Returns:
+            是否成功更新
+        """
+        try:
+            if active:
+                await self.update_by_func(update_func)
+            else:
+                await self.get_or_update_by_func(update_func)
+            return True
+        except UnhealthyDataError:
+            return False
+
+    def __bool__(self) -> bool:
+        return self.is_healthy
+
+
+class HealthyData(BaseHealthyData[T]):
     """
     健康数据封装
 
@@ -61,19 +198,24 @@ class HealthyData(Generic[T]):
             # 触发重新获取
             ...
     """
-    # === 配置参数 ===
-    max_age: float = 10.0  # 数据最大有效年龄（秒），超过则视为不健康
-    on_unhealthy: Optional[Callable[["HealthyData"], Awaitable[None]]] = field(
-        default=None, repr=False
-    )  # 数据不健康时的回调函数（可选）
+    def __init__(self, max_age: float = 10.0):
+        super().__init__(max_age=max_age)
+        self._data_tuple: tuple[Optional[T], float] = (None, 0.0)  # 存储的数据和时间戳
 
-    # === 内部状态（不应直接访问）===
-    _data: Optional[T] = field(default=None, repr=False)  # 存储的数据
-    _timestamp: float = 0.0  # 数据更新时间戳（Unix 时间）
-    _update_count: int = 0  # 累计更新次数，用于统计
-    _dirty: bool = False  # 数据是否被标记为脏（需要刷新）
+    @property
+    def is_healthy(self) -> bool:
+        """检查当前数据是否健康"""
+        data, timestamp = self._data_tuple
+        if data is None:
+            return False
+        if self._dirty:
+            return False
+        return (time.time() - timestamp) <= self.max_age
 
-    def set(self, data: T, timestamp: Optional[float] = None) -> None:
+    def get(self) -> tuple[Optional[T], float]:  # 获取最新的一个数据点
+        return self._data_tuple
+
+    async def update(self, data: T, timestamp: Optional[float] = None) -> None:
         """
         设置数据
 
@@ -81,192 +223,28 @@ class HealthyData(Generic[T]):
             data: 数据
             timestamp: 数据时间戳，默认使用当前时间
         """
-        self._data = data
-        self._timestamp = timestamp if timestamp is not None else time.time()
-        self._update_count += 1
-        self._dirty = False  # 设置新数据后清除 dirty 标记
-
-    def mark_dirty(self) -> None:
-        """
-        标记数据为脏（需要刷新）
-
-        典型场景：下单后仓位数据需要刷新
-        """
-        self._dirty = True
-
-    @property
-    def is_dirty(self) -> bool:
-        """数据是否被标记为脏"""
-        return self._dirty
-
-    def get(self, raise_on_unhealthy: bool = True) -> Optional[T]:
-        """
-        获取数据（检查健康状态）
-
-        Args:
-            raise_on_unhealthy: 不健康时是否抛出异常
-
-        Returns:
-            数据，或 None（如果不健康且不抛异常）
-
-        Raises:
-            UnhealthyDataError: 数据不健康且 raise_on_unhealthy=True
-        """
-        if not self.is_healthy:
-            if raise_on_unhealthy:
-                raise UnhealthyDataError(
-                    f"Data unhealthy: age={self.age:.1f}s > max_age={self.max_age}s"
-                )
-            return None
-        return self._data
-
-    def get_unchecked(self) -> Optional[T]:
-        """获取数据（不检查健康状态）"""
-        return self._data
-
-    @property
-    def is_healthy(self) -> bool:
-        """检查数据是否健康（非空、未过期、未标记为脏）"""
-        if self._data is None:
-            return False
-        if self._dirty:
-            return False
-        return self.age <= self.max_age
-
-    @property
-    def is_stale(self) -> bool:
-        """数据是否过期"""
-        return not self.is_healthy
-
-    @property
-    def age(self) -> float:
-        """数据年龄（秒）"""
-        # if self._timestamp == 0:
-        #     return float('inf')
-        return time.time() - self._timestamp
-
-    @property
-    def timestamp(self) -> float:
-        """数据时间戳"""
-        return self._timestamp
-
-    @property
-    def has_data(self) -> bool:
-        """是否有数据"""
-        return self._data is not None
-
-    @property
-    def update_count(self) -> int:
-        """更新次数"""
-        return self._update_count
-
-    def clear(self) -> None:
-        """清除数据"""
-        self._data = None
-        self._timestamp = 0.0
-        self._dirty = False
-
-    def __bool__(self) -> bool:
-        """bool 转换：有数据且健康"""
-        return self.is_healthy
+        if timestamp is None:
+            timestamp = time.time()
+        async with self._data_lock:
+            self._data_tuple = (data, timestamp)
+            self._dirty = False
 
 
-@dataclass
-class HealthyDataWithFallback(HealthyData[T]):
-    """
-    带 fallback 的健康数据
-
-    扩展 HealthyData，在数据不健康时自动调用 fetch_func 获取新数据。
-    适用于需要自动刷新的缓存场景。
-
-    Example:
-        >>> async def fetch_ticker():
-        ...     return await exchange.fetch_ticker("BTC/USDT")
-        >>> ticker = HealthyDataWithFallback(max_age=5.0, fetch_func=fetch_ticker)
-        >>> data = await ticker.get_or_fetch()  # 自动获取或刷新
-
-    注意：
-        - fetch_func 必须是异步函数
-        - 如果 fetch 失败，会抛出 UnhealthyDataError
-        - get_or_fetch 使用锁防止并发重复 fetch
-    """
-    # 异步获取数据的函数，当数据不健康时自动调用
-    fetch_func: Optional[Callable[[], Awaitable[T]]] = field(default=None, repr=False)
-    # 防止并发 fetch 的锁（运行期资源，不参与 pickle）
-    _fetch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
-
-    async def get_or_fetch(self) -> T:
-        """
-        获取数据，不健康时自动 fetch
-
-        使用双重检查锁定模式防止并发 fetch，避免重复 API 调用。
-
-        Returns:
-            数据
-
-        Raises:
-            UnhealthyDataError: fetch 后仍然不健康
-        """
-        # 快速路径：数据健康时直接返回
-        if self.is_healthy:
-            return self._data
-
-        # 慢速路径：需要 fetch，加锁保护
-        async with self._fetch_lock:
-            # 双重检查：锁内再次检查，可能其他协程已经 fetch 完成
-            if self.is_healthy:
-                return self._data
-
-            if self.fetch_func is not None:
-                try:
-                    data = await self.fetch_func()
-                    self.set(data)
-                    return data
-                except Exception as e:
-                    raise UnhealthyDataError(f"Fetch failed: {e}") from e
-
-            raise UnhealthyDataError("Data unhealthy and no fetch_func provided")
-
-    async def ensure_healthy(self) -> bool:
-        """
-        确保数据健康（必要时 fetch）
-
-        Returns:
-            是否健康
-        """
-        if self.is_healthy:
-            return True
-
-        async with self._fetch_lock:
-            if self.is_healthy:
-                return True
-
-            if self.fetch_func is not None:
-                try:
-                    data = await self.fetch_func()
-                    self.set(data)
-                    return True
-                except Exception:
-                    return False
-
-            return False
-
-
-def _default_is_duplicate(_x: Any, _y: Any) -> bool:
+def always_duplicate(_x: Any, _y: Any) -> bool:
     """默认去重函数：同时间戳视为重复（可 pickle）"""
     return True
 
 
-def _never_duplicate(_x: Any, _y: Any) -> bool:
+def never_duplicate(_x: Any, _y: Any) -> bool:
     """永不去重函数：用于事件类数据如 Trades（可 pickle）"""
     return False
 
 
-class HealthyDataArray(Generic[T]):
+class HealthyDataArray(BaseHealthyData[T]):
     """
     带时间戳的健康数据数组
 
-    存储格式: [(timestamp, value), ...]
+    存储格式: [(value, timestamp), ...]
     按时间戳升序排序，支持中间插入，自动去重，基于时间窗口自动清理
 
     健康判断基于三个指标：
@@ -277,212 +255,149 @@ class HealthyDataArray(Generic[T]):
 
     def __init__(
         self,
-        max_seconds: float,
-        duplicate_tolerance: float = 1e-6,
-        is_duplicate_fn: Callable[[T, T], bool] | None = None,
+        max_age: float,
+        window: Union[str, int, float, None],
+        duplicate_timestamp_delta: float = 1e-6,
+        healthy_points: int = 3,  # 最少数据点数，越多越严格，采样是否充足
+        healthy_cv: float = 0.8,  # 最多变异系数（倒数），越大越严格，采样间隔是否均匀
+        healthy_range: float = 0.6,  # 最少覆盖面积，越大越严格，覆盖时间是否完整
     ):
         """
         Args:
-            max_seconds: 最大保留时间窗口（秒），超出时自动清理旧数据
-            duplicate_tolerance: 时间戳去重容差（秒）
-            is_duplicate_fn: 判断两个值是否重复的函数，默认同时间戳视为重复
+            window: 最大保留时间窗口（秒），超出时自动清理旧数据
+            duplicate_timestamp_delta: 时间戳去重容差（秒）
+            duplicate_value_fn: 判断两个值是否重复的函数，默认同时间戳视为重复
         """
-        self._max_seconds = max_seconds
-        self._duplicate_tolerance = duplicate_tolerance
-        self._is_duplicate_fn = (
-            is_duplicate_fn if is_duplicate_fn is not None else _default_is_duplicate
-        )
-        self._data: list[tuple[float, T]] = []
+        super().__init__(max_age=max_age)
+        self.window = parse_duration(window)
+        self._data_list: list[tuple[T, float]] = []
+        self._duplicate_timestamp_delta = duplicate_timestamp_delta
+        self._healthy_points = healthy_points
+        self._healthy_cv = healthy_cv
+        self._healthy_range = healthy_range
 
-    def append(self, timestamp: float, value: T) -> None:
+    @property
+    def data_list(self) -> list[tuple[T, float]]:
+        """获取内部数据（value, timestamp）"""
+        return self._data_list
+
+    async def append(self, value: T, timestamp: Optional[float] = None,
+                     duplicate_value_fn=always_duplicate) -> None:
         """
         添加数据，按时间戳排序插入，自动去重和清理
 
-        去重行为：当 timestamp 在容差范围内且 is_duplicate_fn 返回 True 时，
+        去重行为：当 timestamp 在容差范围内且 duplicate_value_fn 返回 True 时，
         用新值覆盖旧值（适用于 snapshot 类数据如 Ticker/OrderBook）。
-
         Args:
-            timestamp: 时间戳
             value: 数据值
+            timestamp: 时间戳
         """
+        if timestamp is None:
+            timestamp = time.time()
         # 从后往前找插入位置，同时检查重复
-        pos = len(self._data)
-        for i in range(len(self._data) - 1, -1, -1):
-            if abs(self._data[i][0] - timestamp) < self._duplicate_tolerance:
-                if self._is_duplicate_fn(self._data[i][1], value):
-                    # 覆盖旧值（而非丢弃新值）
-                    self._data[i] = (timestamp, value)
-                    return
-            elif self._data[i][0] > timestamp:
-                pos = i  # 保持升序
-            else:
-                break
+        async with self._data_lock:
+            pos = len(self._data_list)
+            for i in range(len(self._data_list) - 1, -1, -1):
+                delta_time = self._data_list[i][0] - timestamp
+                if abs(delta_time) < self._duplicate_timestamp_delta:
+                    if duplicate_value_fn(self._data_list[i][1], value):
+                        # 覆盖旧值
+                        self._data_list[i] = (timestamp, value)
+                        return
+                if self._data_list[i][0] > timestamp:
+                    pos = i  # 保持升序
+                else:
+                    break
+            self._data_list.insert(pos, (value, timestamp))
+            self._dirty = False
+            self._shrink()
 
-        self._data.insert(pos, (timestamp, value))
-        # 使用数组中最新的时间戳来清理，而不是插入的时间戳
-        # 这样即使插入历史数据，也能正确清理超窗的旧数据
-        if self._data:
-            latest_ts = self._data[-1][0]
-            self._shrink(latest_ts - self._max_seconds)
-
-    def _shrink(self, before_timestamp: float) -> None:
+    def _shrink(self) -> None:
         """清理指定时间戳之前的数据"""
-        start = bisect.bisect_left(self._data, before_timestamp, key=lambda x: x[0])
-        if start > 0:
-            self._data = self._data[start:]
+        before_timestamp = time.time() - self.window
+        while len(self._data_list) > 0:
+            timestamp = self._data_list[0][1]
+            if timestamp >= before_timestamp:
+                break
+            self._data_list.pop(0)
 
-    def assign(self, points: list[tuple[float, T]]) -> None:
+    async def assign(self, points: list[tuple[T, float]]):
         """
         批量替换数据（权威快照优化）
-
-        将内部数据直接替换为该快照，适用于上游一次性返回完整权威数据的场景
-        （如 OHLCV fetch 返回最近 N 根 candle）。
-
-        处理流程：
-        1. 按 timestamp 排序
-        2. 同 timestamp（duplicate_tolerance 内）按 is_duplicate_fn 做 replace 归并
-        3. 按 max_seconds 做 shrink（仅保留窗口内数据）
-
-        使用约束：
-        - 仅用于"权威快照"：该批数据必须覆盖当前窗口内的全部有效点
-        - 与 watch 并行时需避免竞态：要么串行化写入，要么 assign 后立即用最新点 upsert
-
-        Args:
-            points: [(timestamp, value), ...] 数据点列表
         """
-        if not points:
-            self._data = []
-            return
+        async with self._data_lock:
+            self._data_list = points
 
-        # 1. 按 timestamp 排序
-        sorted_points = sorted(points, key=lambda x: x[0])
-
-        # 2. 去重归并（同 timestamp 保留最后一个或按 is_duplicate_fn 合并）
-        merged: list[tuple[float, T]] = []
-        for ts, val in sorted_points:
-            if merged and abs(merged[-1][0] - ts) < self._duplicate_tolerance:
-                if self._is_duplicate_fn(merged[-1][1], val):
-                    # 覆盖旧值
-                    merged[-1] = (ts, val)
-                else:
-                    merged.append((ts, val))
-            else:
-                merged.append((ts, val))
-
-        # 3. 替换内部数据
-        self._data = merged
-
-        # 4. 按 max_seconds 做 shrink
-        if self._data:
-            latest_ts = self._data[-1][0]
-            self._shrink(latest_ts - self._max_seconds)
-
-    @property
-    def latest(self) -> Optional[T]:
-        """最新值"""
-        return self._data[-1][1] if self._data else None
-
-    @property
-    def latest_timestamp(self) -> float:
-        """最新时间戳，无数据返回 0.0"""
-        return self._data[-1][0] if self._data else 0.0
-
-    @property
-    def timeout(self) -> float:
-        """数据超时时间（秒）：当前时间与最新数据的时间差"""
-        if not self._data:
-            return float('inf')
-        # 使用 max(0.0, ...) 防止交易所时间超前本机导致负值
-        return max(0.0, time.time() - self._data[-1][0])
-
-    def get_cv(
+    def is_cv_healthy(
         self,
-        start_timestamp: float,
-        end_timestamp: float,
-        min_points: int = 3,
-    ) -> float:
+        start_timestamp: Optional[float] = None,
+        end_timestamp: Optional[float] = None,
+    ) -> bool:
         """
         计算指定时间范围内的采样间隔变异系数
 
         Args:
             start_timestamp: 起始时间戳
             end_timestamp: 结束时间戳
-            min_points: 最少数据点数（需要 min_points 个点来计算 min_points-1 个间隔）
-
-        Returns:
-            变异系数，数据不足返回 100.0（极不健康）
         """
-        start_pos = bisect.bisect_left(self._data, start_timestamp, key=lambda x: x[0])
-        end_pos = bisect.bisect_right(self._data, end_timestamp, key=lambda x: x[0])
+        start_pos = bisect.bisect_left(self._data_list, start_timestamp, key=lambda x: x[1]) if start_timestamp is not None else 0
+        end_pos = bisect.bisect_right(self._data_list, end_timestamp, key=lambda x: x[1]) if end_timestamp is not None else len(self._data_list)
 
-        # 需要至少 min_points 个点
-        if len(self._data) == 0 or end_pos - start_pos < min_points:
-            return 100.0
+        if end_pos - start_pos < self._healthy_points:
+            return False
 
         times = np.array(
-            [self._data[i][0] for i in range(start_pos, end_pos)],
+            [self._data_list[i][1] for i in range(start_pos, end_pos)],
             dtype=float,
         )
         dtimes = np.diff(times)
 
-        if len(dtimes) < 2:
-            return 100.0
+        if len(dtimes) < 2:  # 变异系数需要至少两个间隔
+            return False
 
-        m = abs(dtimes.mean())
-        if m < 1e-8:
-            return 100.0
+        return self._healthy_cv * dtimes.std() < abs(dtimes.mean())
 
-        return float(dtimes.std() / m)
-
-    def get_range(
+    def is_range_healthy(
         self,
-        start_timestamp: float,
-        end_timestamp: float,
-        min_points: int = 3,
-    ) -> float:
+        start_timestamp: Optional[float] = None,
+        end_timestamp: Optional[float] = None,
+    ) -> bool:
         """
         计算指定时间范围内的数据覆盖比例
 
         Args:
             start_timestamp: 起始时间戳
             end_timestamp: 结束时间戳
-            min_points: 最少数据点数
 
         Returns:
             覆盖比例（实际覆盖 / 期望覆盖），数据不足返回 0.0（极不健康）
         """
-        if len(self._data) == 0:
-            return 0.0
+        start_pos = bisect.bisect_left(self._data_list, start_timestamp, key=lambda x: x[1]) if start_timestamp is not None else 0
+        end_pos = bisect.bisect_right(self._data_list, end_timestamp, key=lambda x: x[1]) if end_timestamp is not None else len(self._data_list)
 
-        # bisect_left: 第一个 >= start_timestamp 的位置
-        start_pos = bisect.bisect_left(self._data, start_timestamp, key=lambda x: x[0])
-        # bisect_right: 第一个 > end_timestamp 的位置（exclusive）
-        end_pos = bisect.bisect_right(self._data, end_timestamp, key=lambda x: x[0])
-
-        # end_pos 是 exclusive，所以窗口内的点数是 end_pos - start_pos
-        num_points = end_pos - start_pos
-        if num_points < min_points:
-            return 0.0
+        if end_pos - start_pos < self._healthy_points:
+            return False
 
         # 最后一个点的索引是 end_pos - 1
         last_idx = end_pos - 1
-        actual_range = abs(self._data[last_idx][0] - self._data[start_pos][0])
-        expected_range = abs(end_timestamp - start_timestamp)
+        if last_idx < start_pos:
+            return False
+        actual_range = self._data_list[last_idx][1] - self._data_list[start_pos][1]
+        expected_range = end_timestamp - start_timestamp
+        return expected_range * self._healthy_range < actual_range
 
-        if expected_range < 1e-8:
-            return 0.0
+    def get(self) -> tuple[Optional[T], float]:
+        """获取最新数据点"""
+        try:
+            return self._data_list[-1]
+        except IndexError:
+            return (None, 0.0)
 
-        return actual_range / expected_range
+    async def update(self, data: T, timestamp: Optional[float] = None):
+        await self.append(data, timestamp)
 
-    def is_healthy(
-        self,
-        start_timestamp: float,
-        end_timestamp: float,
-        timeout_threshold: float = 60,
-        cv_threshold: float = 0.8,
-        range_threshold: float = 0.6,
-        min_points: int = 3,
-    ) -> bool:
+    @property
+    def is_healthy(self) -> bool:
         """
         判断指定时间范围内的数据是否健康
 
@@ -491,38 +406,24 @@ class HealthyDataArray(Generic[T]):
         2. cv < cv_threshold: 采样足够均匀
         3. range > range_threshold: 覆盖时间足够长
         """
-        if self.timeout >= timeout_threshold:
+        if self._dirty:
             return False
-
-        cv = self.get_cv(start_timestamp, end_timestamp, min_points)
-        if cv >= cv_threshold:
+        data, timestamp = self.get()
+        if data is None:
             return False
-
-        range_val = self.get_range(start_timestamp, end_timestamp, min_points)
-        if range_val <= range_threshold:
+        if time.time() - timestamp > self.max_age:
             return False
-
-        return True
-
-    def clear(self) -> None:
-        """清空数据"""
-        self._data.clear()
+        return self.is_range_healthy() and self.is_cv_healthy()
 
     def __len__(self) -> int:
-        return len(self._data)
-
-    def __bool__(self) -> bool:
-        return len(self._data) > 0
+        return len(self._data_list)
 
     def __getitem__(self, index: int) -> T:
         """索引访问，返回值（不含时间戳）"""
-        return self._data[index][1]
+        return self._data_list[index][0]
 
     def __iter__(self):
-        """迭代返回值（不含时间戳）"""
+        """迭代返回值"""
         # Keep it tuple-unpacking (instead of subscript) to avoid rare astroid/pylint crashes.
-        return (value for _, value in self._data)
-
-    def items(self):
-        """迭代返回 (timestamp, value) 元组"""
-        return iter(self._data)
+        for value, _ in self._data_list:
+            yield value

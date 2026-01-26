@@ -9,11 +9,12 @@ import pickle
 import threading
 from os import makedirs, path, replace
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, TypeVar
-
 from .base import AppCore
-from .config import AppConfig
+from .config import AppConfigPath
 
 if TYPE_CHECKING:
+    from .config import AppConfig
+    from ...config.base import BaseConfig, BaseConfigPath
     from ..listener import Listener
 
 logger = logging.getLogger(__name__)
@@ -66,18 +67,16 @@ class AppFactory:
         初始化应用工厂
 
         Args:
-            app_name: 应用名称（如 "main"）
+            app_name: 应用名称, 也是加载路径（如 "main"）
             restore_cache: 是否从缓存恢复状态
         """
         self.app_name = app_name
         self.restore_cache = restore_cache
-
-        # 加载配置
-        self.config = AppConfig.load(app_name)
-
+        self.config_cache = {}
+        self.config_path = AppConfigPath(app_name)
+        self.config: 'AppConfig' = self.get_or_create_config(self.config_path)  # 加载配置文件
         # 设置缓存文件路径
         self.cache_file = self.config.data_path
-
         # 加载缓存
         if restore_cache:
             self.load_cache()
@@ -88,7 +87,23 @@ class AppFactory:
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._app_core: Optional['AppCore'] = None
-        # self._start = time.time()
+
+    def get_or_create_config(self, config_path: 'BaseConfigPath') -> 'BaseConfig':
+        key = path.join(config_path.class_dir, config_path.name)
+        if key not in self.config_cache:
+            config = config_path.load()
+            self.config_cache[key] = config
+        return self.config_cache[key]
+
+    def get_or_create_configurable_instance(self, config_path: 'BaseConfigPath', parent: Optional['Listener'] = None, **kwargs) -> 'BaseConfig':
+        config = self.get_or_create_config(config_path)
+        return self.get_or_create(
+            listener_class=config.get_class_type(),
+            name=config_path.name,
+            parent=parent,
+            config=config,
+            **kwargs,
+        )
 
     @property
     def interval(self) -> float:
@@ -107,13 +122,7 @@ class AppFactory:
         Returns:
             AppCore 实例
         """
-        app_core = self.get_or_create(
-            AppCore,
-            name="AppCore",
-            parent=None,
-            config=self.config,
-            factory=self,
-        )
+        app_core = self.get_or_create_configurable_instance(self.config_path, factory=self)
         self._app_core = app_core
         return app_core
 

@@ -147,10 +147,15 @@ class UnhealthyRestartListener(Listener):
         app_core: 'AppCore' = self.root
         return app_core.config.health_check_restart_reconfirm
 
+    @property
+    def interval(self) -> float:
+        """获取日志输出间隔"""
+        app_core: 'AppCore' = self.root
+        return app_core.config.log_interval
+
     async def on_start(self):
         await super().on_start()
-        root: 'AppCore' = self.root
-        self.interval = root.config.health_check_interval
+        self.start_time = self.current_time
 
     async def on_tick(self):
         """

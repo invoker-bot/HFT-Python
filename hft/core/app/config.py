@@ -9,14 +9,15 @@
 """
 import logging
 from os import path
-from typing import TYPE_CHECKING, ClassVar, Type
+from typing import ClassVar, Type
 
-from pydantic import BaseModel, Field
-from ...config.base import BaseConfig
-from ..config_path import (ExchangeConfigPathGroup, ExecutorConfigPath,
-                           StrategyConfigPath)
+from pydantic import Field
+from ...config.base import BaseConfig, BaseConfigPath
 from .base import AppCore
 from ...database.config import DatabaseConfig
+from ...strategy.config import StrategyConfigPath
+from ...executor.config import ExecutorConfigPath
+from ...exchange.config import ExchangeConfigPathGroup
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +91,8 @@ class AppConfig(BaseConfig["AppCore"]):
             "参考 https://github.com/caronc/apprise"
         )
     )
+
+
+class AppConfigPath(BaseConfigPath):
+    """App 配置路径"""
+    class_dir: ClassVar[str] = "conf/app/"
