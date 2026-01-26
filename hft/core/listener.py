@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property, lru_cache
-from typing import Coroutine, Iterator, Optional, Type, TypeVar
+from typing import Coroutine, Iterator, Optional, Type, TypeVar, TYPE_CHECKING
 
 from humanfriendly import format_timespan
 from rich.console import Console
@@ -29,6 +29,8 @@ from tenacity import (AsyncRetrying, RetryCallState, retry,
                       wait_fixed)
 
 from ..plugin import pm
+if TYPE_CHECKING:
+    from .app.base import AppCore
 
 # 泛型类型变量，用于类型安全的查找方法
 T = TypeVar('T', bound='Listener')
@@ -137,12 +139,18 @@ class Listener(ABC):
 
     def initialize(self, **kwargs):
         """初始化不可序列化的对象（在 __init__ 和 unpickle 时调用）"""
-        self._parent: Optional[weakref.ReferenceType["Listener"]] = None
         self._alock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
         self._state = ListenerState.STOPPED
         # children 由 get_or_create 重建，不从 pickle 恢复
-        self._children: dict[str, 'Listener'] = {}
+        self._children: dict[str, 'Listener'] = kwargs.get("children", {})
+        _parent = kwargs.get("parent", None)
+        if _parent is None:
+            self._parent = None
+        else:
+            self._parent = weakref.ref(_parent)
+        self._clear_root_cache()
+
 
     def __getstate__(self) -> dict:
         """
@@ -327,7 +335,7 @@ class Listener(ABC):
         self._state = value
 
     @cached_property
-    def root(self) -> 'Listener':
+    def root(self) -> 'AppCore':
         """获取根监听器（向上遍历到顶层，缓存结果）"""
         parent = self.parent
         if parent is None:
@@ -349,14 +357,22 @@ class Listener(ABC):
             return None
         return self._parent()
 
-    @parent.setter
-    def parent(self, parent: Optional['Listener']):
+    def _set_parent(self, parent: Optional['Listener']):
         """设置父监听器"""
         if parent is None:
             self._parent = None
         else:
             self._parent = weakref.ref(parent)
         self._clear_root_cache()
+
+    @parent.setter
+    def parent(self, parent: Optional['Listener']):
+        """设置父监听器"""
+        assert self.parent is None, "Cannot set parent: already has a parent"
+        if parent is not None:
+            parent.add_child(self)
+        else:
+            self._set_parent(None)
 
     @property
     def children(self) -> dict[str, 'Listener']:
@@ -372,8 +388,9 @@ class Listener(ABC):
         Args:
             child: 要添加的子监听器
         """
+        assert child.parent is None, "Cannot add child: already has a parent"
         self._children[child.name] = child
-        child.parent = self
+        child._set_parent(self)
         self.root._clear_class_cache()
 
     async def add_child_with_start(self, child: 'Listener'):
@@ -392,7 +409,7 @@ class Listener(ABC):
         """
         if child_name in self._children:
             child = self._children[child_name]
-            child.parent = None
+            child._set_parent(None)
             self._children.pop(child_name, None)
             # 清理根节点的查找缓存
             self.root._clear_class_cache()

@@ -16,6 +16,7 @@ ExchangeGroup 按交易所类型（class_name）组织多账户：
                             -> 返回该类型所有账户
                             -> 依次在所有账户执行（老鼠仓模式）
 """
+from functools import cached_property, lru_cache
 from collections import defaultdict
 from typing import TYPE_CHECKING, Optional
 
@@ -57,79 +58,68 @@ class ExchangeGroup(Listener):
     Attributes:
         exchanges_map: class_name -> [instance_names] 映射
     """
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "config_path"}
+    lazy_start = True
+    disable_tick = True  # 没有on tick 方法
 
-    def __init__(self):
-        super().__init__(interval=60.0)
-        self.exchanges_map = defaultdict(list)
+    @cached_property
+    def config_path(self):
+        return self.root.config.exchanges
 
-    async def add_exchange(self, exchange: BaseExchange):
-        self.exchanges_map[exchange.class_name].append(exchange.name)
-        self.add_child(exchange)
-        exchange.enabled = self.enabled
+    @lru_cache(maxsize=512)
+    def get_exchange_instances_raw(self, selectors: str) -> dict[str, 'BaseExchange']:
+        factory = self.root.factory
+        results = {}
+        for name, config_path in self.config_path.get_filtered_exchanges_map_raw(factory, selectors).items():
+            results[name] = factory.get_or_create_configurable_instance(config_path, self)
+        return results
 
-    async def remove_exchange(self, exchange: BaseExchange):
-        # await exchange.stop()
-        # self.exchanges_map[exchange.class_name].remove(exchange.name)
-        await self.remove_child_with_end(exchange.name)
-        self.exchanges_map[exchange.class_name].remove(exchange.name)
+    def get_exchange_instances(self, includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> dict[str, 'BaseExchange']:
+        """
+        获取过滤后的 exchanges_map
+
+        Args:
+            includes: 包含的交易所类型列表
+            excludes: 排除的交易所类型列表
+
+        Returns:
+            过滤后的 exchanges_map
+        """
+        return self.get_exchange_instances_raw(
+            self.config_path.join_selectors(includes, excludes)
+        )
+
+    @lru_cache(maxsize=512)
+    def get_grouped_exchange_instances_raw(self, selectors: str) -> dict[str, list['BaseExchange']]:
+        factory = self.root.factory
+        grouped_configs = self.config_path.get_filtered_grouped_exchanges_map_raw(factory, selectors)
+        results = {}
+        for class_name, config_paths in grouped_configs.items():
+            instances = []
+            for config_path in config_paths:
+                instance = factory.get_or_create_configurable_instance(config_path, self)
+                instances.append(instance)
+            results[class_name] = instances
+        return results
+
+    def get_grouped_exchange_instances(self, includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> dict[str, list['BaseExchange']]:
+        """
+        获取过滤后的分组 exchanges_map
+
+        Args:
+            includes: 包含的交易所类型列表
+            excludes: 排除的交易所类型列表
+
+        Returns:
+            过滤后的分组 exchanges_map
+        """
+        return self.get_grouped_exchange_instances_raw(
+            self.config_path.join_selectors(includes, excludes)
+        )
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.get_exchange_instances()  # 预加载交易所实例
 
     async def on_tick(self):
-        # Placeholder for periodic tasks related to exchange groups
-        app: 'AppCore' = self.root
-
-        # 获取当前应该存在的 exchange 配置 ID 映射
-        exchange_id_map = app.config.exchanges.get_id_map()
-
-        # 移除不再需要的 exchange
-        for exchange in list(self.children.values()):
-            if exchange.name not in exchange_id_map:
-                await self.remove_exchange(exchange)
-
-        # 添加新的 exchange（使用 cache_manager.get_or_create 支持缓存恢复）
-        for exchange_id, exchange_path in exchange_id_map.items():
-            if exchange_id not in self.children:
-                try:
-                    exchange_config = exchange_path.instance
-                    exchange_class = type(exchange_config.instance)
-
-                    # 使用 cache_manager.get_or_create 恢复或创建 exchange 实例
-                    exchange_instance: BaseExchange = app.config.cache_manager.get_or_create(
-                        exchange_class,
-                        exchange_id,
-                        parent=self,
-                        config=exchange_config
-                    )
-                except InvalidToken:
-                    self.logger.error("Failed to decrypt exchange config file for %s, you should check password or config file.", exchange_id)
-                    return True  # 配置文件解密失败，跳过加载该交易所
-
-                # 注意：get_or_create 已经调用了 add_child，但我们还需要更新 exchanges_map
-                self.exchanges_map[exchange_instance.class_name].append(exchange_instance.name)
-
-                # 如果 ExchangeGroup 已经在运行，启动新添加的 exchange
-                if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
-                    await exchange_instance.start()
-
-    def get_exchange_classes(self):
-        classes = []
-        for k, v in list(self.exchanges_map.items()):
-            if len(v) > 0:
-                classes.append(k)
-        return classes
-
-    def get_exchange_by_class(self, class_name: str) -> Optional[BaseExchange]:
-        exchange_names = self.exchanges_map[class_name]
-        for exchange_name in exchange_names:
-            exchange = self.children.get(exchange_name, None)
-            if exchange is not None:
-                return exchange
-        return None
-
-    def get_exchanges_by_class(self, class_name: str) -> list[BaseExchange]:
-        result = []
-        exchange_names = self.exchanges_map[class_name]
-        for exchange_name in exchange_names:
-            exchange = self.children.get(exchange_name, None)
-            if exchange is not None:
-                result.append(exchange)
-        return result
+        pass

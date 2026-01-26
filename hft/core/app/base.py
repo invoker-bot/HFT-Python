@@ -74,7 +74,8 @@ class AppCore(Listener):
             -> 执行交易
     """
 
-    __pickle_exclude__ = {*Listener.__pickle_exclude__, "database", "notify", "factory", "config"}
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "database", "notify", "factory", "config",
+                          "exchange_group", "indicator_group", "strategy", "executor"}
 
     def initialize(self, **kwargs):
         """
@@ -98,16 +99,15 @@ class AppCore(Listener):
             StateLogListener,
             parent=self
         )
-        return
 
         # === 核心组件 ===
         # 1. 交易所连接管理
         self.exchange_group = self.factory.get_or_create(
             ExchangeGroup,
-            "ExchangeGroup",
             parent=self
         )
-
+        return
+        # ...
         # 2. 指标管理（Feature 0006/0007）
         self.indicator_group = self.factory.get_or_create(
             IndicatorGroup,

@@ -152,6 +152,7 @@ class AppFactory:
         if name is None:
             name = listener_class.__name__
         kwargs['name'] = name
+        kwargs['parent'] = parent
         cache_key = self.build_cache_key(name, parent)
         if cache_key in self._cache:
             # 从缓存恢复
@@ -162,11 +163,6 @@ class AppFactory:
         else:
             # 如果构造函数接受 name 参数，则传递；否则不传递
             instance = listener_class(**kwargs)
-
-        # 建立父子关系
-        if parent is not None:
-            parent.add_child(instance)
-
         return instance
 
     def start_daemon(self, app_core: 'AppCore'):

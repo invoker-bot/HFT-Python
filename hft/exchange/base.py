@@ -176,14 +176,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         # self.add_child(ExchangeBalanceListener())
         # self.add_child(ExchangeCurrenciesListener())
 
-    @cached_property
-    def config(self) -> "BaseExchangeConfig":  # name 必须是 config.path
-        app_core: 'AppCore' = self.root
-        return app_core.config.exchanges.exchanges_map[self.name].instance
-
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
-        # self.config.instance = self
+        self.config: 'BaseExchangeConfig' = kwargs['config']
         self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
         # 重新创建持仓数据管理器
         # 持仓数据：使用 HealthyData 管理缓存和刷新

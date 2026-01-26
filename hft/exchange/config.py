@@ -196,7 +196,7 @@ class ExchangeConfigPathGroup:
         Returns:
             {exchange_class_id: [exchange_config_id, ...]}
         """
-        grouped: dict[str, list[str]] = defaultdict(list)
+        grouped = defaultdict(list)
         if ids is None:
             ids = self.exchanges
         for id_ in ids:
@@ -206,7 +206,7 @@ class ExchangeConfigPathGroup:
             grouped[group].append(id_)
         return grouped
 
-    def to_grouped_exchanges_map(self, factory: 'AppFactory', ids: Optional[list[str]] = None) -> dict[str, list[str]]:
+    def to_grouped_exchanges_map(self, factory: 'AppFactory', ids: Optional[list[str]] = None) -> dict[str, list[ExchangeConfigPath]]:
         """
         按 exchange_class_id 分组的配置 ID 映射
 
@@ -215,7 +215,7 @@ class ExchangeConfigPathGroup:
         """
         if ids is None:
             ids = self.exchanges
-        grouped: dict[str, list[str]] = defaultdict(list)
+        grouped = defaultdict(list)
         for id_ in ids:
             exchange_path = self.exchanges_map[id_]
             instance = factory.get_or_create_config(exchange_path)
@@ -257,7 +257,7 @@ class ExchangeConfigPathGroup:
         raise ValueError(f"Cannot convert {type(value)} to {cls.__name__}")
 
     @staticmethod
-    def _split_selectors(selectors: str) -> tuple[list[str], list[str]]:
+    def split_selectors(selectors: str) -> tuple[list[str], list[str]]:
         """
         分离 include 和 exclude 规则
 
@@ -280,7 +280,11 @@ class ExchangeConfigPathGroup:
         return includes, excludes
 
     @staticmethod
-    def _join_selectors(includes: list[str], excludes: list[str]) -> str:
+    def join_selectors(includes: Optional[list[str]], excludes: Optional[list[str]]) -> str:
+        if includes is None or len(includes) == 0:
+            includes = ["*"]
+        if excludes is None:
+            excludes = []
         parts = []
         for selector in includes:
             parts.append(selector.strip())
@@ -289,7 +293,7 @@ class ExchangeConfigPathGroup:
         return ",".join(parts)
 
     @lru_cache(maxsize=512)
-    def _apply_filters(self, factory: 'AppFactory', selectors: str) -> list[str]:
+    def apply_filters_raw(self, factory: 'AppFactory', selectors: str) -> list[str]:
         """
         应用 selector 规则，返回匹配的配置 ID 集合
 
@@ -300,32 +304,30 @@ class ExchangeConfigPathGroup:
             匹配的配置 ID 集合
         """
         # 空列表等价于 ["*"]
-        includes, excludes = self._split_selectors(selectors)
+        includes, excludes = self.split_selectors(selectors)
         matcher = Matcher(include_patterns=includes, exclude_patterns=excludes, case_sensitive=False)
         return [id_ for id_, exchange_path in self.exchanges_map.items() if ((id_ in matcher) and
                 (factory.get_or_create_config(exchange_path).class_name in matcher))]
 
-    def apply_filters(self, factory: 'AppFactory', includes: list[str], excludes: list[str]) -> list[str]:
-        if len(includes) == 0:
-            includes = ["*"]
-        selectors = self._join_selectors(includes, excludes)
-        return self._apply_filters(factory, selectors)
+    def apply_filters(self, factory: 'AppFactory', includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> list[str]:
+        selectors = self.join_selectors(includes, excludes)
+        return self.apply_filters_raw(factory, selectors)
 
     @lru_cache(maxsize=512)
-    def _get_filtered_exchanges_map(self, factory: 'AppFactory', selectors: str) -> dict[str, ExchangeConfigPath]:
-        return {id_: self.exchanges_map[id_] for id_ in self._apply_filters(factory, selectors)}
+    def get_filtered_exchanges_map_raw(self, factory: 'AppFactory', selectors: str) -> dict[str, ExchangeConfigPath]:
+        return {id_: self.exchanges_map[id_] for id_ in self.apply_filters_raw(factory, selectors)}
 
-    def get_filtered_exchanges_map(self, factory: 'AppFactory', includes: list[str], excludes: list[str]) -> dict[str, ExchangeConfigPath]:
-        return self._get_filtered_exchanges_map(factory, self._join_selectors(includes, excludes))
+    def get_filtered_exchanges_map(self, factory: 'AppFactory', includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> dict[str, ExchangeConfigPath]:
+        return self.get_filtered_exchanges_map_raw(factory, self.join_selectors(includes, excludes))
 
     @lru_cache(maxsize=512)
-    def _get_filtered_grouped_exchanges_ids(
+    def get_filtered_grouped_exchanges_ids_raw(
         self, factory: 'AppFactory', selectors: str
     ) -> dict[str, list[str]]:
-        return self.to_grouped_exchanges_ids(factory, self._apply_filters(factory, selectors))
+        return self.to_grouped_exchanges_ids(factory, self.apply_filters_raw(factory, selectors))
 
     def get_filtered_grouped_exchanges_ids(
-        self, factory: 'AppFactory', includes: list[str], excludes: list[str],
+        self, factory: 'AppFactory', includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None,
     ) -> dict[str, list[str]]:
         """
         根据 id_filter 和 group_filter 过滤并返回分组的配置 ID 映射
@@ -337,19 +339,19 @@ class ExchangeConfigPathGroup:
         Returns:
             {exchange_class_id: [exchange_config_id, ...]}
         """
-        return self._get_filtered_grouped_exchanges_ids(
+        return self.get_filtered_grouped_exchanges_ids_raw(
             factory,
-            self._join_selectors(includes, excludes)
+            self.join_selectors(includes, excludes)
         )
 
     @lru_cache(maxsize=512)
-    def _get_filtered_grouped_exchanges_map(
+    def get_filtered_grouped_exchanges_map_raw(
         self, factory: 'AppFactory', selectors: str
     ) -> dict[str, list[ExchangeConfigPath]]:
-        return self.to_grouped_exchanges_map(factory, self._apply_filters(factory, selectors))
+        return self.to_grouped_exchanges_map(factory, self.apply_filters_raw(factory, selectors))
 
     def get_filtered_grouped_exchanges_map(
-        self, factory: 'AppFactory', includes: list[str], excludes: list[str],
+        self, factory: 'AppFactory', includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None,
     ) -> dict[str, list[ExchangeConfigPath]]:
         """
         根据 id_filter 和 group_filter 过滤并返回分组的配置路径映射
@@ -361,9 +363,9 @@ class ExchangeConfigPathGroup:
         Returns:
             {exchange_class_id: [exchange_config_path, ...]}
         """
-        return self._get_filtered_grouped_exchanges_map(
+        return self.get_filtered_grouped_exchanges_map_raw(
             factory,
-            self._join_selectors(includes, excludes)
+            self.join_selectors(includes, excludes)
         )
 
     def __repr__(self) -> str:
