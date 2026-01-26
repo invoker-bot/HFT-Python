@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 
 from cachetools import TTLCache, cached
 from ccxt.base.errors import InvalidOrder
-from ccxt.base.types import (Order, OrderBook, OrderRequest, Position, Ticker,
-                             Trade)
+from ccxt.base.types import (Order, OrderBook, OrderRequest, Position, Ticker, Balance, Balances,
+                             Trade, MarketInterface, CurrencyInterface)
 from ccxt.pro import Exchange as CCXTExchange
 from pyee.asyncio import AsyncIOEventEmitter
 
@@ -156,18 +156,12 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     提供统一的交易所 API 封装
     """
     class_name: ClassVar[str] = "base_exchange"
-    __pickle_exclude__ = {*Listener.__pickle_exclude__, "config", "event", "_positions_data"}
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "config", "event", "_positions",
+                          "_balances", "_markets", "_currencies"}
 
-    # 是否为统一账户模式（现货和合约共用账户）
+    # 是否为统一账户模式（现货和合约共用账户）, 从而影响了 balance计算
     # OKX 等交易所为 True，Binance 等为 False（默认）
     unified_account: ClassVar[bool] = False
-
-    # def __init__(self, **kwargs):
-    #     super().__init__(name=config.path)
-    #     self.config = config
-    #     self._markets: dict = {}  # id -> market dict
-    #     self._market_trading_pairs: dict[str, MarketTradingPair] = {}  # id -> MarketTradingPair
-    #     self._currencies: dict = {}  # 货币信息
         # ccxt key -> {pair -> "used/free/total"}
         # self.add_child(ExchangeFundingRateBillListener())
         # self.add_child(ExchangeBalanceUsdListener(60))
@@ -180,38 +174,93 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         super().initialize(**kwargs)
         self.config: 'BaseExchangeConfig' = kwargs['config']
         self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
+        self._markets: HealthyData[dict[str, MarketInterface]] = HealthyData(max_age=1800.0)  # id -> market dict
+        self._currencies: HealthyData[dict[str, CurrencyInterface]] = HealthyData(max_age=1800.0)  # 货币信息
         # 重新创建持仓数据管理器
         # 持仓数据：使用 HealthyData 管理缓存和刷新
-        self._positions_data: HealthyData[dict[str, float]] = HealthyData(
-            max_age=10.0  # 此数据主要是对合约生效
+        self._positions: HealthyData[dict[str, float]] = HealthyData(
+            max_age=30.0  # 此数据主要是对合约生效
         )
         # 余额数据：使用 HealthyData 管理缓存和刷新 (symbol -> {"used":..., "free":..., "total":...})
-        self._balances_data: dict[str, HealthyData[dict[str, dict[str, float]]]] = defaultdict(
-            lambda: HealthyData(max_age=10)
+        self._balances: dict[str, HealthyData[dict[str, dict[str, float]]]] = defaultdict(
+            lambda: HealthyData(max_age=30.0)
         )
 
     @property
-    def positions(self) -> dict[str, float]:
-        """获取缓存的持仓数据（不检查健康状态）"""
-        return self._positions_data.get_unchecked() or {}
+    def markets(self) -> HealthyData[dict[str, MarketInterface]]:
+        """获取缓存的市场数据（不检查健康状态）"""
+        return self._markets
+
+    async def get_markets_data(self) -> dict[str, MarketInterface]:
+        """获取最新的市场数据"""
+        return self.markets.get_data_or_update_by_func(self.load_markets_internal)
 
     @property
-    def balances(self):
+    def currencies(self) -> HealthyData[dict[str, CurrencyInterface]]:
+        """获取缓存的货币数据（不检查健康状态）"""
+        return self._currencies
+
+    async def get_currencies_data(self) -> dict[str, CurrencyInterface]:
+        """获取最新的货币数据"""
+        return self.currencies.get_data_or_update_by_func(self.fetch_currencies_internal)
+
+    @property
+    def positions(self) -> HealthyData[dict[str, float]]:
+        """获取缓存的持仓数据（不检查健康状态）"""
+        return self._positions
+
+    async def get_positions_data(self) -> dict[str, float]:
+        """获取最新的持仓数据"""
+        return await self.medal_fetch_positions()
+
+    @property
+    def balances(self) -> dict[str, HealthyData[dict[str, dict[str, float]]]]:
         return self._balances
+
+    async def get_balances_data(self, ccxt_instance_key: str) -> dict[str, Balance]:
+        """获取最新的余额数据"""
+        return await self.medal_fetch_balance(ccxt_instance_key)
+
+    async def get_total_balances_data(self) -> dict[str, dict[str, float]]:
+        if self.unified_account:
+            return await self.get_balances_data(self.config.ccxt_instance_key)
+        else:
+            result = defaultdict(lambda:defaultdict(float))
+            for ccxt_key in self.config.ccxt_instances.keys():
+                for key, data in (await self.get_balances_data(ccxt_key)).items():
+                    for field, num in data.items():
+                        result[key][field] += num
+            return result
 
     def to_raw_symbol(self, pair: str | MarketTradingPair) -> str:
         if isinstance(pair, MarketTradingPair):
             return pair.id
         return pair
 
-    def to_trading_pair(self, pair: str | MarketTradingPair) -> MarketTradingPair:
+    def to_trading_pair(self, pair: str | MarketTradingPair | MarketInterface) -> MarketTradingPair:
         if isinstance(pair, MarketTradingPair):
             return pair
-        return self._market_trading_pairs[pair]
+        if isinstance(pair, str):
+            market: MarketInterface = self._markets.get_data()[pair]
+        else:
+            market: MarketInterface = pair
+        base = market['base']
+        quote = market['quote']
+        trade_type = TradeType(market['type'])
+        trade_sub_type = market['subType']
+        if trade_sub_type is not None:
+            trade_sub_type = TradeSubType(trade_sub_type)
+        expiry = market['expiry']
+        if expiry is not None:
+            expiry = float(expiry) / 1000.0  # 转换为秒级时间戳
+        else:
+            expiry = float('inf')
+        return MarketTradingPair(
+            self.class_name, base, quote, trade_type, market['id'], trade_sub_type, expiry)
 
     def get_symbol_ccxt_instance_key(self, pair: str | MarketTradingPair) -> str:
         pair = self.to_raw_symbol(pair)
-        type_str = self._markets[pair]['type']  # 需要提前load markets
+        type_str = self._markets.get_data()[pair]['type']  # 需要提前load markets
         return self.config.to_ccxt_instance_key(type_str)
 
     def get_exchange(self, pair: str | MarketTradingPair) -> CCXTExchange:  # 查询指定id的交易所实例
@@ -219,7 +268,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
     def get_contract_size(self, pair: str | MarketTradingPair) -> float:
         symbol = self.to_raw_symbol(pair)
-        market = self._markets[symbol]
+        market = self._markets.get_data()[symbol]
         refactor = 1.0
         if market['contract']:
             contract_size = float(market['contractSize'])
@@ -242,7 +291,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """启动时加载市场数据"""
         await super().on_start()
         await self.open()
-        await self.on_tick()
+        await self.on_tick()  # 这里加载市场数据
 
     async def on_stop(self) -> None:
         """停止时保存状态"""
@@ -368,10 +417,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """默认订单参数，子类可覆盖以添加交易所特定参数"""
         return {}
 
-    def __resolve_order(self, order_request: OrderRequest) -> Optional[OrderRequest]:
-        """将 OrderRequest 转换为内置的 OrderRequest"""
+    async def __resolve_order(self, order_request: OrderRequest, market: MarketInterface) -> Optional[OrderRequest]:
+        """将 OrderRequest 转换为内置的 OrderRequest，注意这里并没有处理contract size"""
         symbol = self.to_raw_symbol(order_request["symbol"])
-        market = self._markets.get(symbol, None)
         if market is None:
             self.logger.error("Symbol %s not found in markets", symbol)
             return None
@@ -389,9 +437,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         limit_amount_min = market['limits']['amount']['min'] or precision
         limit_price_min = market['limits']['price']['min'] or 0.0
         limit_cost_min = market["limits"]["cost"]["min"] or 0.0
-        position_amount = self.positions.get(symbol, 0.0)
+        position_amount = (await self.get_positions_data()).get(symbol, 0.0)
         direction = 1 if order_request["side"] == "buy" else -1
-        if position_amount * direction < -1e-9:  # reverse direction, 减仓
+        if (position_amount * direction < -1e-9) or (market['type'] == 'spot' and order_request["side"] == "sell"):  # reverse direction, 减仓
             if abs(aligned_amount) < precision:
                 self.logger.debug(
                     "Order rejected: reduce amount %.6f < precision %.6f",
@@ -465,8 +513,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         ) is False:
             self.logger.info("Order blocked by plugin: %s %s %s", symbol, side, amount)
             return None
-
-        resolved_order = self.__resolve_order(order_params)
+        market = (await self.get_markets_data()).get(symbol, None)
+        resolved_order = await self.__resolve_order(order_params, market)
         if resolved_order is None:
             return None
         place_str = self.__get_place_str(resolved_order)
@@ -479,10 +527,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 )
                 if order is None or order['id'] is None:
                     raise InvalidOrder("Order response is invalid or missing order ID")
-                if type != "market":  # TODO: 记录限价订单
-                    pass
-                else:
-                    self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
+                if type == "market":  # 记录市价订单
+                    await self._balances[market['type']].mark_dirty()
+                    if market['type'] != "spot":
+                        await self._positions.mark_dirty()  # 市价订单后标记持仓数据需要刷新
                 self.event.emit("order_created", resolved_order, order)  # TODO: 可以记录order
                 # 插件钩子：订单创建成功
                 pm.hook.on_order_created(exchange=self, order=order)
@@ -499,13 +547,18 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
     async def create_orders(self, order_params: list[OrderRequest]) -> list[Order]:
         """批量下单"""
-        order_params = list(filter(None,  map(self.__resolve_order, order_params)))
-        if len(order_params) == 0:
+        order_params_list = []
+        for order_param in order_params:
+            market = (await self.get_markets_data()).get(order_param["symbol"], None)
+            resolved_order = await self.__resolve_order(order_param, market)
+            if resolved_order is not None:
+                order_params_list.append(resolved_order)
+        if len(order_params_list) == 0:
             return []
 
         # Debug 模式：仅日志，不实际下单
         if self.config.debug:
-            for order_param in order_params:
+            for order_param in order_params_list:
                 place_str = self.__get_place_str(order_param)
                 self.logger.info("Debug: %s", place_str)
             return []
@@ -515,11 +568,11 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             results = await self.exchanges['swap'].create_orders(order_params)
             for order_param, order in zip(order_params, results):
                 place_str = self.__get_place_str(order)
-                if order_param['type'] != "market":  # TODO: 记录限价订单
-                    pass
-                else:
-                    self._positions_data.mark_dirty()  # 市价订单后标记持仓数据需要刷新
-                self.event.emit("order_created", order_param, order)  # TODO: 可以记录order
+                if order_param['type'] == "market":
+                    await self._balances[market['type']].mark_dirty()
+                    if market['type'] != "spot":
+                        await self._positions.mark_dirty()
+                self.event.emit("order_created", order_param, order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
             return results
         except (InvalidOrder, KeyError) as e:
@@ -595,7 +648,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """
         return await self.config.ccxt_instance.fetch_balance()
 
-    def medal_balance_usd(self, data: dict) -> float:
+    def medal_balance_usd(self, data: Balance) -> float:
         usd = 0.0
         for coin, amount in data.get('total', {}).items():
             if coin in self.stable_coins:
@@ -611,22 +664,34 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     @cached(TTLCache(maxsize=32, ttl=30))
     async def medal_fetch_total_balance_usd(self) -> float:
         # 这个放法只是粗略地估算账户的 USD 价值，并且只利用了稳定币的信息，应该使用平台特定的比较准确
-        balances = await self.fetch_parrallel('fetch_balance')
-        return sum([self.medal_balance_usd(balance) for balance in balances])
+        if self.unified_account:
+            balance = await self.config.ccxt_instance.fetch_balance()
+            return self.medal_balance_usd(balance)
+        else:
+            balances = await self.fetch_parrallel('fetch_balance')
+            return sum([self.medal_balance_usd(balance) for balance in balances])
 
-    def medal_cache_balance(self, ccxt_instance_key: str, balance: dict):
-        result = {asset: info for asset, info in balance.items() if asset.isupper()}
-        self._balances[ccxt_instance_key] = result
+    def _transform_balance(self, balance: Balances) -> dict[str, Balance]:
+        return {asset: info for asset, info in balance.items() if asset.isupper()}
+
+    def medal_cache_balance(self, ccxt_instance_key: str, balance: dict[str, Balance]):
+        self._balances[ccxt_instance_key].update(balance)
         # 插件钩子：余额更新
-        pm.hook.on_balance_update(exchange=self, balance=result)
-        return result
+        pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
+        return balance
 
-    async def medal_fetch_balance(self, ccxt_instance_key: str) -> dict[str, float]:
+    async def medal_fetch_balance_internal(self, ccxt_instance_key: str) -> dict[str, Balance]:
         exchange = self.exchanges[ccxt_instance_key]
-        balance = await exchange.fetch_balance()
-        return self.medal_cache_balance(ccxt_instance_key, balance)
+        balance = self._transform_balance(await exchange.fetch_balance())
+        pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
+        return balance
 
-    async def medal_watch_balance(self, ccxt_instance_key: str) -> dict[str, float]:
+    async def medal_fetch_balance(self, ccxt_instance_key: str) -> dict[str, Balance]:
+        return await self._balances[ccxt_instance_key].get_data_or_update_by_func(
+            self.medal_fetch_balance_internal,
+        )
+
+    async def medal_watch_balance(self, ccxt_instance_key: str) -> dict[str, Balance]:
         """订阅余额更新"""
         exchange = self.exchanges[ccxt_instance_key]
         balance = await exchange.watch_balance()
@@ -666,22 +731,24 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             result[symbol] += amount * direction
         return dict(result)
 
-    async def _fetch_positions_internal(self) -> dict[str, float]:
-        """内部方法：获取并转换持仓数据（用于 HealthyDataWithFallback）"""
-        positions = await self.fetch_positions()
-        return self._transform_positions(positions)
+    async def medal_fetch_positions_internal(self) -> dict[str, float]:
+        """内部方法：获取并转换持仓数据（用于 HealthyData）"""
+        positions = self._transform_positions(await self.fetch_positions())
+        pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
+        return positions
 
-    def medal_cache_positions(self, positions: list[Position]) -> dict[str, float]:
+    async def medal_cache_positions(self, positions: dict[str, float]) -> dict[str, float]:
         """缓存持仓数据（供 watch/fetch 调用）"""
-        result = self._transform_positions(positions)
-        self._positions_data.set(result)
+        await self._positions.update(positions)
         # 插件钩子：持仓更新
-        pm.hook.on_position_update(exchange=self, positions=result)
-        return result
+        pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
+        return positions
 
     async def medal_fetch_positions(self) -> dict[str, float]:
         """获取持仓（优先使用缓存，过期或 dirty 时自动刷新）"""
-        return await self._positions_data.get_or_fetch()
+        return await self._positions.get_data_or_update_by_func(
+            self.medal_fetch_positions_internal
+        )
 
     async def watch_position(self, symbol: str) -> list[Position]:
         """订阅持仓更新"""
@@ -704,8 +771,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         return await exchange.un_watch_positions()
 
     async def medal_watch_positions(self) -> dict[str, float]:
-        positions = await self.watch_positions()
-        return self.medal_cache_positions(positions)
+        positions = self._transform_positions(await self.watch_positions())
+        return await self.medal_cache_positions(positions)
 
     async def fetch_my_trades(
         self,
@@ -1138,17 +1205,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """加载时间差"""
         await self.fetch_parrallel('load_time_difference')
 
-    @cached(TTLCache(maxsize=128, ttl=300))
-    async def load_markets(self, reload: bool = False) -> dict:
+    async def load_markets_internal(self, reload: bool = True) -> dict[str, MarketInterface]:
         """加载市场信息"""
         markets = {}
-        market_trading_pairs = {}
         markets_list = await self.fetch_parrallel('load_markets', reload)
         for market_dict in markets_list:
             for symbol, market in market_dict.items():
                 try:
-                    base = market['base']
-                    quote = market['quote']
                     trade_type = TradeType(market['type'])
                     match trade_type:
                         case TradeType.SPOT:
@@ -1158,45 +1221,30 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                             if "swap" not in self.config.support_types:
                                 continue
                         case TradeType.OPTION:
-                            continue  # TODO: 期权暂不支持
+                            continue  #  TODO: 期权暂不支持
                         case _:
                             self.logger.warning("Unsupported trade %s with trade type: %s", symbol, trade_type)
                             continue
-                    trade_sub_type = market['subType']
-                    if trade_sub_type is not None:
-                        trade_sub_type = TradeSubType(trade_sub_type)
-                    expiry = market['expiry']
-                    if expiry is not None:
-                        expiry = float(expiry) / 1000.0  # 转换为秒级时间戳
                     markets[symbol] = market
-                    market_trading_pairs[symbol] = MarketTradingPair(
-                        self.class_name, base, quote, trade_type,
-                        symbol, trade_sub_type, expiry
-                    )
                 except Exception as e:
                     self.logger.warning("Failed to parse market: %s", e, exc_info=True)
-        self._markets = markets
-        self._market_trading_pairs = market_trading_pairs
         return markets
 
+    @cached(TTLCache(maxsize=128, ttl=300))
+    async def load_markets(self, reload: bool = True) -> dict[str, MarketInterface]:
+        markets = await self.load_markets_internal(reload)
+        await self._markets.update(markets)
+        return markets
+
+    async def fetch_currencies_internal(self) -> dict[str, CurrencyInterface]:
+        """内部方法：获取币种信息"""
+        currencies: dict[str, CurrencyInterface] = await self.config.ccxt_instance.fetch_currencies()
+        return currencies
+
     @cached(TTLCache(maxsize=32, ttl=30))
-    async def fetch_currencies(self) -> dict:  # 主要用于判断某个币种是否支持转账
-        self._currencies = await self.config.ccxt_instance.fetch_currencies()
-        return self._currencies
-
-    @property
-    def markets(self) -> dict[str, dict]:
-        """获取市场信息"""
-        return self._markets
-
-    @property
-    def market_trading_pairs(self) -> dict[str, MarketTradingPair]:
-        """获取市场交易对信息"""
-        return self._market_trading_pairs
-
-    @property
-    def currencies(self) -> dict:
-        """获取货币信息"""
+    async def fetch_currencies(self) -> dict[str, CurrencyInterface]:  # 主要用于判断某个币种是否支持转账
+        currencies: dict[str, CurrencyInterface] = await self.fetch_currencies_internal()
+        await self._currencies.update(currencies)
         return self._currencies
 
     async def open(self) -> None:

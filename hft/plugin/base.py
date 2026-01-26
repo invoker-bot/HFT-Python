@@ -232,7 +232,7 @@ class HookSpec:
         """
 
     @hookspec
-    def on_balance_update(self, exchange: "BaseExchange", balance: dict):
+    def on_balance_update(self, exchange: "BaseExchange", account: str, balance: dict):
         """
         余额更新时调用
 
@@ -242,12 +242,13 @@ class HookSpec:
         """
 
     @hookspec
-    def on_position_update(self, exchange: "BaseExchange", positions: dict):
+    def on_position_update(self, exchange: "BaseExchange", account: str, positions: dict):
         """
         持仓更新时调用
 
         Args:
             exchange: 交易所实例
+            account: 账户名称
             positions: 持仓数据
         """
 

@@ -83,10 +83,17 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     def get_class_type(cls) -> Type["BaseExchange"]:
         return BaseExchange
 
+    @property
+    def ccxt_instance_key(self) -> str:
+        """获取默认 ccxt 实例 key"""
+        if "spot" in self.support_types:
+            return "spot"
+        return next(iter(self.ccxt_instances.keys()))
+
     @cached_property
     def ccxt_instance(self) -> CCXTExchange:
-        """创建 ccxt 交易所实例"""
-        return next(iter(self.ccxt_instances.values()))
+        """创建 ccxt 交易所实例，优先返回现货对"""
+        return self.ccxt_instances[self.ccxt_instance_key]
 
     @cached_property
     def ccxt_instances(self) -> dict[str, CCXTExchange]:
