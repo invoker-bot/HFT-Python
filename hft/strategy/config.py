@@ -8,7 +8,7 @@ Feature 0008: Strategy 数据驱动增强
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type, Union
 
 from pydantic import BaseModel, Field, model_validator
-
+from .base import BaseStrategy
 from ..config.base import BaseConfig, BaseConfigPath
 
 if TYPE_CHECKING:
@@ -257,7 +257,7 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
     interval: float = Field(1.0, description="Main loop interval (seconds)")
     # exchange_path: str = Field(description="Exchange config path (e.g., 'binance/main')")
 
-    # 交易对配置
+    # 交易对配置, filter 写法
     trading_pairs: list[str] = Field(default_factory=list, description="Trading symbols (e.g., '*', 'BTC/USDT:USDT', '!ETH/USDT')")
     max_trading_pairs: int = Field(12, description="Maximum number of trading pairs to trade simultaneously")
 
@@ -370,8 +370,8 @@ class BaseStrategyConfig(BaseConfig["BaseStrategy"]):
 
     @classmethod
     def get_class_type(cls) -> Type["BaseStrategy"]:
-        from .base import BaseStrategy
         return BaseStrategy
+
 
 class StrategyConfigPath(BaseConfigPath):
     """Strategy 配置路径"""

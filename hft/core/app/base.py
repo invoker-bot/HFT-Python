@@ -33,6 +33,8 @@ from ...indicator.base import BaseIndicator
 from ...indicator.group import IndicatorGroup
 from ...plugin import pm
 from ...strategy.group import StrategyGroup
+from ..scope.manager import ScopeManager
+from ..scope.vm import VirtualMachine
 from ..listener import Listener
 from .listeners import StateLogListener, UnhealthyRestartListener
 from .notify import NotifyService
@@ -75,7 +77,8 @@ class AppCore(Listener):
     """
 
     __pickle_exclude__ = {*Listener.__pickle_exclude__, "database", "notify", "factory", "config",
-                          "exchange_group", "indicator_group", "strategy", "executor"}
+                          "exchange_group", "indicator_group", "strategy", "executor", "scope_manager",
+                          "vm"}
 
     def initialize(self, **kwargs):
         """
@@ -106,6 +109,12 @@ class AppCore(Listener):
             ExchangeGroup,
             parent=self
         )
+
+        # 2. Scope 管理器/VM
+        self.scope_manager = self.factory.get_or_create(
+            ScopeManager,
+            parent=self
+        )
         return
         # ...
         # 2. 指标管理（Feature 0006/0007）
@@ -116,14 +125,6 @@ class AppCore(Listener):
         )
         # 注册配置中的 indicator factory
         self._register_indicator_factories()
-
-        # 3. Scope 管理器（Feature 0012）- 作为 Listener 挂载
-        from ..scope.manager import ScopeManager
-        self.scope_manager = self.factory.get_or_create(
-            ScopeManager,
-            "ScopeManager",
-            parent=self
-        )
 
         # 4. 策略组
         self.strategy_group = self.factory.get_or_create(

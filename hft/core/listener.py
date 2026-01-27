@@ -165,8 +165,9 @@ class Listener(ABC):
 
         排除不可序列化的对象（锁、任务、弱引用）。
         """
+        saved = self.on_save()
         state = {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
-        state.update(self.on_save())
+        state.update(saved)
         return state
 
     def __setstate__(self, state: dict):

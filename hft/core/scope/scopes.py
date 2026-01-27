@@ -9,12 +9,13 @@
 - TradingPairClassScope: symbol, exchange_class（继承）
 - TradingPairScope: exchange_id, symbol
 """
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .base import BaseScope
-
+from .instance_ids import register_get_all_instance_ids
 if TYPE_CHECKING:
     from ...core.app.base import AppCore
+    from ...exchange.base import BaseExchange
 
 
 class GlobalScope(BaseScope):
@@ -38,20 +39,9 @@ class GlobalScope(BaseScope):
     - avg: 计算平均值
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str = "global",
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
+    def initialize(self, **kwargs):
         """初始化 GlobalScope 的函数"""
+        super().initialize(**kwargs)
         # 添加常用函数（所有子节点都会继承）
         self.set_function('min', min)
         self.set_function('max', max)
@@ -61,6 +51,12 @@ class GlobalScope(BaseScope):
         self.set_function('round', round)
         self.set_function('clip', lambda x, min_val, max_val: max(min_val, min(x, max_val)))
         self.set_function('avg', lambda lst: sum(lst) / len(lst) if lst else 0)
+
+
+@register_get_all_instance_ids(None, GlobalScope)
+def get_global_instance_ids(app_core, parent_scope, scope_class):
+    """GlobalScope 固定返回 ["global"]"""
+    return ["global"]  # instance_id is "global"
 
 
 class ExchangeClassScope(BaseScope):
@@ -79,22 +75,22 @@ class ExchangeClassScope(BaseScope):
     - exchange_class: 交易所类名（等于 scope_instance_id）
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
+    def initialize(self, **kwargs):
         """初始化 ExchangeClassScope 的变量"""
-        # 额外变量
-        self.set_var("exchange_class", self.scope_instance_id)
+        super().initialize(**kwargs)
+        self.set_var("exchange_class", self._instance_id)
+
+    @property
+    def exchanges(self) -> list['BaseExchange']:
+        """获取该交易所类的所有 exchange 实例"""
+        exchange_class = self.instance_id
+        exchanges = self._app_core.exchange_group.get_grouped_exchange_instances().get(exchange_class, [])
+        return exchanges
+
+@register_get_all_instance_ids(GlobalScope, ExchangeClassScope)
+def get_exchange_class_instance_ids(app_core: 'AppCore', parent_scope, scope_class):
+    """根据 app_core.exchange_group 获取所有 exchange class"""
+    return list(app_core.exchange_group.get_grouped_exchange_instances().keys())
 
 
 class ExchangeScope(BaseScope):
@@ -103,7 +99,7 @@ class ExchangeScope(BaseScope):
 
     特性：
     - parent 是 ExchangeClassScope
-    - scope_instance_id 是交易所路径（如 "okx/main", "binance/spot"）
+    - instance_id 是交易所路径（如 "okx/main", "binance/spot"）
 
     特殊变量（由 BaseScope 自动提供）：
     - instance_id: scope_instance_id
@@ -111,33 +107,28 @@ class ExchangeScope(BaseScope):
     - app_core: AppCore 实例引用
 
     额外变量（静态，从 scope_instance_id 解析）：
-    - exchange_id: 交易所路径（等于 scope_instance_id）
-    - exchange_path: 交易所路径（向后兼容，等于 scope_instance_id）
+    - exchange_class: 交易所类（从parent继承）
+    - exchange_path: 交易所路径（向后兼容，等于 instance_id）
 
     动态变量（需要时从 app_core 查找）：
     - exchange: exchange 实例引用（通过 app_core.exchange_group 动态查找）
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
+    def initialize(self, **kwargs):
         """初始化 ExchangeScope 的变量"""
-        # 静态变量：从 scope_instance_id 解析
-        self.set_var("exchange_id", self.scope_instance_id)
-        self.set_var("exchange_path", self.scope_instance_id)  # 向后兼容
+        super().initialize(**kwargs)
+        self.set_var("exchange_path", self.instance_id)  # 向后兼容
 
-        # 注意：exchange 实例引用不在这里设置，应该在需要时动态查找
-        # 通过 app_core.exchange_group.children 查找
+    @property
+    def exchange(self) -> 'BaseExchange':  # 映射到对应的 exchange instance
+        return self._app_core.exchange_group.get_exchange_instances()[self._instance_id]
+
+
+@register_get_all_instance_ids(ExchangeClassScope, ExchangeScope)
+def get_exchange_instance_ids(app_core: 'AppCore', parent_scope: ExchangeClassScope, scope_class):
+    exchange_class = parent_scope.instance_id
+    exchanges = app_core.exchange_group.get_grouped_exchange_instances()[exchange_class]
+    return [exchange.config.path for exchange in exchanges]
 
 
 class TradingPairClassScope(BaseScope):
@@ -145,7 +136,7 @@ class TradingPairClassScope(BaseScope):
     交易对类 Scope
 
     特性：
-    - parent 可以是 ExchangeClassScope 或 TradingPairClassGroupScope
+    - parent 可以是 ExchangeClassScope 或其它 TradingPairClassGroupScope
     - scope_instance_id 格式为 "exchange_class-symbol"（如 "okx-ETH/USDT"）
 
     特殊变量（由 BaseScope 自动提供）：
@@ -157,26 +148,32 @@ class TradingPairClassScope(BaseScope):
     - exchange_class: 继承自 parent
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
+    def initialize(self, **kwargs) -> None:
         """初始化 TradingPairClassScope 的变量"""
         # 解析 instance_id: "exchange_class-symbol"
-        if '-' in self.scope_instance_id:
-            parts = self.scope_instance_id.split('-', 1)
-            self.set_var("symbol", parts[1])
-        else:
-            self.set_var("symbol", self.scope_instance_id)
+        super().initialize(**kwargs)
+        exchange_class, symbol = self.instance_id.split('-', 1)
+        self.set_var("exchange_class", exchange_class)
+        self.set_var("symbol", symbol)
+
+    @property
+    def exchanges(self) -> list['BaseExchange']:
+        """获取该交易对类对应的所有 exchange 实例"""
+        exchange_class = self.get_var("exchange_class")
+        exchanges = self._app_core.exchange_group.get_grouped_exchange_instances().get(exchange_class, [])
+        return exchanges
+
+@register_get_all_instance_ids(ExchangeClassScope, TradingPairClassScope)
+def get_trading_pair_class_instance_ids(app_core: 'AppCore', parent_scope: ExchangeClassScope, scope_class):
+    """根据 parent exchange_class 获取该类型下所有唯一的 symbols"""
+    exchange_class = parent_scope.instance_id
+    # for exchange in app_core.exchange_group.children.values():
+    exchange = app_core.exchange_group.get_grouped_exchange_instances()[exchange_class][0]  # 取第一个 exchange
+    if not exchange.ready:
+        return []
+    markets = exchange.markets.get_data()
+    # 生成 instance_id: "exchange_class-symbol"
+    return [f"{exchange_class}-{symbol}" for symbol in markets.keys()]
 
 
 class TradingPairScope(BaseScope):
@@ -187,86 +184,37 @@ class TradingPairScope(BaseScope):
     - parent 是 TradingPairClassScope 或 ExchangeScope
     - scope_instance_id 格式为 "exchange_path-symbol"（如 "okx/a-ETH/USDT"）
 
-    特殊变量（由 BaseScope 自动提供）：
-    - instance_id: scope_instance_id
-    - class_id: scope_class_id
-
     额外变量：
-    - exchange_id: exchange path（从 scope_instance_id 解析）
     - exchange_path: exchange path（向后兼容）
     - symbol: 交易对符号（从 scope_instance_id 解析）
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
+    def initialize(self, **kwargs):
         """初始化 TradingPairScope 的变量"""
         # 解析 exchange_path 和 symbol
         # 支持两种格式：
         # 1. "exchange_path-symbol" (新格式，如 "okx/a-ETH/USDT")
-        # 2. "exchange_path:symbol" (旧格式，向后兼容)
-        exchange_path = None
-        symbol = None
+        super().initialize(**kwargs)
 
-        if "-" in self.scope_instance_id:
-            # 新格式：exchange_path-symbol
-            parts = self.scope_instance_id.split("-", 1)
-            exchange_path = parts[0]
-            symbol = parts[1]
-        elif ":" in self.scope_instance_id:
-            # 旧格式：exchange_path:symbol
-            parts = self.scope_instance_id.split(":", 1)
-            exchange_path = parts[0]
-            symbol = parts[1]
-
-        if exchange_path:
-            self.set_var("exchange_id", exchange_path)
-            self.set_var("exchange_path", exchange_path)  # 向后兼容
-        if symbol:
-            self.set_var("symbol", symbol)
+        exchange_path, symbol = self.instance_id.split('-', 1)
+        self.set_var("exchange_path", exchange_path)
+        self.set_var("symbol", symbol)
 
 
-class TradingPairClassGroupScope(BaseScope):
-    """
-    交易对类分组 Scope（自定义 Scope）
+@register_get_all_instance_ids(ExchangeScope, TradingPairScope)
+def get_trading_pair_from_exchange_instance_ids(app_core: 'AppCore', parent_scope: ExchangeScope, scope_class):
+    """根据 parent exchange 获取该 exchange 的所有交易对"""
+    # 获取 exchange 实例
+    exchange = parent_scope.exchange
+    if not exchange.ready:
+        return []
+    exchange_path = exchange.config.path
+    markets = exchange.markets.get_data()
+    return [f"{exchange_path}-{symbol}" for symbol in markets.keys()]
 
-    特性：
-    - parent 是 ExchangeClassScope
-    - children 是 TradingPairClassScope
-    - scope_instance_id 是 group_id（如 "ETH", "BTC"）
-    - 用于 MarketNeutralPositions 策略的分组计算
 
-    特殊变量（由 BaseScope 自动提供）：
-    - instance_id: scope_instance_id
-    - class_id: scope_class_id
-
-    额外变量：
-    - group_id: 分组 ID（等于 scope_instance_id）
-    """
-
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
-        super().__init__(
-            scope_class_id=scope_class_id,
-            scope_instance_id=scope_instance_id,
-            app_core=app_core
-        )
-
-    def initialize(self) -> None:
-        """初始化 TradingPairClassGroupScope 的变量"""
-        # 额外变量
-        self.set_var("group_id", self.scope_instance_id)
+@register_get_all_instance_ids(TradingPairClassScope, TradingPairScope)
+def get_trading_pair_from_class_instance_ids(app_core: 'AppCore', parent_scope: TradingPairClassScope, scope_class):
+    """根据 parent trading_pair_class 获取所有具体的交易对实例"""
+    symbol = parent_scope.get_var('symbol')
+    return [f"{exchange.config.path}-{symbol}" for exchange in parent_scope.exchanges]

@@ -6,8 +6,8 @@ BaseScope 基类
 注意：BaseScope 只存储 scope_class_id, scope_instance_id, _vars 和 _functions。
 树形结构由 LinkedScopeNode 和 LinkedScopeTree 管理。
 """
+import time
 import inspect
-from functools import cache
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -34,33 +34,53 @@ class BaseScope:
     - not_ready 的 scope 不参与 vars 计算和 target 匹配
     """
 
-    def __init__(
-        self,
-        scope_class_id: str,
-        scope_instance_id: str,
-        app_core: "AppCore" = None,
-    ):
+    def __init__(self, **kwargs):
         """
         初始化 Scope
 
         Args:
-            scope_class_id: Scope 类型 ID（如 "global", "exchange"）
-            scope_instance_id: Scope 实例 ID（如 "okx/main", "ETH/USDT"）
+            class_id: Scope 类型 ID（如 "global", "exchange"）
+            instance_id: Scope 实例 ID（如 "okx/main", "ETH/USDT"）
         """
-        self.scope_class_id = scope_class_id
-        self.scope_instance_id = scope_instance_id
-        self.app_core = app_core
         self._vars: dict[str, Any] = {
-            "instance_id": scope_instance_id,
-            "class_id": scope_class_id,
-            "app_core": app_core,
         }
-        self._functions: dict[str, Callable] = {}
-        # not_ready 标记（每个 tick 重置）
+        self._conditional_vars_update_times: dict[str, float] = {
+        }
+        # not_ready 标记（每个 tick 重置, 默认为ready）
         self._not_ready: bool = False
 
         # 调用子类的 initialize 方法设置 functions 和普通 vars
-        self.initialize()
+        self.initialize(**kwargs)
+
+    def initialize(self, **kwargs) -> None:
+        """
+        初始化 Scope 的 functions 和普通 vars
+
+        此方法在 __init__ 和 __setstate__ 时调用，用于设置：
+        - functions（所有函数）
+        - 普通 vars（非条件变量）
+
+        条件变量（带 on 字段的变量）不在这里设置，它们的状态会被 pickle 保存。
+
+        子类应该重写此方法来设置自己的 functions 和 vars。
+        """
+        self._instance_id: str = kwargs['instance_id']
+        self._class_id: str = kwargs['class_id']
+        self._app_core: 'AppCore' = kwargs['app_core']  # must be set before use
+        self._functions: dict[str, Callable] = {}
+        self._vars.update({
+            "instance_id": self._instance_id,
+            "class_id": self._class_id,
+            "app_core": self._app_core,
+        })
+
+    @property
+    def instance_id(self) -> str:
+        return self._instance_id
+
+    @property
+    def class_id(self) -> str:
+        return self._class_id
 
     @property
     def vars(self) -> dict[str, Any]:
@@ -85,7 +105,7 @@ class BaseScope:
         """
         return self._vars.get(name, default)
 
-    def set_var(self, name: str, value: Any) -> None:
+    def set_var(self, name: str, value: Any, conditional: bool = False) -> None:
         """
         设置变量值（仅在当前 Scope）
 
@@ -94,6 +114,20 @@ class BaseScope:
             value: 变量值
         """
         self._vars[name] = value
+        if conditional:
+            self._conditional_vars_update_times[name] = time.time()
+
+    def get_var_update_time(self, name: str) -> float:
+        """
+        获取变量的最后更新时间戳
+
+        Args:
+            name: 变量名
+
+        Returns:
+            最后更新时间戳，变量不存在或非条件变量则返回 0
+        """
+        return self._conditional_vars_update_times.get(name, 0.0)
 
     def get_function(self, name: str, default: Callable = None) -> Callable:
         """
@@ -184,20 +218,6 @@ class BaseScope:
             result.update(subcls.all_classes())
         return result
 
-    def initialize(self) -> None:
-        """
-        初始化 Scope 的 functions 和普通 vars
-
-        此方法在 __init__ 和 __setstate__ 时调用，用于设置：
-        - functions（所有函数）
-        - 普通 vars（非条件变量）
-
-        条件变量（带 on 字段的变量）不在这里设置，它们的状态会被 pickle 保存。
-
-        子类应该重写此方法来设置自己的 functions 和 vars。
-        """
-        pass  # 基类不需要设置任何东西，由子类重写
-
     def __getstate__(self) -> dict:
         """
         Pickle 序列化：只保存条件变量的状态
@@ -212,24 +232,13 @@ class BaseScope:
         - functions（通过 initialize() 重建）
         - 普通 vars（通过 initialize() 重建）
         """
+        # 只持久化保存条件变量（有对应时间戳的变量）
+        _vars = {key: value for key, value in self._vars.items() if key in self._conditional_vars_update_times}
         state = {
-            'scope_class_id': self.scope_class_id,
-            'scope_instance_id': self.scope_instance_id,
             '_not_ready': self._not_ready,
+            '_conditional_vars_update_times': self._conditional_vars_update_times,
+            '_vars': _vars,
         }
-
-        # 只保存条件变量（有对应时间戳的变量）
-        conditional_vars = {}
-        for key, value in self._vars.items():
-            # 保存时间戳变量
-            if key.startswith('__') and key.endswith('_last_update_time'):
-                conditional_vars[key] = value
-                # 同时保存对应的条件变量值
-                var_name = key[2:-len('_last_update_time')]
-                if var_name in self._vars:
-                    conditional_vars[var_name] = self._vars[var_name]
-
-        state['conditional_vars'] = conditional_vars
         return state
 
     def __setstate__(self, state: dict) -> None:
@@ -242,24 +251,7 @@ class BaseScope:
         3. 恢复条件变量的值和时间戳
         4. 调用 initialize() 重建 functions 和普通 vars
         """
-        self.scope_class_id = state['scope_class_id']
-        self.scope_instance_id = state['scope_instance_id']
-        self.app_core = None  # 反序列化时 app_core 需要外部重新设置
-        self._not_ready = state.get('_not_ready', False)
-
-        # 重建基础 _vars
-        self._vars = {
-            "instance_id": self.scope_instance_id,
-            "class_id": self.scope_class_id,
-            "app_core": None,
-        }
-
-        # 恢复条件变量
-        conditional_vars = state.get('conditional_vars', {})
-        self._vars.update(conditional_vars)
-
-        # 重建 functions
-        self._functions = {}
+        self.__dict__.update(state)
 
         # 调用 initialize() 重建 functions 和普通 vars
-        self.initialize()
+        self.initialize(state['kwargs'])

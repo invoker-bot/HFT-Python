@@ -29,11 +29,8 @@ import time
 from abc import abstractmethod
 from collections import deque
 from typing import TYPE_CHECKING, Any, Optional, Union
-
 from younotyou import Matcher
-
 from ..core.listener import Listener
-from .config import BaseStrategyConfig
 
 if TYPE_CHECKING:
     from ..core.scope.manager import ScopeManager
@@ -41,6 +38,8 @@ if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
     from ..indicator.base import BaseIndicator
     from .group import StrategyGroup
+    from .config import BaseStrategyConfig
+
 
 
 # 旧版目标仓位类型（向后兼容）: {(exchange_path, symbol): (position_usd, speed)}

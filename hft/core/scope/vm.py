@@ -191,7 +191,7 @@ class VirtualMachine:
         """
         name = var_def["name"]
         value_expr = var_def["value"]
-        condition_expr = var_def.get("on", True)
+        condition_expr = var_def.get("on", None)
         initial_value = var_def.get("initial_value", None)
 
         # 如果没有条件，直接求值并赋值
@@ -202,7 +202,7 @@ class VirtualMachine:
 
         # 有条件的变量：需要检查条件是否满足
         # 计算 duration（距上次更新的秒数）
-        last_update_time = target_scope.get_var(f"__{name}_last_update_time", 0.0)
+        last_update_time = target_scope.get_var_update_time(name)
         duration = time.time() - last_update_time
         scope.set_var("duration", duration)
         # 求值条件表达式
@@ -210,9 +210,8 @@ class VirtualMachine:
         if condition_result:
             # 条件满足，更新变量值和时间戳
             value = self.eval(value_expr, scope)
-            target_scope.set_var(name, value)
-            target_scope.set_var(f"__{name}_last_update_time", time.time())
+            target_scope.set_var(name, value, True)
         else:
             # 条件不满足，检查是否需要设置初始值
             if name not in target_scope.vars:
-                target_scope.set_var(name, initial_value)
+                target_scope.set_var(name, initial_value, True)
