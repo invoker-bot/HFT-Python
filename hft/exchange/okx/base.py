@@ -4,8 +4,7 @@ OKX 交易所实现
 import logging
 from typing import ClassVar
 
-from cachetools import TTLCache
-from cachetools_async import cached
+from cache import AsyncTTL
 
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
@@ -82,7 +81,7 @@ class OKXExchange(BaseExchange):
         settle = item['settleCcy']
         return f"{base}/{quote}:{settle}"
 
-    @cached(TTLCache(maxsize=32, ttl=30))
+    @AsyncTTL(time_to_live=30, maxsize=32)
     async def __fetch_instruments(self) -> dict[str, dict]:
         """获取所有永续合约"""
         result = await self.exchanges["swap"].fetch(
@@ -90,7 +89,7 @@ class OKXExchange(BaseExchange):
         )
         return self._parse_response(result)
 
-    @cached(TTLCache(maxsize=32, ttl=30))
+    @AsyncTTL(time_to_live=30, maxsize=32)
     async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
         result = await self.exchanges["swap"].fetch(
@@ -98,7 +97,7 @@ class OKXExchange(BaseExchange):
         )
         return self._parse_response(result)
 
-    @cached(TTLCache(maxsize=32, ttl=30))
+    @AsyncTTL(time_to_live=30, maxsize=32)
     async def __fetch_tickers(self) -> dict[str, dict]:
         """获取所有 ticker"""
         result = await self.exchanges["swap"].fetch(
@@ -139,7 +138,7 @@ class OKXExchange(BaseExchange):
     #         ts = float(index['ts']) / 1000.0
     #         self._index_prices_cache[inst_id].append(ts, float(index['idxPx']))
 
-    @cached(TTLCache(maxsize=32, ttl=5))
+    @AsyncTTL(time_to_live=5, maxsize=32)
     async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}

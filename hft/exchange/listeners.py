@@ -1,59 +1,52 @@
 import asyncio
 import time
-from typing import TYPE_CHECKING
-
+from functools import cached_property
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any
 from ccxt.base.errors import UnsubscribeError
-
+from ..core.duration import parse_duration
 from ..core.listener import GroupListener, Listener
-# from ..database.client import OrderBillController
-from ..indicator.persist import DataListener
-from ..plugin import pm
+from ..database.controllers import ExchangeStateController, OrderBillController
+# from ..plugin import pm
 
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
 
 
-class ExchangeOrderBillWatchListener(DataListener):
-    persist_key = "order_bill"
+class CCXTExchangeGroupListener(GroupListener):
 
-    def __init__(self, name: str, ccxt_instance_key: str, interval: float = 0.1):
-        super().__init__(interval)
-        self.name = name  # 使用传入的 name，与 sync_children_params 的 key 一致
-        self.ccxt_instance_key = ccxt_instance_key
+    def sync_children_params(self):
+        exchange: 'BaseExchange' = self.parent
+        return exchange.exchanges
 
     @property
-    def exchange(self) -> 'BaseExchange | None':
-        """通过树形结构获取 exchange（parent.parent）"""
-        if self.parent is None or self.parent.parent is None:
-            return None
-        return self.parent.parent
-
-    @property
-    def order_bill_listener(self) -> 'ExchangeOrderBillListener | None':
-        """获取父节点 ExchangeOrderBillListener"""
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange"""
         return self.parent
 
+class CCXTExchangeOrderBillWatchListener(Listener):
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 exchange"""
+        return self.parent.exchange
+
     async def on_tick(self):
-        if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
+        if not self.exchange.ready:
             return
-        try:
-            order_lists = await asyncio.wait_for(self.exchange.watch_orders(self.ccxt_instance_key), timeout=900)
-
-            # 检查订单成交并触发 Hook
-            if self.order_bill_listener:
-                for order in order_lists:
-                    self.order_bill_listener._emit_order_filled_hook(order)
-
-            controller = OrderBillController(self.db)
-            await controller.update(order_lists, self.exchange)
-        except asyncio.TimeoutError:
-            self.logger.debug("Watch orders timeout for exchange %s", self.exchange.name)
-            return
+        order_lists = await self.exchange.watch_orders(self.name)
+        # TODO: 检查订单成交并触发 Hook
+        self.exchange.event.emit("")
+        for order in order_lists:
+            # 触发成交检查
+            pass
+        controller = self.root.database.get_controller(OrderBillController)
+        await controller.update(order_lists, self.exchange)
 
     async def on_stop(self):
-        # 停止时取消所有挂单监听
+        # 停止时取消所有挂单监听for
         try:
-            pass
+            await self.exchange.un_watch_orders(self.name)
             # await self.exchange.un_watch_orders(self.ccxt_instance_key)
             # current not supported in ccxt
         except UnsubscribeError:  # 可能已经取消订阅
@@ -61,130 +54,69 @@ class ExchangeOrderBillWatchListener(DataListener):
         await super().on_stop()
 
 
-class ExchangeOrderBillFetchListener(DataListener):
-    persist_key = "order_bill"
+class CCXTExchangeOrderBillListener(Listener):
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "auto_tracking_orders_after",
+                          "auto_tracking_orders_before", "auto_cancel_orders_after" }
 
-    def __init__(self, name: str, interval: float = 60.0):
-        super().__init__(interval)
-        self.name = name  # 使用传入的 name，与 sync_children_params 的 key 一致
+    @property
+    def interval(self) -> float:
+        return 10.0
 
     @property
     def exchange(self) -> 'BaseExchange | None':
         """通过树形结构获取 exchange（parent.parent）"""
-        if self.parent is None or self.parent.parent is None:
-            return None
-        return self.parent.parent
+        return self.parent.exchange
 
-    @property
-    def order_bill_listener(self) -> 'ExchangeOrderBillListener | None':
-        """获取父节点 ExchangeOrderBillListener"""
-        return self.parent
+    @cached_property
+    def auto_tracking_orders_after(self) -> timedelta:
+        return timedelta(seconds=parse_duration(self.exchange.config.auto_tracking_orders_after))
+
+    @cached_property
+    def auto_tracking_orders_before(self) -> timedelta:
+        return timedelta(seconds=parse_duration(self.exchange.config.auto_tracking_orders_before))
+
+    @cached_property
+    def auto_cancel_orders_after(self) -> timedelta:
+        return timedelta(seconds=parse_duration(self.exchange.config.auto_cancel_orders_after))
 
     async def on_tick(self):
-        if self.exchange is None or not self.exchange.ready or not self.db_ready or not self.persist_enabled:
+        if not self.exchange.ready:
             return
-        controller = OrderBillController(self.db)
-        for order_id, symbol in await controller.get_should_updated_orders(self.exchange):
+        controller = self.root.database.get_controller(OrderBillController)
+        for order_id, symbol in await controller.get_should_updated_orders(self.exchange,
+                                                                           (self.auto_cancel_orders_after,
+                                                                            self.auto_tracking_orders_before)):
             order = await self.exchange.fetch_order(order_id, symbol)
             if order['status'] not in ["closed", "canceled", "expired", "rejected"]:  # cancel if too old
                 if order['lastTradeTimestamp'] is not None:
                     order_timestamp = float(order['lastTradeTimestamp']) / 1000.0
-                    if time.time() - order_timestamp > 600:
+                    if time.time() - order_timestamp > self.auto_cancel_orders_after.total_seconds():
                         await self.exchange.cancel_order(order['id'], order['symbol'])
                         self.logger.info("Cancel old open %s order %s:%s", order['side'], order['symbol'], order['id'])
-
-            # 检查订单成交并触发 Hook
-            if self.order_bill_listener:
-                self.order_bill_listener._emit_order_filled_hook(order)
 
             await controller.update([order], self.exchange)
             await asyncio.sleep(1)  # 避免请求过快
 
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.root.factory.get_or_create(
+            CCXTExchangeOrderBillWatchListener,
+            name=self.name,  # 使用相同名称，与 sync_children_params 的 key 一致
+            parent=self
+        )
 
-class ExchangeOrderBillListener(GroupListener, DataListener):
+class ExchangeOrderBillListener(CCXTExchangeGroupListener):
     """
     交易所订单账单监听器
 
-    使用 GroupListener 自动管理动态子节点。
-    同时负责触发 on_order_filled 插件钩子。
     """
-    persist_key = "order_bill"
-    # 已通知成交的订单 ID 集合（用于去重）
-    _notified_filled_orders: set[str]
-    # 最大记录数量（防止内存泄漏）
-    MAX_NOTIFIED_ORDERS = 10000
-
-    def __init__(self, name: str = None, interval: float = 60.0):
-        super().__init__(name or self.__class__.__name__, interval)
-        self._notified_filled_orders = set()
-
-    def _emit_order_filled_hook(self, order: dict) -> None:
-        """
-        检查订单是否成交并触发 on_order_filled Hook
-
-        去重逻辑：同一订单只通知一次
-        """
-        order_id = order.get('id')
-        status = order.get('status')
-        filled = order.get('filled', 0)
-
-        # 只处理已成交的订单（status=closed 且有成交量）
-        if status != 'closed' or not filled or filled <= 0:
-            return
-
-        # 去重检查
-        if order_id in self._notified_filled_orders:
-            return
-
-        # 记录已通知的订单
-        self._notified_filled_orders.add(order_id)
-
-        # 防止内存泄漏
-        if len(self._notified_filled_orders) > self.MAX_NOTIFIED_ORDERS:
-            # 清理一半旧数据
-            to_remove = list(self._notified_filled_orders)[:self.MAX_NOTIFIED_ORDERS // 2]
-            for oid in to_remove:
-                self._notified_filled_orders.discard(oid)
-
-        # 触发插件钩子
-        exchange: 'BaseExchange' = self.parent
-        pm.hook.on_order_filled(exchange=exchange, order=order)
-
-    def sync_children_params(self) -> dict[str, any]:
-        """根据 ccxt_instances 声明需要的 children"""
-        exchange: 'BaseExchange' = self.parent
-        if not exchange:
-            return {}
-        params = {}
-        for key in exchange.config.ccxt_instances.keys():
-            params[f"watch-{key}"] = {"key": key, "type": "watch"}
-        params["fetch"] = {"type": "fetch"}
-        return params
-
     def create_dynamic_child(self, name: str, param: any) -> Listener:
         """根据参数创建 WatchListener 或 FetchListener"""
-        if param["type"] == "watch":
-            return ExchangeOrderBillWatchListener(name=name, ccxt_instance_key=param["key"])
-        else:
-            return ExchangeOrderBillFetchListener(name=name)
-
-    async def on_start(self):
-        await super().on_start()
-        exchange: 'BaseExchange' = self.parent
-        exchange.event.add_listener("order_created", self.on_order_created)
-
-    async def on_order_created(self, resolved_order, order):
-        exchange: 'BaseExchange' = self.parent
-        if self.db_ready and self.persist_enabled:
-            controller = OrderBillController(self.db)
-            await controller.update(order, exchange)
-
-    async def on_stop(self):
-        exchange: 'BaseExchange' = self.parent
-        if exchange is not None:
-            exchange.event.remove_listener("order_created", self.on_order_created)
-        await super().on_stop()
-
+        return self.root.factory.get_or_create(
+            CCXTExchangeOrderBillListener,
+            name=name,
+            parent=self
+        )
 
 class ExchangePositionWatchListener(Listener):
     """
@@ -192,97 +124,135 @@ class ExchangePositionWatchListener(Listener):
 
     定期从交易所获取持仓信息并更新到 Exchange 实例中。
     """
-
-    def __init__(self, name: str = None, interval: float = 0.1):
-        super().__init__(name or self.__class__.__name__, interval)
+    @property
+    def interval(self) -> float:
+        return 0.1  # watch 频率支持较高
 
     @property
-    def exchange(self) -> 'BaseExchange | None':
-        """通过树形结构获取 exchange（parent.parent）"""
-        if self.parent is None or self.parent.parent is None:
-            return None
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取"""
         return self.parent.parent
 
     async def on_tick(self) -> None:
         """获取并更新持仓信息"""
-        if self.exchange is None or not self.exchange.ready:
-            return
         await self.exchange.medal_watch_positions()
 
     async def on_stop(self):
         """停止时取消持仓订阅"""
-        try:
-            # await self.exchange.un_watch_positions()
-            pass  # current not supported in ccxt
-        except UnsubscribeError:
-            pass
+        # try:
+        #     # await self.exchange.un_watch_positions()
+        #     # current not supported in ccxt
+        # except UnsubscribeError:
+        #     pass
         await super().on_stop()
 
 
-class ExchangePositionListener(GroupListener):
+class ExchangePositionListener(Listener):
     """
     交易所持仓监听器
 
     使用 GroupListener 自动管理动态子节点。
     """
+    @property
+    def interval(self) -> float:  # 若过期自动同步仓位
+        return 5.0
 
-    def __init__(self, interval=1):
-        super().__init__(self.__class__.__name__, interval)
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.root.factory.get_or_create(
+            ExchangePositionWatchListener,
+            parent=self
+        )
 
-    def sync_children_params(self) -> dict[str, any]:
-        """声明需要一个 watch listener"""
-        return {"watch": {}}
-
-    def create_dynamic_child(self, name: str, param: any) -> Listener:
-        """创建 PositionWatchListener"""
-        return ExchangePositionWatchListener(name=name)
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取"""
+        return self.parent
 
     async def on_tick(self):
-        await super().on_tick()  # 调用 GroupListener 的同步逻辑
-        exchange: 'BaseExchange' = self.parent
-        await exchange.medal_fetch_positions()
+        await super().on_tick()
+        await self.exchange.medal_fetch_positions()
         return False
 
 
-class ExchangeBalanceWatchListener(Listener):
-    def __init__(self, name: str, ccxt_instance_key: str, interval: float = 1.0):
-        super().__init__(name, interval)  # 使用传入的 name
-        self.ccxt_instance_key = ccxt_instance_key
+class ExchangeStateListener(Listener):
+    @property
+    def interval(self) -> float:
+        return 30.0
 
     @property
-    def exchange(self) -> 'BaseExchange | None':
-        """通过树形结构获取 exchange（parent.parent）"""
-        if self.parent is None or self.parent.parent is None:
-            return None
-        return self.parent.parent
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取"""
+        return self.parent
 
     async def on_tick(self) -> None:
         """获取并更新余额信息"""
-        if self.exchange is None or not self.exchange.ready:
+        # print("tick: ExchangeStateListener")
+        if not self.exchange.ready:
             return
-        await self.exchange.medal_watch_balance(self.ccxt_instance_key)
+        result = {}
+        for ccxt_key in self.exchange.exchanges.keys():
+            balance_usd = await self.exchange.medal_fetch_balance_usd(ccxt_key)
+            result[ccxt_key] = balance_usd  # 余额
+        total = sum(result.values())
+        if self.exchange.unified_account:
+            total = total / len(self.exchange.exchanges)
+        controller = self.root.database.get_controller(ExchangeStateController)
+        await controller.update(result.get("swap", 0.0), result.get("spot", 0.0), total, self.exchange)
 
 
-class ExchangeBalanceFetchListener(Listener):
-    def __init__(self, name: str, ccxt_instance_key: str, interval: float = 5.0):
-        super().__init__(name, interval)  # 使用传入的 name
-        self.ccxt_instance_key = ccxt_instance_key
+class CCXTExchangeBalanceWatchListener(Listener):
 
     @property
-    def exchange(self) -> 'BaseExchange | None':
-        """通过树形结构获取 exchange（parent.parent）"""
-        if self.parent is None or self.parent.parent is None:
-            return None
-        return self.parent.parent
+    def interval(self) -> float:
+        return 0.1
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取 """
+        return self.parent.exchange
 
     async def on_tick(self) -> None:
         """获取并更新余额信息"""
-        if self.exchange is None or not self.exchange.ready:
+        if not self.exchange.ready:
             return
-        await self.exchange.medal_fetch_balance(self.ccxt_instance_key)
+        await self.exchange.medal_watch_balance(self.name)  # name 即 ccxt_instance_key
 
 
-class ExchangeBalanceListener(GroupListener):
+class CCXTExchangeBalanceListener(Listener):
+
+    """
+    交易所余额监听器
+
+    定期从交易所获取余额信息并更新到 Exchange 实例中。
+    """
+
+    @property
+    def interval(self) -> float:
+        """获取日志输出间隔"""
+        return 15.0
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.root.factory.get_or_create(
+            CCXTExchangeBalanceWatchListener,
+            name=self.name,  # 使用相同名称，与 sync_children_params 的 key 一致
+            parent=self
+        )
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取"""
+        return self.parent.exchange
+
+    async def on_tick(self) -> None:
+        """获取并更新余额信息"""
+        if not self.exchange.ready:
+            return
+        await self.exchange.medal_fetch_balance(self.name)
+
+
+class ExchangeBalanceListener(CCXTExchangeGroupListener):
     """
     交易所余额监听器
 
@@ -290,47 +260,10 @@ class ExchangeBalanceListener(GroupListener):
     使用 GroupListener 自动管理动态子节点。
     """
 
-    def __init__(self):
-        super().__init__(self.__class__.__name__, 60)
-
-    def sync_children_params(self) -> dict[str, any]:
-        """根据 ccxt_instances 声明需要的 children"""
-        exchange: 'BaseExchange' = self.parent
-        if not exchange:
-            return {}
-        params = {}
-        for key in exchange.config.ccxt_instances.keys():
-            params[f"watch-{key}"] = {"key": key, "type": "watch"}
-            params[f"fetch-{key}"] = {"key": key, "type": "fetch"}
-        return params
-
-    def create_dynamic_child(self, name: str, param: any) -> Listener:
+    def create_dynamic_child(self, name: str, param: Any) -> Listener:
         """根据参数创建 WatchListener 或 FetchListener"""
-        if param["type"] == "watch":
-            return ExchangeBalanceWatchListener(name=name, ccxt_instance_key=param["key"])
-        else:
-            return ExchangeBalanceFetchListener(name=name, ccxt_instance_key=param["key"])
-
-
-class ExchangeCurrenciesListener(Listener):
-    """
-    交易所货币信息监听器
-
-    定期从交易所获取货币信息（支持的网络、是否可提币/充币等）。
-    货币状态可能随时变化（如暂停提币），需要定期刷新。
-    """
-
-    def __init__(self, interval: float = 60.0):
-        super().__init__(self.__class__.__name__, interval)
-
-    @property
-    def exchange(self) -> 'BaseExchange':
-        return self.parent
-
-    async def on_tick(self) -> None:
-        """定期获取货币信息"""
-        if self.exchange is None or not self.exchange.ready:
-            return
-        await self.exchange.fetch_currencies()
-
-
+        return self.root.factory.get_or_create(
+            CCXTExchangeBalanceListener,
+            name=name,
+            parent=self
+        )

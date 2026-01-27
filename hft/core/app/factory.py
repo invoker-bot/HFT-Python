@@ -163,6 +163,9 @@ class AppFactory:
         else:
             # 如果构造函数接受 name 参数，则传递；否则不传递
             instance = listener_class(**kwargs)
+        instance.enabled = True  # 启用实例
+        assert id(instance.parent) == id(parent), "Parent mismatch"
+        assert parent is None or id(instance) == id(parent.children[instance.name]), "Child not registered in parent"
         return instance
 
     def start_daemon(self, app_core: 'AppCore'):

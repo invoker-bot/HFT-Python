@@ -16,11 +16,11 @@ import asyncio
 import logging
 import time
 import weakref
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from datetime import datetime
 from enum import StrEnum
 from functools import cached_property, lru_cache
-from typing import Coroutine, Iterator, Optional, Type, TypeVar, TYPE_CHECKING
+from typing import Coroutine, Iterator, Optional, Type, TypeVar, Any, TYPE_CHECKING
 
 from humanfriendly import format_timespan
 from rich.console import Console
@@ -112,6 +112,7 @@ class Listener(ABC):
         # Internal state
         self._enabled = True
         self._healthy = False
+        self._healthy_since = time.time()
         self.start_time = self.current_time
         self.finished = False  # 任务完成标志，有此标记的 Listener 不会被重启
         self._auto_disable_start_time = self.current_time
@@ -137,6 +138,10 @@ class Listener(ABC):
     def interval(self, interval: Optional[float]):
         self._interval = interval
 
+    @property
+    def healthy_interval(self) -> Optional[float]:
+        return None
+
     def initialize(self, **kwargs):
         """初始化不可序列化的对象（在 __init__ 和 unpickle 时调用）"""
         self._alock = asyncio.Lock()
@@ -149,6 +154,8 @@ class Listener(ABC):
             self._parent = None
         else:
             self._parent = weakref.ref(_parent)
+            _parent.children[self.name] = self
+            self.root._clear_class_cache()
         self._clear_root_cache()
 
 
@@ -210,7 +217,6 @@ class Listener(ABC):
     async def loop_coro_in_background(
         self,
         coro: Coroutine,
-        interval: float = 0.001,
         finalizer: Optional[Coroutine] = None,
         params: Optional[dict] = None,
     ):
@@ -231,13 +237,14 @@ class Listener(ABC):
             try:
                 if await coro(**params):
                     should_finalize = True  # Exit if the coroutine signals completion: return True
+                self._healthy_since = time.time()  # Mark as healthy on successful execution
             except asyncio.CancelledError:
                 should_finalize = True  # Allow task to be cancelled gracefully
             except Exception as e:
                 self.logger.exception("Exception in background task: %s", str(e))
             finally:
                 if not should_finalize:
-                    await asyncio.sleep(max(0, interval - (time.time() - start)))
+                    await asyncio.sleep(max(0, self.interval - (time.time() - start)))
             if should_finalize:
                 if finalizer is not None:
                     await finalizer()
@@ -271,7 +278,6 @@ class Listener(ABC):
             self._background_task = asyncio.create_task(
                 self.loop_coro_in_background(
                     self.tick,
-                    self.interval,
                     self.__finalize_background_task  # 使用专门的清理方法
                 ),
                 name=f"{self.name}-background-task"
@@ -568,6 +574,9 @@ class Listener(ABC):
 
     async def on_health_check(self) -> bool:
         """健康检查回调，子类可覆盖实现自定义检查逻辑"""
+        if self.healthy_interval is not None:
+            if time.time() - self._healthy_since > self.healthy_interval:
+                return False
         return True
 
     async def on_health_check_error(self, retry_state: RetryCallState):
@@ -581,7 +590,7 @@ class Listener(ABC):
         Args:
             recursive: 是否递归检查子监听器
         """
-        if not self.enabled:
+        if not self.enabled:  # 不检查enable的
             return
         if recursive:
             for child in list(self.children.values()):
@@ -810,7 +819,7 @@ class Listener(ABC):
         yield self
 
 
-class GroupListener(Listener):
+class GroupListener(Listener, metaclass=ABCMeta):
     """
     动态子节点管理的 Listener 基类
 
@@ -819,7 +828,6 @@ class GroupListener(Listener):
     - DataSourceGroup: 根据请求动态创建 DataSource
 
     特点：
-    - 自身可以 pickle，但不保存 children（children 在启动时重建）
     - 通过 sync_children_params() 声明需要哪些 children
     - 自动同步：缺少的创建，多余的删除
 
@@ -840,17 +848,13 @@ class GroupListener(Listener):
                 if param["type"] == "watch":
                     return ExchangeBalanceWatchListener(param["key"])
     """
+    @property
+    def interval(self) -> float:
+        """获取 tick 间隔（秒），GroupListener 默认禁用 tick 回调"""
+        return 15
 
-    # 不 pickle children，启动时重建
-    # __pickle_exclude__ = {*Listener.__pickle_exclude__, "_children", "children"}
-
-    # def on_save(self):
-    #     """保存时排除 children"""
-    #     d = super().on_save()
-    #     d["_children"] = {}
-    #     return d
-
-    def sync_children_params(self) -> dict[str, any]:
+    @abstractmethod
+    def sync_children_params(self) -> dict[str, Any]:
         """
         返回需要的 children 参数字典
 
@@ -860,9 +864,9 @@ class GroupListener(Listener):
         Returns:
             {child_name: create_param} 字典
         """
-        return {}
 
-    def create_dynamic_child(self, name: str, param: any) -> 'Listener':
+    @abstractmethod   # must using app factory method
+    def create_dynamic_child(self, name: str, param: Any) -> 'Listener':
         """
         根据参数创建动态 child
 
@@ -875,56 +879,49 @@ class GroupListener(Listener):
         Returns:
             新创建的 Listener 实例
         """
-        raise NotImplementedError("Subclass must implement create_dynamic_child")
 
-    async def _sync_children(self) -> tuple[int, int]:
+    def _sync_children(self) -> set[str]:
         """
         同步 children：创建缺少的，删除多余的
-
-        Returns:
-            (created_count, removed_count)
         """
         target_params = self.sync_children_params()
         target_names = set(target_params.keys())
         current_names = set(self._children.keys())
 
-        created = 0
-        removed = 0
+        # created = 0
 
         # 删除多余的 children
-        for name in current_names - target_names:
-            child = self._children[name]
-            await child.stop()
-            self.remove_child(name)
-            removed += 1
-            self.logger.debug("Removed dynamic child: %s", name)
+        # for name in current_names - target_names:
+        #     self.remove_child_with_end(name)
+        #     removed += 1
+        #     self.logger.info("Removed dynamic child: %s", name)
 
         # 创建缺少的 children
         for name in target_names - current_names:
             param = target_params[name]
             child = self.create_dynamic_child(name, param)
-            self.add_child(child)
+            assert child.name == name, "Child name mismatch"
+            assert id(child.parent) == id(self), "Child parent mismatch"
+            assert id(child) == id(self._children[name]), "Child not added correctly"
+            # self.add_child(child)
             # 启动子节点：STARTING 状态（on_start 中创建）或 RUNNING 状态（on_tick 中创建）
-            if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
-                await child.start()
-            created += 1
-            self.logger.debug("Created dynamic child: %s", name)
+            # if self.state in (ListenerState.STARTING, ListenerState.RUNNING):
+            #     child.enabled = True  # 标记为启用
+            # created += 1
+            self.logger.info("Created dynamic child: %s", name)
 
-        return created, removed
+        return current_names - target_names
 
-    async def on_start(self):
-        """启动时同步 children"""
-        await super().on_start()
-        await self._sync_children()
+    async def _async_children(self):
+        for name in self._sync_children():
+            await self.remove_child_with_end(name)
+            self.logger.info("Removed dynamic child: %s", name)
 
     async def on_tick(self) -> bool:
         """每次 tick 同步 children"""
-        await self._sync_children()
+        await self._async_children()
         return False
 
-    async def on_stop(self):
-        """停止时清理所有 children"""
-        for child in list(self._children.values()):
-            await child.stop()
-            self.remove_child(child.name)
-        await super().on_stop()
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self._sync_children()

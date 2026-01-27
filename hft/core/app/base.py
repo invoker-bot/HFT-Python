@@ -235,7 +235,7 @@ class AppCore(Listener):
         """
         # 触发插件钩子
         pm.hook.on_app_tick(app=self)
-        self.logger.info("app tick")
+        self.logger.info("app tick:")
         # 检查策略组是否已完成
         # if self.strategy_group.finished:  # TODO: strategy_group is not defined
         #     self.logger.info("StrategyGroup finished, AppCore exiting")

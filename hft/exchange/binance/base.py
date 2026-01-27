@@ -3,8 +3,7 @@ Binance 交易所实现
 """
 from typing import ClassVar
 
-from cachetools import TTLCache
-from cachetools_async import cached
+from cache import AsyncTTL
 
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
@@ -28,9 +27,12 @@ class BinanceExchange(BaseExchange):
     PING_ENDPOINT = "/fapi/v1/ping"
 
     def medal_balance_usd(self, data):
-        return float(data['info'].get('totalWalletBalance', 0.0))
+        balance = data['info'].get('totalWalletBalance', None)
+        if balance is not None:
+            return float(balance)
+        return super().medal_balance_usd(data)  # 回退到基类实现
 
-    @cached(TTLCache(maxsize=32, ttl=30))
+    @AsyncTTL(time_to_live=30, maxsize=32)
     async def __fetch_symbols(self) -> dict[str, dict]:
         """获取所有永续合约交易对"""
         data = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
@@ -48,7 +50,7 @@ class BinanceExchange(BaseExchange):
         margin = symbol_data["marginAsset"]
         return f"{base}/{quote}:{margin}"
 
-    @cached(TTLCache(maxsize=32, ttl=30))
+    @AsyncTTL(time_to_live=30, maxsize=32)
     async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
         fundings = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.FUNDING_INFO_ENDPOINT}")
@@ -64,7 +66,7 @@ class BinanceExchange(BaseExchange):
         #     # self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
         return {indice["symbol"]: indice for indice in indices}
 
-    @cached(TTLCache(maxsize=32, ttl=3))
+    @AsyncTTL(time_to_live=3, maxsize=32)
     async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}

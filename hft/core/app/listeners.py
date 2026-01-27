@@ -170,12 +170,13 @@ class UnhealthyRestartListener(Listener):
             return
         for listener in list(root):
             if listener.enabled and not listener.healthy:
-                self.logger.info("Listener %s is unhealthy", listener.name)
+                # TODO: 这里需要移除日志
+                self.logger.info("Listener %s is unhealthy: %d", listener.name, self.reconfirm_cache[listener.id])
                 self.reconfirm_cache[listener.id] += 1
                 if self.reconfirm_cache[listener.id] >= self.reconfirm:
                     self.logger.warning("Listener %s is unhealthy, restarting...", listener.name)
                     await listener.restart(False)
                     self.reconfirm_cache[listener.id] = 0
             else:
-                self.logger.info("Listener %s is healthy", listener.name)
+                # self.logger.info("Listener %s is healthy", listener.name)
                 self.reconfirm_cache[listener.id] = 0

@@ -41,6 +41,13 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     test: bool = Field(False, description="Use test/demo trading mode")
     debug: bool = Field(False, description="Enable debug mode (no real orders)")
 
+    # auto cancel orders
+    auto_cancel_orders_after: Union[float, str] = Field(
+        3600, description="Time after which orders are automatically canceled (in seconds or as a string duration)")
+    auto_tracking_orders_after: Union[float, str] = Field(
+        300, description="Time after which orders are no longer tracked (in seconds or as a string duration)")
+    auto_tracking_orders_before: Union[float, str] = Field(
+        7200, description="Maximum age of orders to be tracked (in seconds or as a string duration)")
     # fee config
     swap_maker_fee: float = Field(0.0002, description="Default maker fee for swap trading")
     swap_taker_fee: float = Field(0.0005, description="Default taker fee for swap trading")
@@ -49,11 +56,13 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
 
     # 期货配置
     leverage: Optional[int] = Field(None, description="Default leverage for futures trading")
-    support_types: Optional[list[str]] = Field(None, validate_default=True, description="Supported market types: 'spot', 'swap'")
+    support_types: Optional[list[str]] = Field(
+        None, validate_default=True, description="Supported market types: 'spot', 'swap'")
 
     #  下单相关配置
     amount_refactor: float = Field(1.0, description="Refactor factor for order amounts")
-    max_position_per_pair_usd: Optional[float] = Field(None, description="Maximum position size per trading pair in USD")
+    max_position_per_pair_usd: Optional[float] = Field(
+        None, description="Maximum position size per trading pair in USD")
     max_position_per_order_usd: Optional[float] = Field(None, description="Maximum position size per order in USD")
 
     # 充值地址白名单（用于自动提币）
@@ -166,6 +175,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
 class ExchangeConfigPath(BaseConfigPath):
     """Exchange 配置路径"""
     class_dir: ClassVar[str] = "conf/exchange/"
+
 
 class ExchangeConfigPathGroup:
     """
