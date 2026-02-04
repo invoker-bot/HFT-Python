@@ -10,14 +10,13 @@
 import logging
 from os import path
 from typing import ClassVar, Type
-
 from pydantic import Field
 from ...config.base import BaseConfig, BaseConfigPath
-from .base import AppCore
 from ...database.config import DatabaseConfig
 from ...strategy.config import StrategyConfigPath
 from ...executor.config import ExecutorConfigPath
 from ...exchange.config import ExchangeConfigPathGroup
+from .base import AppCore
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +58,13 @@ class AppConfig(BaseConfig["AppCore"]):
     strategy: StrategyConfigPath = Field(description="策略配置路径")
     executor: ExecutorConfigPath = Field(description="执行器配置路径")
 
+    # 可选的 ClickHouse 数据库配置
     database: DatabaseConfig | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
-    # persist: PersistConfig = Field(default_factory=PersistConfig, description="持久化配置")
 
     # Indicator 配置（Feature 0006）
     indicators: dict[str, dict] = Field(
         default_factory=dict,
         description="指标配置，格式: {indicator_id: {class: 类名, params: {...}}}"
-    )
-
-    # Scope 配置（Feature 0012）
-    scopes: dict[str, dict] = Field(
-        default_factory=dict,
-        description=(
-            "全局 Scope 配置，格式: "
-            "{scope_class_id: {class_name: 类名, instance_id: 实例ID, vars: [...]}}"
-        )
     )
 
     # 调试和测试

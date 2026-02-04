@@ -14,14 +14,14 @@ get_all_instance_ids 注册机制
 """
 # pylint: disable=import-outside-toplevel
 from typing import TYPE_CHECKING, Callable, Optional, Type
-
+from cachetools import TTLCache, cached
 if TYPE_CHECKING:
     from ...core.app.base import AppCore
     from .base import BaseScope
 
 # 全局注册表：{(ParentScopeClass, ScopeClass): func}
 # 其中 ParentScopeClass 可以是 None（表示根节点）
-GetInstanceIds = Callable[['AppCore', Optional['BaseScope'], Type['BaseScope']], list[str]]
+GetInstanceIds = Callable[['AppCore', Optional['BaseScope'], Type['BaseScope'], Optional[str]], set[str]]
 _instance_ids_registry: dict[tuple[Optional[Type['BaseScope']], Type['BaseScope']], GetInstanceIds] = {}
 
 
@@ -50,10 +50,12 @@ def register_get_all_instance_ids(
     return decorator
 
 
+@cached(TTLCache(maxsize=128, ttl=30))
 def get_all_instance_ids(
     app_core: "AppCore",
     parent_scope: Optional["BaseScope"],
     scope_class: Type["BaseScope"],
+    filters: Optional[str] = None
 ) -> list[str]:
     """
     获取指定 Scope 类型的所有实例 ID
@@ -63,7 +65,7 @@ def get_all_instance_ids(
         parent_scope: 父 Scope 实例（根节点时为 None）
         parent_scope_class: 父 Scope 类（根节点时为 None）
         scope_class: 当前 Scope 类
-        **kwargs: 额外参数
+        filters: 可选的过滤字符串
 
     Returns:
         实例 ID 列表
@@ -84,7 +86,7 @@ def get_all_instance_ids(
             f"({parent_scope_class.__name__ if parent_scope_class else 'None'}, {scope_class.__name__})"
         )
 
-    return func(app_core, parent_scope, scope_class)
+    return func(app_core, parent_scope, scope_class, filters)
 
 
 def has_instance_ids_provider(

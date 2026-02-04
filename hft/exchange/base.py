@@ -169,10 +169,15 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     # self.add_child(ExchangeBalanceListener())
     # self.add_child(ExchangeCurrenciesListener())
 
+    @property
+    def event(self) -> AsyncIOEventEmitter:
+        """通过树形结构获取"""
+        return self.parent.event
+
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
         self.config: 'BaseExchangeConfig' = kwargs['config']
-        self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
+        # self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
         self._markets: HealthyData[dict[str, MarketInterface]] = HealthyData(max_age=1800.0)  # id -> market dict
         self._currencies: HealthyData[dict[str, CurrencyInterface]] = HealthyData(max_age=1800.0)  # 货币信息
         # 重新创建持仓数据管理器
@@ -528,6 +533,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         if not self.config.debug:
             try:
                 exchange = self.get_exchange(symbol)
+                self.event.emit("order:creating", resolved_order)   # TODO: 可以记录order_params
                 order = await exchange.create_order(
                     **resolved_order
                 )
@@ -537,9 +543,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     await self._balances[market['type']].mark_dirty()
                     if market['type'] != "spot":
                         await self._positions.mark_dirty()  # 市价订单后标记持仓数据需要刷新
-                self.event.emit("order_created", resolved_order, order)  # TODO: 可以记录order
+                self.event.emit("order:created", resolved_order, order)  # TODO: 可以记录order
                 # 插件钩子：订单创建成功
-                pm.hook.on_order_created(exchange=self, order=order)
+                # pm.hook.on_order_created(exchange=self, order=order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
                 return order
             except (InvalidOrder, KeyError) as e:
@@ -571,6 +577,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
         # only support swap for now
         try:
+            for order_param in order_params:
+                self.event.emit("order:creating", order_param)
             results = await self.exchanges['swap'].create_orders(order_params)
             for order_param, order in zip(order_params, results):
                 place_str = self.__get_place_str(order)
@@ -578,7 +586,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     await self._balances[market['type']].mark_dirty()
                     if market['type'] != "spot":
                         await self._positions.mark_dirty()
-                self.event.emit("order_created", order_param, order)
+                self.event.emit("order:created", order_param, order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
             return results
         except (InvalidOrder, KeyError) as e:
@@ -588,52 +596,65 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def cancel_order(self, order_id: str, symbol: str) -> Order:
         """撤销订单"""
         exchange = self.get_exchange(symbol)
+        self.event.emit("order:canceling", order_id, symbol)
         order = await exchange.cancel_order(order_id, symbol)
-        self.event.emit("order_canceled", order_id, symbol, order)
+        self.event.emit("order:canceled", order_id, symbol, order)
         # 插件钩子：订单取消
-        pm.hook.on_order_cancelled(exchange=self, order=order)
+        # pm.hook.on_order_cancelled(exchange=self, order=order)
         self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
         return order
 
     async def cancel_orders(self, orders: list[str], symbol: str) -> list[Order]:
         """批量撤销订单"""
         exchange = self.get_exchange(symbol)
+        for order_id in orders:
+            self.event.emit("order:canceling", order_id, symbol)
         results = await exchange.cancel_orders(orders, symbol)
         for order_id, order in zip(orders, results):
-            self.event.emit("order_canceled", order_id, symbol, order)
+            self.event.emit("order:canceled", order_id, symbol, order)
             self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
         return results
 
     async def fetch_order(self, order_id: str, symbol: str = None) -> Order:
         """查询订单"""
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_order(order_id, symbol)
+        order = await exchange.fetch_order(order_id, symbol)
+        self.event.emit("order:updated", order)
+        return order
 
     async def fetch_open_orders(
         self,
         symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None,
-    ) -> list:
+    ) -> list[Order]:
         """查询未完成订单"""
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_open_orders(symbol, since, limit)
+        orders = await exchange.fetch_open_orders(symbol, since, limit)
+        for order in orders:
+            self.event.emit("order:updated", order)
+        return orders
 
     async def fetch_closed_orders(
         self,
         symbol: str,
         since: Optional[int] = None,
         limit: Optional[int] = None,
-    ) -> list:
+    ) -> list[Order]:
         """查询已完成订单"""
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_closed_orders(symbol, since, limit)
+        orders = await exchange.fetch_closed_orders(symbol, since, limit)
+        for order in orders:
+            self.event.emit("order:updated", order)
+        return orders
 
     async def watch_orders(self, ccxt_exchange_key: str) -> list[Order]:
         """订单更新"""
         exchange = self.exchanges[ccxt_exchange_key]
         orders = await exchange.watch_orders()
-        self._positions_data.mark_dirty()  # 订单更新后仓位可能变化
+        for order in orders:
+            self.event.emit("order:updated", order)
+        self._positions.mark_dirty()  # 订单更新后仓位可能变化
         return orders
 
     async def un_watch_orders(self, ccxt_exchange_key: str):

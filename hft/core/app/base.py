@@ -32,7 +32,6 @@ from ...executor.base import BaseExecutor
 from ...indicator.base import BaseIndicator
 from ...indicator.group import IndicatorGroup
 from ...plugin import pm
-from ...strategy.group import StrategyGroup
 from ..scope.manager import ScopeManager
 from ..scope.vm import VirtualMachine
 from ..listener import Listener
@@ -109,10 +108,21 @@ class AppCore(Listener):
             ExchangeGroup,
             parent=self
         )
-
         # 2. Scope 管理器/VM
+        self.vm = VirtualMachine()
         self.scope_manager = self.factory.get_or_create(
             ScopeManager,
+            parent=self
+        )
+        # 3. 交易执行器（从配置路径加载）
+        executor_config = self.config.executor
+        self.executor: BaseExecutor = self.factory.get_or_create_configurable_instance(
+            executor_config,
+            parent=self,
+        )
+        strategy_config = self.config.strategy
+        self.strategy = self.factory.get_or_create_configurable_instance(
+            strategy_config,
             parent=self
         )
         return
@@ -125,23 +135,6 @@ class AppCore(Listener):
         )
         # 注册配置中的 indicator factory
         self._register_indicator_factories()
-
-        # 4. 策略组
-        self.strategy_group = self.factory.get_or_create(
-            StrategyGroup,
-            "StrategyGroup",
-            parent=self
-        )
-
-        # 5. 交易执行器（从配置路径加载）
-        executor_config = self.config.executor.instance
-        executor_class = type(executor_config.instance)
-        self.executor: BaseExecutor = self.factory.get_or_create(
-            executor_class,
-            name=executor_config.path,
-            parent=self,
-            config=executor_config
-        )
 
     @cached_property
     def database(self):   #  -> ClickHouseDatabase | None:

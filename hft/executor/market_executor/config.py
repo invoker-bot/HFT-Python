@@ -4,13 +4,9 @@ MarketExecutor 配置模块
 Feature 0005: 支持动态参数（表达式或字面量）
 """
 from typing import TYPE_CHECKING, ClassVar, Type, Union
-
 from pydantic import Field
-
-from ..base_config import BaseExecutorConfig
-
-if TYPE_CHECKING:
-    from .executor import MarketExecutor
+from ..config import BaseExecutorConfig
+from .executor import MarketExecutor
 
 
 class MarketExecutorConfig(BaseExecutorConfig):
@@ -29,7 +25,6 @@ class MarketExecutorConfig(BaseExecutorConfig):
 
     @classmethod
     def get_class_type(cls) -> Type["MarketExecutor"]:
-        from .executor import MarketExecutor
         return MarketExecutor
 
 

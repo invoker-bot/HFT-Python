@@ -6,7 +6,7 @@ vars 是一个统一的变量定义和计算系统，用于在 Scope 和 Executo
 
 ### 使用场景
 
-- **Scope vars（Scope 系统）**：在 `conf/app/*.yaml` 的 `scopes.*.vars` 中定义，用于多层级的变量计算和继承（Strategy 通过 `links` 引用这些 scope）
+- **Scope vars（Scope 系统）**：在 `conf/app/*.yaml` 的 `scopes.*.vars` 中定义，用于多层级的变量计算和继承（Strategy 通过 `flow` 引用这些 scope）
 - **Executor 中的 vars**：在顶级 `vars` 字段中定义，用于 trading_pair instance level 的变量计算
 
 ---
@@ -184,7 +184,7 @@ scopes:
         initial_value: mid_price
 ```
 
-Strategy 配置只引用 `links`，不允许出现 `scopes`：
+Strategy 配置只引用 `flow`，不允许出现 `scopes`：
 
 ```yaml
 # conf/strategy/my_strategy.yaml（片段）
@@ -194,9 +194,11 @@ requires:
   - ticker
   - rsi
 
-links:
-  - id: link_main
-    value: [g, exchange_class, exchange, trading_pair]
+flow:
+  - class_name: GlobalScope
+  - class_name: ExchangeClassScope
+  - class_name: ExchangeScope
+  - class_name: TradingPairScope
 ```
 
 **特点**：
@@ -288,9 +290,11 @@ requires:
   - ticker    # 价格数据源（提供 mid_price）
   - rsi       # RSI 指标
 
-links:
-  - id: link_main
-    value: [g, exchange_class, exchange, trading_pair]
+flow:
+  - class_name: GlobalScope
+  - class_name: ExchangeClassScope
+  - class_name: ExchangeScope
+  - class_name: TradingPairScope
 
 targets:
   - exchange: '*'

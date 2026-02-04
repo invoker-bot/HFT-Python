@@ -258,7 +258,7 @@ indicators:
 - [config-path.md](config-path.md) - ConfigPath 类型、ExchangeConfigPathGroup 选择器与缓存
 - [indicator.md](indicator.md) - Indicator 模块
 - [executor.md](executor.md) - Executor 配置
-- [scope.md](scope.md) - Scope 系统（links/ChainMap/target 输出）
+- [scope.md](scope.md) - Scope 系统（flow/ChainMap/target 输出）
 
 ## 兼容性与迁移提示
 

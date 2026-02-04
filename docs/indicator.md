@@ -308,8 +308,10 @@ requires:
   - equation
   - rsi
 
-links:
-  - [global, exchange, trading_pair]
+flow:
+  - class_name: GlobalScope
+  - class_name: ExchangeScope
+  - class_name: TradingPairScope
 
 targets:
   - exchange_id: '*'

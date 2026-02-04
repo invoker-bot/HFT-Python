@@ -53,23 +53,23 @@ from rich.console import Console
 from rich.table import Table
 from younotyou import Matcher
 
-from .base import BaseStrategy, StrategyOutput, TargetPositions
-from .config import BaseStrategyConfig, TargetDefinition
+from .base import BaseStrategy # , StrategyOutput, TargetPositions
+from .config import BaseStrategyConfig  # , TargetDefinition
 
 if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
 
 
-class TargetPairDefinition(TargetDefinition):
-    """
-    target_pairs 中的单个条目定义（Feature 0011）
-
-    支持两种格式：
-    - string: "BTC/USDT" -> {"symbol": "BTC/USDT", "exchange_class": "*"}
-    - dict: {"symbol": "BTC/USDT", "exchange_class": "okx"}
-    """
-    # 继承 TargetDefinition，但 position_usd 等字段在展开时由 target 提供
-    pass
+# class TargetPairDefinition(TargetDefinition):
+#     """
+#     target_pairs 中的单个条目定义（Feature 0011）
+#
+#     支持两种格式：
+#     - string: "BTC/USDT" -> {"symbol": "BTC/USDT", "exchange_class": "*"}
+#     - dict: {"symbol": "BTC/USDT", "exchange_class": "okx"}
+#     """
+#     # 继承 TargetDefinition，但 position_usd 等字段在展开时由 target 提供
+#     pass
 
 
 class StaticPositionsStrategyConfig(BaseStrategyConfig):
@@ -113,35 +113,21 @@ class StaticPositionsStrategyConfig(BaseStrategyConfig):
     """
     class_name: ClassVar[str] = "static_positions"
 
-    # 旧格式字段（向后兼容）
-    exchange_path: Optional[str] = Field(
-        None,
-        description="Exchange config path (e.g., 'okx/main'), 旧格式使用"
-    )
-    positions_usd: dict[str, float] = Field(
-        default_factory=dict,
-        description="Target positions in USD {symbol: usd_value}, 旧格式使用"
-    )
-    speed: float = Field(
-        0.8,
-        description="Default execution urgency [0.0, 1.0], 旧格式使用"
-    )
-
     # 新格式字段（Feature 0008）
-    targets: list[TargetDefinition] = Field(
-        default_factory=list,
-        description="目标定义列表（Feature 0008 新格式）"
-    )
+    # targets: list[TargetDefinition] = Field(
+    #     default_factory=list,
+    #     description="目标定义列表（Feature 0008 新格式）"
+    # )
 
     # 展开式写法字段（Feature 0011）
-    target_pairs: list[Union[str, dict[str, Any]]] = Field(
-        default_factory=list,
-        description="目标交易对列表（Feature 0011 展开式写法）"
-    )
-    target: Optional[dict[str, Any]] = Field(
-        None,
-        description="目标模板（与 target_pairs 配合使用，Feature 0011）"
-    )
+    # target_pairs: list[Union[str, dict[str, Any]]] = Field(
+    #     default_factory=list,
+    #     description="目标交易对列表（Feature 0011 展开式写法）"
+    # )
+    # target: Optional[dict[str, Any]] = Field(
+    #     None,
+    #     description="目标模板（与 target_pairs 配合使用，Feature 0011）"
+    # )
 
     # 通用字段
     exit_on_target: bool = Field(
@@ -153,7 +139,7 @@ class StaticPositionsStrategyConfig(BaseStrategyConfig):
         description="Position tolerance (0.05 = 5%), within this range is considered on target"
     )
 
-    @model_validator(mode='after')
+    # @model_validator(mode='after')
     def expand_target_pairs(self) -> 'StaticPositionsStrategyConfig':
         """
         展开 target_pairs + target 为 targets 列表（Feature 0011）
@@ -196,7 +182,7 @@ class StaticPositionsStrategyConfig(BaseStrategyConfig):
         return self
 
     @classmethod
-    def get_class_type(cls) -> Type["StaticPositionsStrategy"]:
+    def get_class_type(cls):
         return StaticPositionsStrategy
 
     @cached_property
@@ -227,11 +213,11 @@ class StaticPositionsStrategy(BaseStrategy):
     - 支持 target_pairs + target 展开式写法
     """
 
-    def __init__(self, config: StaticPositionsStrategyConfig):
-        super().__init__(config)
-        self.config: StaticPositionsStrategyConfig = config
-        # 追踪已达标的 symbol
-        self._targets_reached: set[str] = set()
+    # def __init__(self, config: StaticPositionsStrategyConfig):
+    #     super().__init__(config)
+    #     self.config: StaticPositionsStrategyConfig = config
+    #     # 追踪已达标的 symbol
+    #     self._targets_reached: set[str] = set()
 
     @property
     def exchange_group(self):
@@ -254,7 +240,7 @@ class StaticPositionsStrategy(BaseStrategy):
 
     def _match_target_to_exchanges(
         self,
-        target: TargetDefinition,
+        target  # : TargetDefinition,
     ) -> list[tuple[str, str]]:
         """
         匹配 target 到 exchange 列表
@@ -325,7 +311,7 @@ class StaticPositionsStrategy(BaseStrategy):
 
     def _evaluate_target_fields(
         self,
-        target: TargetDefinition,
+        target,  # : TargetDefinition,
         exchange_path: str,
         symbol: str,
     ) -> dict[str, Any]:
@@ -386,7 +372,7 @@ class StaticPositionsStrategy(BaseStrategy):
 
         return result
 
-    def get_target_positions_usd(self) -> Union[TargetPositions, StrategyOutput]:
+    def get_target_positions_usd(self): #  -> Union[TargetPositions, StrategyOutput]:
         """
         返回配置的目标仓位
 
@@ -480,19 +466,19 @@ class StaticPositionsStrategy(BaseStrategy):
 
     async def on_start(self):
         await super().on_start()
-        if self.config.targets:
-            self.logger.info(
-                "StaticPositionsStrategy started: targets=%d, exit=%s",
-                len(self.config.targets),
-                self.config.exit_on_target
-            )
-        else:
-            self.logger.info(
-                "StaticPositionsStrategy started: exchange=%s, positions=%s, exit=%s",
-                self.config.exchange_path,
-                self.config.positions_usd,
-                self.config.exit_on_target
-            )
+        # if self.config.targets:
+        #     self.logger.info(
+        #         "StaticPositionsStrategy started: targets=%d, exit=%s",
+        #         len(self.config.targets),
+        #         self.config.exit_on_target
+        #     )
+        # else:
+        #     self.logger.info(
+        #         "StaticPositionsStrategy started: exchange=%s, positions=%s, exit=%s",
+        #         self.config.exchange_path,
+        #         self.config.positions_usd,
+        #         self.config.exit_on_target
+        #     )
 
     def _get_target_positions_for_check(self) -> dict[tuple[str, str], float]:
         """
@@ -527,6 +513,9 @@ class StaticPositionsStrategy(BaseStrategy):
         Returns:
             True 如果策略应该退出（exit_on_target=True 且所有仓位达标）
         """
+        layer = self.root.vm.execute(self.config.flow, self.root)
+        print("StaticPositionsStrategy on_tick layers:", layer)
+        return
         target_positions = self._get_target_positions_for_check()
 
         if not target_positions:
@@ -687,6 +676,6 @@ class StaticPositionsStrategy(BaseStrategy):
     def log_state(self, console: Console, recursive: bool = True):
         """输出状态到控制台"""
         super().log_state(console, recursive)
-        if self.config.positions_usd or self.config.targets:
-            table = self._build_table()
-            console.print(table)
+        # if self.config.positions_usd or self.config.targets:
+        #     table = self._build_table()
+        #     console.print(table)

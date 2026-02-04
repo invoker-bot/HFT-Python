@@ -819,6 +819,12 @@ class Listener(ABC):
             yield from child
         yield self
 
+    def __hash__(self):
+        return id(self)
+
+    def __eq__(self, value):
+        return id(self) == id(value)
+
 
 class GroupListener(Listener, metaclass=ABCMeta):
     """

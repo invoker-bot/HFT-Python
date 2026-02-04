@@ -31,13 +31,11 @@ from collections import deque
 from typing import TYPE_CHECKING, Any, Optional, Union
 from younotyou import Matcher
 from ..core.listener import Listener
-
+# from ..core.scope.instance_ids import get_all_instance_ids
 if TYPE_CHECKING:
     from ..core.scope.manager import ScopeManager
-    from ..core.scope.tree import LinkedScopeNode, LinkedScopeTree
     from ..exchange.base import BaseExchange
     from ..indicator.base import BaseIndicator
-    from .group import StrategyGroup
     from .config import BaseStrategyConfig
 
 
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
 # symbol: 交易对，如 "BTC/USDT:USDT"
 # position_usd: 正数=多仓，负数=空仓，单位 USD
 # speed: 执行紧急度 [0.0, 1.0]，越高越急
-TargetPositions = dict[tuple[str, str], tuple[float, float]]
+# TargetPositions = dict[tuple[str, str], tuple[float, float]]
 
 # 新版 Strategy 输出类型（Feature 0008）: {(exchange_path, symbol): {"字段名": 值, ...}}
 # 支持任意字段，如 position_usd, speed, position_amount, max_position_usd 等
@@ -64,7 +62,7 @@ class BaseStrategy(Listener):
     然后根据与当前仓位的差值决定是否执行交易。
 
     核心方法：
-        get_target_positions_usd() -> TargetPositions
+
             返回 {exchange_class: {symbol: (position_usd, speed)}}
             - position_usd: 目标仓位价值（USD），正数=多仓，负数=空仓
             - speed: 执行紧急度 [0.0, 1.0]
@@ -100,33 +98,27 @@ class BaseStrategy(Listener):
     Attributes:
         strategy_group: 所属的策略组（通过 parent 访问）
     """
+    # def __init__(self, config: 'BaseStrategyConfig'):
+    #     super().__init__(name=config.path, interval=config.interval)
+    #     self.config = config
+    #
+    #     # Feature 0008: conditional_vars 状态持久化
+    #     # {变量名: (当前值, 上次更新时间)}
+    #     self._conditional_var_states: dict[str, tuple[Any, float]] = {}
+    #
+    #     # Feature 0012: Scope 系统
+    #     self.scope_manager: Optional['ScopeManager'] = None
+    #     self.scope_trees: list['LinkedScopeTree'] = []
+    #     # 节点到树的映射（用于快速查找节点所属的树）
+    #     self._node_to_tree: dict['LinkedScopeNode', 'LinkedScopeTree'] = {}
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.config: 'BaseStrategyConfig' = kwargs['config']
 
     @property
-    def strategy_group(self) -> Optional["StrategyGroup"]:
-        """获取所属的策略组"""
-        parent = self.parent
-        from .group import StrategyGroup
-        if isinstance(parent, StrategyGroup):
-            return parent
-        return None
-
-    def __init__(self, config: 'BaseStrategyConfig'):
-        super().__init__(name=config.path, interval=config.interval)
-        self.config = config
-
-        # Feature 0008: conditional_vars 状态持久化
-        # {变量名: (当前值, 上次更新时间)}
-        self._conditional_var_states: dict[str, tuple[Any, float]] = {}
-
-        # Feature 0012: Scope 系统
-        self.scope_manager: Optional['ScopeManager'] = None
-        self.scope_trees: list['LinkedScopeTree'] = []
-        # 节点到树的映射（用于快速查找节点所属的树）
-        self._node_to_tree: dict['LinkedScopeNode', 'LinkedScopeTree'] = {}
-
-        # VirtualMachine 用于表达式求值
-        from ..core.scope.vm import VirtualMachine
-        self.vm = VirtualMachine()
+    def scope_manager(self) -> 'ScopeManager':
+        return self.root.scope_manager
 
     # ============================================================
     # Feature 0008: 变量计算机制
@@ -153,116 +145,6 @@ class BaseStrategy(Listener):
         return indicator_group.get_indicator(
             indicator_id, exchange_class, symbol, exchange_path=exchange_path
         )
-
-    def collect_context_vars(
-        self,
-        exchange_path: str,
-        symbol: str,
-    ) -> dict[str, Any]:
-        """
-        收集上下文变量（Feature 0008）
-
-        收集顺序：
-        1. requires 中 Indicator 的变量
-        2. vars 列表（按顺序计算，后面可引用前面）
-        3. conditional_vars（条件满足时更新）
-
-        Args:
-            exchange_path: 交易所路径（如 "okx/main"）
-            symbol: 交易对
-
-        Returns:
-            变量字典
-        """
-        context: dict[str, Any] = {}
-
-        # 从 exchange_path 解析 exchange_class
-        exchange_class = exchange_path.split('/')[0] if '/' in exchange_path else exchange_path
-
-        # 1. 从 requires 中的 Indicator 收集变量
-        for indicator_id in getattr(self.config, 'requires', []) or []:
-            indicator = self._get_indicator(
-                indicator_id, exchange_class, symbol, exchange_path=exchange_path
-            )
-            if indicator and indicator.is_ready():
-                try:
-                    vars_dict = indicator.calculate_vars(direction=0)
-                    context.update(vars_dict)
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to get vars from indicator %s: %s",
-                        indicator_id, e
-                    )
-
-        # 2. 计算 vars 列表（支持条件变量）
-        now = time.time()
-        for var_def in getattr(self.config, 'vars', []) or []:
-            try:
-                # 检查是否有条件（on 字段）
-                if hasattr(var_def, 'on') and var_def.on:
-                    # 条件变量：检查条件是否满足
-                    condition_met = self._safe_eval_bool(var_def.on, context)
-
-                    if condition_met:
-                        # 条件满足，更新值
-                        value = self._safe_eval(var_def.value, context)
-                        self._conditional_var_states[var_def.name] = (value, now)
-                        context[var_def.name] = value
-                    else:
-                        # 条件不满足，使用缓存值或初始值
-                        if var_def.name in self._conditional_var_states:
-                            cached_value, _ = self._conditional_var_states[var_def.name]
-                            context[var_def.name] = cached_value
-                        else:
-                            # 首次且条件不满足，使用 initial_value
-                            initial = getattr(var_def, 'initial_value', None)
-                            context[var_def.name] = initial
-                            self._conditional_var_states[var_def.name] = (initial, 0.0)
-                else:
-                    # 普通变量：每次都计算
-                    value = self._safe_eval(var_def.value, context)
-                    context[var_def.name] = value
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to compute var %s: %s",
-                    var_def.name, e
-                )
-
-        # 3. 计算 conditional_vars（DEPRECATED - 向后兼容）
-        # 新代码应使用 vars 的 on 字段
-        for var_name, var_def in (getattr(self.config, 'conditional_vars', {}) or {}).items():
-            # 获取当前状态
-            current_value, last_update = self._conditional_var_states.get(
-                var_name, (var_def.default, 0.0)
-            )
-
-            # 检查条件
-            try:
-                condition_met = self._safe_eval_bool(var_def.on, context)
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to evaluate condition for %s: %s",
-                    var_name, e
-                )
-                condition_met = False
-
-            if condition_met:
-                # 条件满足，更新值
-                try:
-                    new_value = self._safe_eval(var_def.value, context)
-                    self._conditional_var_states[var_name] = (new_value, now)
-                    context[var_name] = new_value
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to compute conditional var %s: %s",
-                        var_name, e
-                    )
-                    context[var_name] = current_value
-            else:
-                # 条件不满足，保持当前值
-                context[var_name] = current_value
-
-        return context
 
     def _safe_eval(self, expr: str, context: dict[str, Any]) -> Any:
         """
@@ -370,64 +252,6 @@ class BaseStrategy(Listener):
         """
         pass
 
-    def _build_scope_trees(self) -> None:
-        """
-        根据 links 配置构建 Scope 树
-
-        简化版实现：直接在 BaseStrategy 中构建树，不依赖 ScopeManager
-        """
-        if not self.config.links:
-            return
-
-        if self.scope_manager is None:
-            self.logger.warning("ScopeManager not initialized")
-            return
-
-        # 为每条 link 构建 Scope 树
-        self.scope_trees = []
-        self._node_to_tree = {}
-
-        for link in self.config.links:
-            trees = self._build_single_link(link)
-            self.scope_trees.extend(trees)
-
-            # 构建 node_to_tree 映射
-            for tree in trees:
-                self._build_node_to_tree_mapping(tree.root, tree)
-
-    def _build_single_link(self, link: list[str]) -> list['LinkedScopeTree']:
-        """
-        构建单条 link 的 Scope 树
-
-        Args:
-            link: Scope 链路，如 ["global", "exchange", "trading_pair"]
-
-        Returns:
-            LinkedScopeTree 列表
-        """
-        from ..core.scope.tree import LinkedScopeNode, LinkedScopeTree
-
-        if not link:
-            return []
-
-        # 获取第一层的所有实例 ID
-        first_scope_class_id = link[0]
-        instance_ids = self._get_instance_ids(first_scope_class_id, None)
-
-        # 为每个实例创建根节点
-        trees = []
-        for instance_id in instance_ids:
-            scope = self._create_scope(first_scope_class_id, instance_id)
-            root_node = LinkedScopeNode(scope=scope, parent=None)
-
-            # 递归构建子树
-            if len(link) > 1:
-                self._build_children(root_node, link, 1)
-
-            trees.append(LinkedScopeTree(root=root_node))
-
-        return trees
-
     def _build_children(
         self,
         parent_node: 'LinkedScopeNode',
@@ -481,9 +305,9 @@ class BaseStrategy(Listener):
             app_core=self.root,
         )
 
-    def _get_instance_ids(self, scope_class_id: str, parent_node: 'LinkedScopeNode') -> list[str]:
+    def _get_instance_ids(self, scope_class_id: str, parent_node: Optional['LinkedScopeNode']) -> list[str]:
         """
-        获取指定 scope_class_id 的所有实例 ID
+        获取指定 scope_class_id 对于parent node 的所有实例 ID
 
         Args:
             scope_class_id: Scope 类型 ID（如 "global", "exchange"）
@@ -492,46 +316,20 @@ class BaseStrategy(Listener):
         Returns:
             实例 ID 列表
         """
-        scope_config = self.config.scopes.get(scope_class_id)
-        if not scope_config:
-            self.logger.warning("No config for scope_class_id=%s", scope_class_id)
-            return []
-
-        # 如果配置中指定了 instance_id，直接使用
-        if scope_config.instance_id:
-            return [scope_config.instance_id]
+        scope_config = self.root.config.scopes[scope_class_id]
 
         # 根据 class_name 动态获取实例 ID
         class_name = scope_config.class_name
-
-        if class_name == "GlobalScope":
-            return ["global"]
-
-        elif class_name == "ExchangeClassScope":
-            return self._get_exchange_classes()
-
-        elif class_name == "ExchangeScope":
-            return self._get_exchange_paths()
-
-        elif class_name == "TradingPairClassScope":
-            return self._get_filtered_symbols()
-
-        elif class_name == "TradingPairScope":
-            return self._get_trading_pair_ids(parent_node)
-
-        elif class_name == "TradingPairClassGroupScope":
-            return self._get_group_ids()
-
-        else:
-            self.logger.warning("Unknown scope class_name=%s", class_name)
-            return []
-
-    def _get_exchange_classes(self) -> list[str]:
-        """获取所有 exchange class 名称"""
-        if not self.root or not hasattr(self.root, 'exchange_group'):
-            return []
-        classes = {ex.class_name for ex in self.root.exchange_group.children.values()}
-        return sorted(classes)
+        class_type = self.root.scope_manager.all_scopes[class_name]
+        instance_ids = get_all_instance_ids(self.root, parent_node.scope, class_type)
+        # TODO: 过滤 instance_ids（如 exchange_path、trading_pair 等）
+        return instance_ids
+    # def _get_exchange_classes(self) -> list[str]:
+    #     """获取所有 exchange class 名称"""
+    #     if not self.root or not hasattr(self.root, 'exchange_group'):
+    #         return []
+    #     classes = {ex.class_name for ex in self.root.exchange_group.children.values()}
+    #     return sorted(classes)
 
     def _get_exchange_paths(self) -> list[str]:
         """获取所有 exchange path"""
@@ -729,124 +527,6 @@ class BaseStrategy(Listener):
 
         return None
 
-    def _match_pattern(self, pattern: str, value: str) -> bool:
-        """
-        匹配模式（支持通配符）
-
-        Args:
-            pattern: 模式字符串（如 '*', 'okx', 'okx/*'）
-            value: 要匹配的值
-
-        Returns:
-            是否匹配
-        """
-        matcher = Matcher(include_patterns=[pattern])
-        return value in matcher
-
-    def _get_all_trading_pairs(self) -> list[tuple[str, str]]:
-        """
-        获取所有需要处理的 (exchange_path, symbol) 对
-
-        Returns:
-            [(exchange_path, symbol), ...]
-        """
-        pairs = []
-
-        if self.root is None or not hasattr(self.root, 'exchange_group'):
-            return pairs
-
-        # 获取过滤后的 symbols
-        symbols = self._get_filtered_symbols()
-
-        # 遍历所有 exchange
-        for exchange in self.root.exchange_group.children.values():
-            exchange_path = exchange.config.path
-
-            # 为每个 symbol 创建 pair
-            for symbol in symbols:
-                # 检查该 exchange 是否支持该 symbol
-                if hasattr(exchange, 'markets') and exchange.markets:
-                    if symbol in exchange.markets:
-                        pairs.append((exchange_path, symbol))
-
-        return pairs
-
-    def _get_or_create_scope_for_target(
-        self,
-        exchange_path: str,
-        symbol: str,
-        link_index: int = 0
-    ) -> Optional['BaseScope']:
-        """
-        按需创建或获取指定 exchange_path 和 symbol 的 target_scope
-
-        根据 links 配置，沿着 Scope 路径创建或获取 Scope。
-
-        Args:
-            exchange_path: Exchange 路径
-            symbol: 交易对
-            link_index: 使用哪条 link（默认第一条）
-
-        Returns:
-            target_scope 层级的 Scope，如果无法创建则返回 None
-        """
-        if not self.config.links or not self.scope_manager:
-            return None
-
-        if link_index >= len(self.config.links):
-            return None
-
-        link = self.config.links[link_index]
-
-        # 从 exchange_path 解析 exchange_class
-        exchange_class = exchange_path.split('/')[0] if '/' in exchange_path else exchange_path
-
-        # 沿着 link 路径创建 Scope
-        current_scope = None
-        for scope_class_id in link:
-            scope_config = self.config.scopes.get(scope_class_id, {})
-            class_name = scope_config.class_name if scope_config else "GlobalScope"
-
-            # 根据 scope 类型确定 instance_id
-            if class_name == "GlobalScope":
-                instance_id = "global"
-            elif class_name == "ExchangeClassScope":
-                instance_id = exchange_class
-            elif class_name == "ExchangeScope":
-                instance_id = exchange_path
-            elif class_name == "TradingPairClassScope":
-                instance_id = symbol
-            elif class_name == "TradingPairScope":
-                instance_id = f"{exchange_path}:{symbol}"
-            else:
-                # 未知类型
-                self.logger.warning("Unsupported scope class: %s", class_name)
-                return None
-
-            # 创建或获取 Scope
-            current_scope = self.scope_manager.get_or_create(
-                scope_class_name=class_name,
-                scope_class_id=scope_class_id,
-                scope_instance_id=instance_id,
-                parent=current_scope
-            )
-
-            # 设置基础变量
-            if class_name == "GlobalScope":
-                pass  # GlobalScope 不需要设置额外变量
-            elif class_name == "ExchangeClassScope":
-                current_scope.set_var("exchange_class", exchange_class)
-            elif class_name == "ExchangeScope":
-                current_scope.set_var("exchange_path", exchange_path)
-                current_scope.set_var("exchange_class", exchange_class)
-            elif class_name == "TradingPairClassScope":
-                current_scope.set_var("symbol", symbol)
-            elif class_name == "TradingPairScope":
-                current_scope.set_var("exchange_path", exchange_path)
-                current_scope.set_var("exchange_class", exchange_class)
-                current_scope.set_var("symbol", symbol)
-
-        return current_scope
 
     def _inject_indicator_vars_to_scope(self, scope: 'BaseScope') -> None:
         """
@@ -976,57 +656,6 @@ class BaseStrategy(Listener):
                     var_def.name, scope.scope_class_id, scope.scope_instance_id, e
                 )
 
-    def _breadth_first_traversal(self, root_nodes: list['LinkedScopeNode']) -> list['LinkedScopeNode']:
-        """
-        广度优先遍历 Scope 树
-
-        Args:
-            root_nodes: 根节点列表
-
-        Returns:
-            广度优先顺序的节点列表
-        """
-        result = []
-        visited = set()
-        queue = deque(root_nodes)
-
-        while queue:
-            node = queue.popleft()
-            node_id = id(node)
-
-            if node_id in visited:
-                continue
-
-            visited.add(node_id)
-            result.append(node)
-
-            # 添加 children 到队列
-            for child in node.children.values():
-                if id(child) not in visited:
-                    queue.append(child)
-
-        return result
-
-    def _collect_leaf_nodes(self, node: 'LinkedScopeNode') -> list['LinkedScopeNode']:
-        """
-        收集所有叶子节点
-
-        Args:
-            node: 根节点
-
-        Returns:
-            叶子节点列表
-        """
-        leaf_nodes = []
-        if not node.children:
-            # 当前节点是叶子节点
-            leaf_nodes.append(node)
-        else:
-            # 递归收集子节点的叶子节点
-            for child in node.children.values():
-                leaf_nodes.extend(self._collect_leaf_nodes(child))
-        return leaf_nodes
-
     def get_output(self) -> StrategyOutput:
         """
         获取策略输出（Feature 0012）
@@ -1136,26 +765,18 @@ class BaseStrategy(Listener):
         await super().on_start()
 
         # 如果配置了 Scope 系统，进行初始化
-        if self.config.links:
-            # 获取 ScopeManager
-            if self.root is not None:
-                self.scope_manager = getattr(self.root, 'scope_manager', None)
+        # if self.config.links:
+        #     # 注册自定义 Scope 类型
+        #     self._register_custom_scopes()
+        #
+        #     # NOTE: 不再预先构建 Scope 树，改为按需创建（在 get_output() 中）
+        #     # 这样可以支持动态的交易对变化（新币上线等）
+        #     # self._build_scope_trees()
 
-            if self.scope_manager is None:
-                self.logger.warning("ScopeManager not found in root")
-                return
-
-            # 注册自定义 Scope 类型
-            self._register_custom_scopes()
-
-            # NOTE: 不再预先构建 Scope 树，改为按需创建（在 get_output() 中）
-            # 这样可以支持动态的交易对变化（新币上线等）
-            # self._build_scope_trees()
-
-    @abstractmethod
-    def get_target_positions_usd(self) -> Union[TargetPositions, StrategyOutput]:
+    # @abstractmethod
+    # def get_targets(self) -> Union[TargetPositions, StrategyOutput]:
         """
-        获取策略的目标仓位
+        获取策略计算的目标仓位
 
         这是策略的核心输出方法。Executor 会在每个 tick 调用此方法，
         聚合所有策略的目标仓位后执行交易。

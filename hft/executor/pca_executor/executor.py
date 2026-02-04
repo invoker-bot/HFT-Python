@@ -314,7 +314,7 @@ class PCAExecutor(BaseExecutor):
         delta_usd: float,
         speed: float,
         current_price: float,
-    ) -> ExecutionResult:
+    ): # -> ExecutionResult:
         """执行 PCA 策略"""
         try:
             await exchange.medal_initialize_symbol(symbol)

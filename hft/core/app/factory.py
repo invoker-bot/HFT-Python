@@ -95,7 +95,7 @@ class AppFactory:
             self.config_cache[key] = config
         return self.config_cache[key]
 
-    def get_or_create_configurable_instance(self, config_path: 'BaseConfigPath', parent: Optional['Listener'] = None, **kwargs) -> 'BaseConfig':
+    def get_or_create_configurable_instance(self, config_path: 'BaseConfigPath', parent: Optional['Listener'] = None, **kwargs):
         config = self.get_or_create_config(config_path)
         return self.get_or_create(
             listener_class=config.get_class_type(),

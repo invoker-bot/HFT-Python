@@ -757,7 +757,7 @@ class SmartExecutor(BaseExecutor):
         delta_usd: float,
         speed: float,
         current_price: float,
-    ) -> ExecutionResult:
+    ): # -> ExecutionResult:
         """
         执行仓位调整（委托给选中的子执行器）
 

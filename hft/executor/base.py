@@ -4,12 +4,12 @@ Executor 执行器基类
 执行器负责将策略的目标仓位转化为实际交易。
 
 工作流程：
-    1. on_tick() 调用 strategy_group.get_aggregated_targets() 获取聚合目标
-    2. 对每个 (exchange_class, symbol, strategies_data)：
+    1. on_tick() 获取聚合目标
+    2. 对每个 (exchange, symbol, scope)：
         a. 获取当前仓位
         b. 计算 delta = target - current
         c. 如果 |delta| > per_order_usd，执行交易
-    3. speed 影响执行策略（市价/限价等）
+    # 3. speed 影响执行策略（市价/限价等）
 
 参数说明：
     per_order_usd: 单笔订单大小，也是执行阈值
@@ -22,44 +22,45 @@ Issue 0013: Strategy 数据驱动增强（单策略标量化）
     - 单策略场景，不需要 sum/avg 聚合
 """
 # pylint: disable=import-outside-toplevel,protected-access
+import time
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
-
+from ..core.scope.scopes import TradingPairScope
 from ..core.listener import Listener
 from ..plugin import pm
 
 if TYPE_CHECKING:
+    from ..core.scope.tree import LinkedScopeNode
     from ..exchange.base import BaseExchange
     from ..exchange.group import ExchangeGroup
-    from ..strategy.group import AggregatedTargets, StrategyGroup
     from .config import BaseExecutorConfig
 
 
-class ExecutorState(Enum):
-    """执行器状态"""
-    IDLE = "idle"               # 空闲
-    EXECUTING = "executing"     # 执行中
-    PAUSED = "paused"           # 暂停
+# class ExecutorState(Enum):
+#     """执行器状态"""
+#     IDLE = "idle"               # 空闲
+#     EXECUTING = "executing"     # 执行中
+#     PAUSED = "paused"           # 暂停
 
 
-@dataclass
-class ExecutionResult:
-    """执行结果"""
-    exchange_class: str
-    symbol: str
-    success: bool
-    exchange_name: str
-    target_usd: float = 0.0
-    current_usd: float = 0.0
-    delta_usd: float = 0.0
-    order_id: Optional[str] = None
-    filled_amount: float = 0.0
-    average_price: float = 0.0
-    error: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+# @dataclass
+# class ExecutionResult:
+#     """执行结果"""
+#     exchange_class: str
+#     symbol: str
+#     success: bool
+#     exchange_name: str
+#     target_usd: float = 0.0
+#     current_usd: float = 0.0
+#     delta_usd: float = 0.0
+#     order_id: Optional[str] = None
+#     filled_amount: float = 0.0
+#     average_price: float = 0.0
+#     error: Optional[str] = None
+#     timestamp: datetime = field(default_factory=datetime.now)
 
 
 # ============================================================
@@ -70,12 +71,12 @@ class ExecutionResult:
 class ActiveOrder:
     """活跃订单"""
     order_id: str
-    exchange_name: str
+    exchange_path: str
     symbol: str
-    side: str              # "buy" or "sell"
-    level: int             # 订单层级
+    # side: str              # "buy" or "sell"
+    # level: int             # 订单层级
     price: float
-    amount: float
+    amount: float          # > 0 buy, < 0 sell
     created_at: float      # 创建时间
     last_updated_at: float # 最后被认领时间
 
@@ -116,48 +117,41 @@ class BaseExecutor(Listener):
         execute_delta(): 执行具体的交易逻辑
     """
 
-    def __init__(self, config: "BaseExecutorConfig"):
-        """
-        初始化执行器
+    # def __init__(self, **kwargs):
+    #     """
+    #     初始化执行器
+#
+    #     Args:
+    #         config: 执行器配置对象
+    #     """
+    #     # 限价单管理
+    #     # self._active_orders: dict[tuple[str, str, str, int], ActiveOrder] = {}
+    #     # key = (exchange_name, symbol, side, level)
+    #
+    #     # 执行统计
+    #     # self._stats = {
+    #     #     "ticks": 0,
+    #     #     "executions": 0,
+    #     #     "orders_created": 0,
+    #     #     "orders_cancelled": 0,
+    #     #     "orders_reused": 0,
+    #     #     "orders_failed": 0,
+    #     # }
 
-        Args:
-            config: 执行器配置对象
-        """
-        super().__init__(name=config.path, interval=config.interval)
-        self.config = config
-
-        # 状态
-        self._executor_state = ExecutorState.IDLE
-
-        # 限价单管理
-        self._active_orders: dict[tuple[str, str, str, int], ActiveOrder] = {}
-        # key = (exchange_name, symbol, side, level)
-
-        # 执行统计
-        self._stats = {
-            "ticks": 0,
-            "executions": 0,
-            "orders_created": 0,
-            "orders_cancelled": 0,
-            "orders_reused": 0,
-            "orders_failed": 0,
-        }
-
-        # Feature 0010: 条件变量状态持久化
-        # {(exchange_class, symbol, 变量名): (当前值, 上次更新时间)}
-        self._conditional_var_states: dict[tuple[str, str, str], tuple[Any, float]] = {}
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.config: 'BaseExecutorConfig' = kwargs['config']
 
     # ===== 属性 =====
-
     @property
     def exchange_group(self) -> "ExchangeGroup":
         """获取 ExchangeGroup"""
         return self.root.exchange_group
 
-    @property
-    def strategy_group(self) -> "StrategyGroup":
-        """获取 StrategyGroup"""
-        return self.root.strategy_group
+    # @property
+    # def strategy_group(self) -> "StrategyGroup":
+    #     """获取 StrategyGroup"""
+    #     return self.root.strategy_group
 
     def _get_exchange_by_path(self, exchange_path: str) -> Optional["BaseExchange"]:
         """根据配置路径获取交易所实例"""
@@ -165,10 +159,6 @@ class BaseExecutor(Listener):
             if exchange.config.path == exchange_path:
                 return exchange
         return None
-
-    @property
-    def executor_state(self) -> ExecutorState:
-        return self._executor_state
 
     @property
     @abstractmethod
@@ -181,13 +171,13 @@ class BaseExecutor(Listener):
         """获取取消延迟（子类可覆盖）"""
         return getattr(self.config, 'cancel_delay', 5.0)
 
-    @property
-    def stats(self) -> dict:
-        return self._stats.copy()
-
-    @property
-    def active_orders_count(self) -> int:
-        return len(self._active_orders)
+    # @property
+    # def stats(self) -> dict:
+    #     return self._stats.copy()
+    #
+    # @property
+    # def active_orders_count(self) -> int:
+    #     return len(self._active_orders)
 
     def get_dynamic_per_order_usd(
         self,
@@ -216,9 +206,8 @@ class BaseExecutor(Listener):
         return self.per_order_usd
 
     # ===== 工具方法 =====
-
+    @staticmethod
     def usd_to_amount(
-        self,
         exchange: "BaseExchange",
         symbol: str,
         usd: float,
@@ -245,11 +234,6 @@ class BaseExecutor(Listener):
         base_amount = usd / price
         contract_size = exchange.get_contract_size(symbol)
         return base_amount / contract_size
-
-    @staticmethod
-    def _order_key(exchange_name: str, symbol: str, side: str, level: int) -> tuple:
-        """生成订单 key"""
-        return (exchange_name, symbol, side, level)
 
     # ===== 限价单管理（通用逻辑）=====
 
@@ -278,7 +262,7 @@ class BaseExecutor(Listener):
         Returns:
             (created, cancelled, reused) 数量统计
         """
-        import time
+
         now = time.time()
 
         orders_to_create: list[tuple[OrderIntent, tuple]] = []  # [(intent, key)]
@@ -693,8 +677,6 @@ class BaseExecutor(Listener):
         Returns:
             变量字典
         """
-        import time
-
         # 内置变量
         context: dict[str, Any] = {
             "direction": direction,
@@ -882,72 +864,16 @@ class BaseExecutor(Listener):
 
         return self._safe_eval_bool(self.condition, context)
 
-    def evaluate_param(
-        self,
-        param: Any,
-        context: dict[str, Any],
-    ) -> Any:
-        """
-        求值参数（支持表达式或字面量）
-
-        Args:
-            param: 参数值（str 为表达式，其他为字面量）
-            context: 变量上下文
-
-        Returns:
-            求值结果
-        """
-        if isinstance(param, str):
-            return self._safe_eval(param, context)
-        return param
-
-    def _safe_eval(self, expr: str, context: dict[str, Any]) -> Any:
+    def _safe_eval(self, expr: Any, context: 'LinkedScopeNode') -> Any:
         """安全求值表达式"""
-        from simpleeval import DEFAULT_OPERATORS, EvalWithCompoundTypes
+        return self.root.vm.eval(expr, context)
 
-        # 辅助函数
-        def avg(values):
-            """计算平均值"""
-            if not values:
-                return 0.0
-            return sum(values) / len(values)
-
-        def clip(value, min_val, max_val):
-            """限制值在 [min_val, max_val] 范围内"""
-            return max(min_val, min(max_val, value))
-
-        # 安全函数白名单
-        # Feature 0008/0010: 支持 strategies 聚合函数
-        safe_functions = {
-            'len': len,
-            'abs': abs,
-            'min': min,
-            'max': max,
-            'sum': sum,
-            'round': round,
-            'avg': avg,      # Feature 0010: 平均值聚合
-            'clip': clip,    # 常用的限幅函数
-        }
-
-        evaluator = EvalWithCompoundTypes(
-            names=context,
-            functions=safe_functions,
-            operators=DEFAULT_OPERATORS,
-        )
-
-        try:
-            return evaluator.eval(expr)
-        except Exception as e:
-            self.logger.warning("Expression eval failed: %s - %s", expr, e)
-            return None
-
-    def _safe_eval_bool(self, expr: str, context: dict[str, Any]) -> bool:
+    def _safe_eval_bool(self, expr: Any, context: 'LinkedScopeNode', default: bool = False) -> bool:
         """安全求值布尔表达式"""
         result = self._safe_eval(expr, context)
-        return bool(result) if result is not None else False
+        return bool(result) if result is not None else default
 
     # ===== 抽象方法 =====
-
     @abstractmethod
     async def execute_delta(
         self,
@@ -956,7 +882,7 @@ class BaseExecutor(Listener):
         delta_usd: float,
         speed: float,
         current_price: float,
-    ) -> ExecutionResult:
+    ):
         """
         执行仓位调整
 
@@ -972,7 +898,6 @@ class BaseExecutor(Listener):
         Returns:
             执行结果
         """
-        ...
 
     # ===== 生命周期 =====
 
@@ -980,33 +905,33 @@ class BaseExecutor(Listener):
         """
         主循环：获取目标仓位，计算差值，执行交易
         """
-        self._stats["ticks"] += 1
+        # self._stats["ticks"] += 1
 
-        if self._executor_state == ExecutorState.PAUSED:
-            return False
+        # if self._executor_state == ExecutorState.PAUSED:
+        #     return False
 
         # 获取聚合的目标仓位
-        targets = self.strategy_group.get_aggregated_targets()
+        # targets = self.strategy_group.get_aggregated_targets()
 
-        if not targets:
-            return False
-
-        self._executor_state = ExecutorState.EXECUTING
+        # if not targets:
+        #     return False
+        # self.logger.info("on_tick called - placeholder implementation")
+        # self._executor_state = ExecutorState.EXECUTING
 
         # 插件钩子：执行开始
-        pm.hook.on_execution_start(executor=self, targets=targets)
+        # pm.hook.on_execution_start(executor=self, targets=targets)
 
-        results = []
-        try:
-            results = await self._process_targets(targets)
-        finally:
-            self._executor_state = ExecutorState.IDLE
+        # results = []
+        # try:
+        #     results = await self._process_targets(targets)
+        # finally:
+        #     self._executor_state = ExecutorState.IDLE
             # 插件钩子：执行完成
-            pm.hook.on_execution_complete(executor=self, results=results)
+        #     pm.hook.on_execution_complete(executor=self, results=results)
 
-        return False
+        # return False
 
-    async def _process_targets(self, targets: "AggregatedTargets") -> list[Optional[ExecutionResult]]:
+    async def _process_targets(self, targets: dict[str, 'LinkedScopeNode']): #  -> list[Optional[ExecutionResult]]:
         """
         处理所有目标仓位，返回每个目标的执行结果列表
 
@@ -1045,8 +970,8 @@ class BaseExecutor(Listener):
         self,
         exchange: "BaseExchange",
         symbol: str,
-        strategies_data: dict[str, Any],
-    ) -> Optional[ExecutionResult]:
+        context: 'LinkedScopeNode',
+    ): # -> Optional[ExecutionResult]:
         """
         处理单个目标仓位
 
@@ -1061,15 +986,14 @@ class BaseExecutor(Listener):
         """
         # 从 strategies_data 提取 target_usd 和 speed
         # Issue 0013: 直接取值（不再是列表）
-        position_usd = strategies_data.get("position_usd")
-        speed = strategies_data.get("speed")
+        # position_usd = strategies_data.get("position_usd")
+        # speed = strategies_data.get("speed")
 
         if position_usd is None:
             return None
 
         # 使用单策略的值（不再需要聚合）
         target_usd = position_usd
-        speed = speed if speed is not None else 0.5
 
         # 1. 获取当前价格
         try:
@@ -1159,28 +1083,28 @@ class BaseExecutor(Listener):
 
     async def on_stop(self):
         """停止时取消所有活跃订单"""
-        await self.cancel_all_orders()
+        # await self.cancel_all_orders()
         await super().on_stop()
 
     # ===== 控制方法 =====
 
-    def pause(self) -> None:
-        """暂停执行"""
-        self._executor_state = ExecutorState.PAUSED
-        self.logger.info("Executor paused")
+    # def pause(self) -> None:
+    #     """暂停执行"""
+    #     self._executor_state = ExecutorState.PAUSED
+    #     self.logger.info("Executor paused")
 
-    def resume(self) -> None:
-        """恢复执行"""
-        self._executor_state = ExecutorState.IDLE
-        self.logger.info("Executor resumed")
+    # def resume(self) -> None:
+    #     """恢复执行"""
+    #     self._executor_state = ExecutorState.IDLE
+    #     self.logger.info("Executor resumed")
 
     # ===== 状态 =====
 
-    @property
-    def log_state_dict(self) -> dict:
-        return {
-            "state": self._executor_state.value,
-            "per_order_usd": self.per_order_usd,
-            "active_orders": self.active_orders_count,
-            **self._stats
-        }
+    # @property
+    # def log_state_dict(self) -> dict:
+    #     return {
+    #         "state": self._executor_state.value,
+    #         "per_order_usd": self.per_order_usd,
+    #         "active_orders": self.active_orders_count,
+    #         **self._stats
+    #     }

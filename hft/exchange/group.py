@@ -16,17 +16,14 @@ ExchangeGroup 按交易所类型（class_name）组织多账户：
                             -> 返回该类型所有账户
                             -> 依次在所有账户执行（老鼠仓模式）
 """
-from functools import cached_property, lru_cache
-from collections import defaultdict
-from typing import TYPE_CHECKING, Optional
-
-from cryptography.fernet import InvalidToken
-
-from ..core.listener import Listener, ListenerState
+from functools import cached_property
+from typing import Optional
+from cachetools import cached, TTLCache
+from pyee.asyncio import AsyncIOEventEmitter
+from ..core.filters import get_matcher_raw
+from ..core.listener import Listener
+from ..core.group import Group
 from .base import BaseExchange
-
-if TYPE_CHECKING:
-    from ..core.app import AppCore
 
 
 class ExchangeGroup(Listener):
@@ -58,68 +55,55 @@ class ExchangeGroup(Listener):
     Attributes:
         exchanges_map: class_name -> [instance_names] 映射
     """
-    __pickle_exclude__ = {*Listener.__pickle_exclude__, "config_path"}
+    __pickle_exclude__ = {*Listener.__pickle_exclude__, "event",
+                          "exchange_configs", "exchange_instances",
+                          "exchange_group"}
     lazy_start = True
     disable_tick = True  # 没有on tick 方法
 
     @cached_property
-    def config_path(self):
-        return self.root.config.exchanges
+    def exchange_configs(self):
+        return self.root.config.exchanges.exchange_configs
 
-    @lru_cache(maxsize=512)
-    def get_exchange_instances_raw(self, selectors: str) -> dict[str, 'BaseExchange']:
-        factory = self.root.factory
-        results = {}
-        for name, config_path in self.config_path.get_filtered_exchanges_map_raw(factory, selectors).items():
-            results[name] = factory.get_or_create_configurable_instance(config_path, self)
-        return results
+    def exchange_group_func(self, exchange_path: str) -> str:  # 将exchange分组的函数
+        instance = self.exchange_instances[exchange_path]
+        return instance.class_name
 
-    def get_exchange_instances(self, includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> dict[str, 'BaseExchange']:
-        """
-        获取过滤后的 exchanges_map
+    @cached_property
+    def exchange_group(self) -> Group:
+        """按交易所类型分组的 exchange 实例映射"""
+        return Group(self.exchange_group_func, self.exchange_instances.keys())
 
-        Args:
-            includes: 包含的交易所类型列表
-            excludes: 排除的交易所类型列表
+    @cached(TTLCache(maxsize=128, ttl=60))
+    def get_trade_classes(self, filters: Optional[str] = None) -> set[str]:
+        """获取所有交易所类型列表"""
+        result = set()
+        matcher = get_matcher_raw(filters)
+        for key, group in self.exchange_group.items():
+            instance = self.exchange_instances[group[0]]  # 取每组的第一个实例
+            data = instance.markets.get_data()
+            if data is not None:
+                for symbol in data.keys():
+                    if matcher.matches(symbol):
+                        result.add(f"{key}-{symbol}")
+        return result
 
-        Returns:
-            过滤后的 exchanges_map
-        """
-        return self.get_exchange_instances_raw(
-            self.config_path.join_selectors(includes, excludes)
-        )
+    def trade_class_group_func(self, trade_class: str) -> str:
+        return trade_class.split("-", 1)[0]
 
-    @lru_cache(maxsize=512)
-    def get_grouped_exchange_instances_raw(self, selectors: str) -> dict[str, list['BaseExchange']]:
-        factory = self.root.factory
-        grouped_configs = self.config_path.get_filtered_grouped_exchanges_map_raw(factory, selectors)
-        results = {}
-        for class_name, config_paths in grouped_configs.items():
-            instances = []
-            for config_path in config_paths:
-                instance = factory.get_or_create_configurable_instance(config_path, self)
-                instances.append(instance)
-            results[class_name] = instances
-        return results
-
-    def get_grouped_exchange_instances(self, includes: Optional[list[str]] = None, excludes: Optional[list[str]] = None) -> dict[str, list['BaseExchange']]:
-        """
-        获取过滤后的分组 exchanges_map
-
-        Args:
-            includes: 包含的交易所类型列表
-            excludes: 排除的交易所类型列表
-
-        Returns:
-            过滤后的分组 exchanges_map
-        """
-        return self.get_grouped_exchange_instances_raw(
-            self.config_path.join_selectors(includes, excludes)
-        )
+    @cached(TTLCache(maxsize=128, ttl=60))
+    def get_trade_class_group(self, filters: Optional[str] = None) -> Group:
+        """按交易所类型分组的 trade_class 映射"""
+        return Group(self.trade_class_group_func, self.get_trade_classes(filters))
 
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
-        self.get_exchange_instances()  # 预加载交易所实例
+        self.exchange_instances: dict[str, 'BaseExchange'] = {}
+        self.event = AsyncIOEventEmitter()  # 触发exchange的相关事件，如 position变动，order变动等。
+        # 当前支持 order:created, order:updated, order:deleted
+        for name, config in self.exchange_configs.items():
+            instance = self.root.factory.get_or_create_configurable_instance(config, self)
+            self.exchange_instances[name] = instance  # yu
 
     async def on_tick(self):
         pass

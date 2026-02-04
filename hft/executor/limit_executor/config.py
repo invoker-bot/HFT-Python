@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, Type, Union
 
 from pydantic import BaseModel, Field
 
-from ..base_config import BaseExecutorConfig
+from ..config import BaseExecutorConfig
 
 if TYPE_CHECKING:
     from .executor import LimitExecutor

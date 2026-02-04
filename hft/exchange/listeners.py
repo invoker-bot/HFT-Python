@@ -3,7 +3,7 @@ import time
 from functools import cached_property
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-from ccxt.base.errors import UnsubscribeError
+# from ccxt.base.errors import UnsubscribeError
 from ..core.duration import parse_duration
 from ..core.listener import GroupListener, Listener
 from ..database.controllers import ExchangeStateController, OrderBillController
@@ -45,12 +45,12 @@ class CCXTExchangeOrderBillWatchListener(Listener):
 
     async def on_stop(self):
         # 停止时取消所有挂单监听for
-        try:
-            await self.exchange.un_watch_orders(self.name)
-            # await self.exchange.un_watch_orders(self.ccxt_instance_key)
-            # current not supported in ccxt
-        except UnsubscribeError:  # 可能已经取消订阅
-            pass
+        # try:
+        #     await self.exchange.un_watch_orders(self.name)
+        #     NotSupportedError
+        #     # current not supported in ccxt
+        # except UnsubscribeError:  # 可能已经取消订阅
+        #     pass
         await super().on_stop()
 
 

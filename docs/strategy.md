@@ -35,7 +35,7 @@ Strategy 支持数据驱动能力：
 │  │  {equation_usd, mid_price, rsi, ...}                │    │
 │  └─────────────────────────────────────────────────────┘    │
 │           │                                                  │
-│           ▼ Scope vars 计算（多层级）                        │
+│           ▼ Flow 执行（多层级）                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  Scope System                                        │    │
 │  │  - GlobalScope vars                                  │    │
@@ -137,17 +137,26 @@ condition: null
 
 # Scope 系统（Feature 0012）
 # 注意：Scope 节点只允许在 conf/app/*.yaml 的 scopes 字段里声明；
-# Strategy 配置里只引用 links，不允许出现 scopes 字段。
-links:
-  - id: link_main
-    value: [g, exchange_class, exchange, trading_pair]
+# Strategy 配置里只引用 flow，不允许出现 scopes 字段。
+flow:
+  - class_name: GlobalScope
+    vars:
+      - max_position_usd=10000
+  - class_name: ExchangeScope
+    filter: "exchange_class == 'okx'"
+    vars:
+      - exchange_weight=0.6
+  - class_name: TradingPairScope
+    vars:
+      - target_position=max_position_usd * exchange_weight
+    condition: "target_position != 0"
 ```
 
 **过滤字段说明**：
 - `trading_pairs/max_trading_pairs`：旧字段（不使用 Scope 系统时常用）。
-- Scope 系统下（配置了 `links`）建议使用 `include_symbols/exclude_symbols`（见 [scope.md](scope.md)）；exchange 选择由 AppConfig 的 `exchanges` 选择器控制。
+- Scope 系统下（配置了 `flow`）建议使用 flow 层级的 `filter` 和 `condition` 进行过滤；exchange 选择由 AppConfig 的 `exchanges` 选择器控制。
 
-**注意**：Scope 的配置边界、实例发现与 ChainMap 继承规则详见 [Scope 文档](scope.md)。Strategy 顶级 `vars` 仍用于“策略本地变量”（与 Scope vars 不同）。
+**注意**：Scope 的配置边界、实例发现与 ChainMap 继承规则详见 [Scope 文档](scope.md)。Strategy 顶级 `vars` 仍用于"策略本地变量"（与 Scope vars 不同）。
 
 **vars 格式**：`vars` 支持标准格式 / dict 简化格式 / list[str] 简化格式，详见 [vars.md](vars.md)。
 
@@ -336,14 +345,17 @@ requires:
   - equation  # 账户权益数据源
   - rsi       # RSI 指标
 
-links:
-  - id: link_main
-    value: [g, exchange_class, exchange, trading_pair]
+flow:
+  - class_name: GlobalScope
+  - class_name: ExchangeClassScope
+    filter: "exchange_class == 'okx'"
+  - class_name: ExchangeScope
+  - class_name: TradingPairScope
+    filter: "symbol == 'BTC/USDT:USDT'"
 
 targets:
   - exchange_id: '*'
-    exchange_class: okx
-    symbol: BTC/USDT:USDT
+    symbol: '*'
     position_usd: 'risk_ratio * equation_usd * direction'
     speed: 0.5
 
@@ -406,10 +418,14 @@ requires:
   - ticker        # 行情数据
   - fair_price    # 公平价格
 
-# Scope 链路
-links:
-  - id: main
-    value: [g, exchange_class, exchange, trading_pair_class_group, trading_pair_class, trading_pair]
+# Scope Flow
+flow:
+  - class_name: GlobalScope
+  - class_name: ExchangeClassScope
+  - class_name: ExchangeScope
+  - class_name: TradingPairClassGroupScope
+  - class_name: TradingPairClassScope
+  - class_name: TradingPairScope
 
 # 分组配置
 default_trading_pair_group: symbol.split('/')[0]
