@@ -36,10 +36,10 @@ class CCXTExchangeOrderBillWatchListener(Listener):
             return
         order_lists = await self.exchange.watch_orders(self.name)
         # TODO: 检查订单成交并触发 Hook
-        self.exchange.event.emit("")
-        for order in order_lists:
-            # 触发成交检查
-            pass
+        # self.exchange.event.emit("")
+        # for order in order_lists:
+        #     # 触发成交检查
+        #     pass
         controller = self.root.database.get_controller(OrderBillController)
         await controller.update(order_lists, self.exchange)
 
@@ -135,6 +135,8 @@ class ExchangePositionWatchListener(Listener):
 
     async def on_tick(self) -> None:
         """获取并更新持仓信息"""
+        if not self.exchange.ready:
+            return
         await self.exchange.medal_watch_positions()
 
     async def on_stop(self):
@@ -170,7 +172,8 @@ class ExchangePositionListener(Listener):
         return self.parent
 
     async def on_tick(self):
-        await super().on_tick()
+        if not self.exchange.ready:
+            return
         await self.exchange.medal_fetch_positions()
         return False
 

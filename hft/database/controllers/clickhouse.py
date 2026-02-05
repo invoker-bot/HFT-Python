@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
 from clickhouse_connect import get_async_client
@@ -10,6 +11,9 @@ from .base import DataBaseController, OrderBillController, \
 if TYPE_CHECKING:
     from ccxt.base.types import Order, OrderBook, Trade, Ticker
     from ...exchange import BaseExchange, FundingRateBill, FundingRate
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClickHouseDatabaseClient(DatabaseClient):
@@ -85,7 +89,7 @@ class OrderBillClickHouseDatabaseController(OrderBillController, ClickHouseDatab
             exchange_name = exchange.class_name
             exchange_path = exchange.config.path
             trading_pair = order['symbol']
-            contract_size = exchange.get_contract_size(trading_pair)
+            contract_size = await exchange.get_contract_size_async(trading_pair)
             filled = order['filled'] * contract_size if order['filled'] is not None else None
             amount = order['amount'] * contract_size if order['amount'] is not None else None
             status = order['status']
@@ -273,7 +277,7 @@ class OrderBookClickHouseDatabaseController(OrderBookController, ClickHouseDatab
         data_updated = []
         for order_book in order_books:
             trading_pair = order_book['symbol']
-            contract_size = exchange.get_contract_size(trading_pair)
+            contract_size = await exchange.get_contract_size_async(trading_pair)
             bids_p = [p for p, _q in order_book['bids']]
             bids_q = [q * contract_size for _p, q in order_book['bids']]
             asks_p = [p for p, _q in order_book['asks']]
@@ -382,7 +386,8 @@ class OHLCVClickHouseDatabaseController(OHLCVController, ClickHouseDatabaseContr
             ohlcv = ohlcv_list[index]
             timestamp_ms, o, h, l, c, v = ohlcv
             timestamp_end_ms = ohlcv_list[index + 1][0]
-            v *= exchange.get_contract_size(trading_pair)
+            contract_size = await exchange.get_contract_size_async(trading_pair)
+            v *= contract_size
             data.append([
                 datetime.fromtimestamp(timestamp_ms / 1000.0),
                 datetime.fromtimestamp(timestamp_end_ms / 1000.0),
@@ -478,7 +483,8 @@ class TradesClickHouseController(TradesController, ClickHouseDatabaseController)
             return
         data = []
         for trade in trades:
-            volume = trade['amount'] * exchange.get_contract_size(trading_pair)
+            contract_size = await exchange.get_contract_size_async(trading_pair)
+            volume = trade['amount'] * contract_size
             data.append([
                 f"{exchange.class_name}-{trade['id']}",
                 datetime.fromtimestamp(trade['timestamp'] / 1000.0),
@@ -567,7 +573,7 @@ class TickerClickHouseController(TickerController, ClickHouseDatabaseController)
         """插入 ticker 数据"""
         if not self.persist.ticker:
             return
-        contract_size = exchange.get_contract_size(ticker.symbol)
+        contract_size = await exchange.get_contract_size_async(ticker.symbol)
         data = [[
             datetime.now(),
             exchange.class_name,

@@ -206,34 +206,37 @@ class BaseExecutor(Listener):
         return self.per_order_usd
 
     # ===== 工具方法 =====
-    @staticmethod
-    def usd_to_amount(
-        exchange: "BaseExchange",
-        symbol: str,
-        usd: float,
-        price: float,
-    ) -> float:
-        """
-        将 USD 价值转换为下单数量（合约数量）
-
-        计算公式：
-            base_amount = usd / price  # 基础货币数量（如 BTC）
-            amount = base_amount / contract_size  # 合约数量
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            usd: USD 价值（可正可负）
-            price: 当前价格
-
-        Returns:
-            合约数量（保持 usd 的正负符号）
-        """
-        if price <= 0:
-            return 0.0
-        base_amount = usd / price
-        contract_size = exchange.get_contract_size(symbol)
-        return base_amount / contract_size
+    # TODO: 可能需要考虑合约的 contract_size
+    # @staticmethod
+    # def usd_to_amount(
+    #     exchange: "BaseExchange",
+    #     symbol: str,
+    #     usd: float,
+    #     price: float,
+    # ) -> float:
+    #     """
+    #     将 USD 价值转换为下单数量（合约数量）
+#
+    #     计算公式：
+    #         base_amount = usd / price  # 基础货币数量（如 BTC）
+    #         amount = base_amount / contract_size  # 合约数量
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         symbol: 交易对
+    #         usd: USD 价值（可正可负）
+    #         price: 当前价格
+#
+    #     Returns:
+    #         合约数量（保持 usd 的正负符号）
+    #     """
+    #     if price <= 0:
+    #         return 0.0
+    #     base_amount = usd / price
+    #     contract_size = exchange.get_contract_size(symbol)
+    #     if contract_size is None:
+    #         contract_size = 1.0  # 默认值，避免除零
+    #     return base_amount / contract_size
 
     # ===== 限价单管理（通用逻辑）=====
 

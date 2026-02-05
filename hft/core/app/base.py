@@ -226,10 +226,20 @@ class AppCore(Listener):
         pm.hook.on_app_tick(app=self)
         self.logger.info("app tick:")
         # 检查策略组是否已完成
-        # if self.strategy_group.finished:  # TODO: strategy_group is not defined
-        #     self.logger.info("StrategyGroup finished, AppCore exiting")
-        #     self.finished = True
-        #     return True
+        if self.strategy.finished:
+            self.logger.info("StrategyGroup finished, AppCore exiting")
+            self.finished = True
+            return True
+        for child in list(self):
+            # if isinstance(child, MedalAmountDataSource):
+            if id(child) == id(self):
+                continue
+            # print(child.__class__.__name__, child.name, "enabled:", child.enabled)
+            try:
+                await asyncio.wait_for(child.update_background_task(), timeout=30)
+            except asyncio.TimeoutError:
+                self.logger.exception("Timeout updating background task for %s", child.name)
+            # from ...indicator.datasource import MedalAmountDataSource
         return False
 
     # ============================================================
@@ -257,20 +267,22 @@ class AppCore(Listener):
             indicator_class = BaseIndicator.classes[indicator_config.class_name]
             params = indicator_config.params
             seconds = indicator_config.auto_disable_after_seconds
-            indicator_id = f"{scope.id}:{indicator}"
+            indicator_id = f"{scope.scope.id}:{indicator}"
             if indicator_config.namespace is not None:
                 params["namespace"] = indicator_config.namespace
         else:
             indicator_class = indicator
             params = {}
             seconds = DEFAULT_DISABLE_SECONDS
-            indicator_id = f"{scope.id}:{indicator_class.__name__}"
+            indicator_id = f"{scope.scope.id}:{indicator_class.__name__}"
         indicator_instance = self.factory.get_or_create(indicator_class,
                                                name=indicator_id,
                                                parent=self.indicator_group,
                                                scope=scope,
                                                **params)
         indicator_instance.auto_disable_duration = seconds
+        # int("Queried indicator:", indicator_instance, "ready:", indicator_instance.ready,
+        #     "parent:", indicator_instance.parent)
         return indicator_instance  # 之后还需要判断是否ready
 
     async def on_stop(self):
@@ -310,14 +322,18 @@ class AppCore(Listener):
                 try:
                     loop_start = self.current_time
                     # simple sleep interruptions
-                    for child in list(self):
-                        await child.update_background_task()
+                    # for child in list(self):
+                        # if isinstance(child, MedalAmountDataSource):
+                    # print(child.__class__.__name__, child.name, "enabled:", child.enabled)
+                    # await asyncio.wait_for(child.update_background_task(), timeout=15)
                     # print("self:", self.state, self.enabled)
-                    # if self.state == ListenerState.STOPPED and not self.enabled:  # current app is stopped
-                    #     break
+                    await self.update_background_task()
+                    if self.finished:  # current app is stopped
+                        break
                     # print("on tick:", self.interval)
                     # for child in list(self):
                     #     await child.update_background_task()  # make sure background tasks are updated
+                    # print("app sleeping for", max(0, loop_start + self.interval - self.current_time))
                     await asyncio.sleep(max(0, loop_start + self.interval - self.current_time))
                 except asyncio.CancelledError:
                     self.logger.info("AppCore loop cancelled")

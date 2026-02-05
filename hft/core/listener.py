@@ -88,6 +88,7 @@ class Listener(ABC):
         "_children",
         "_background_task",
         "_alock",
+        "_ulock",
         '_state',
         "root",
         "depth",
@@ -147,6 +148,7 @@ class Listener(ABC):
     def initialize(self, **kwargs):
         """初始化不可序列化的对象（在 __init__ 和 unpickle 时调用）"""
         self._alock = asyncio.Lock()
+        self._ulock = asyncio.Lock()
         self._background_task: Optional[asyncio.Task] = None
         self._state = ListenerState.STOPPED
         # children 由 get_or_create 重建，不从 pickle 恢复
@@ -308,7 +310,9 @@ class Listener(ABC):
             # 记录调用方当前的取消计数，用于区分"框架主动取消"和"调用方被取消"
             cancelling_before = current_task.cancelling() if current_task else 0
             try:
-                await bt  # 等待取消完成
+                await asyncio.wait_for(bt, timeout=30)  # 等待取消完成，设置超时时间
+            except asyncio.TimeoutError:
+                self.logger.warning("Timeout while cancelling background task")
             except asyncio.CancelledError:
                 # 检查是否是调用方被取消（取消计数增加）
                 cancelling_after = current_task.cancelling() if current_task else 0
@@ -324,13 +328,14 @@ class Listener(ABC):
         if self.disable_tick or (self.lazy_start and self._state == ListenerState.STOPPED):
             return
         if self.enabled and not self.finished:
+            # print("create", self.name)
             await self.__create_background_task_internal()
         else:
             await self.__delete_background_task_internal()
 
     async def update_background_task(self):
         """更新后台任务（重启 tick 循环）"""
-        async with self._alock:
+        async with self._ulock:
             await self.__update_background_task_internal()
 
     @property
@@ -647,6 +652,7 @@ class Listener(ABC):
         try:
             if self.auto_disable_duration is not None and self.current_time - self._auto_disable_start_time > self.auto_disable_duration:
                 # self.logger.info("Auto disabling listener after %.2f seconds", self.auto_disable_duration)
+                print("auto disable:", self.current_time, self._auto_disable_start_time, self.auto_disable_duration)
                 self.enabled = False
                 self.auto_disable_duration = None
             match self.state:

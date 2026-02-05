@@ -1,5 +1,5 @@
 from typing import Any, Optional, Union
-from cachetools import cachedmethod
+from functools import cached_property
 from pydantic import BaseModel, Field
 from ..core.duration import parse_duration
 
@@ -15,6 +15,6 @@ class IndicatorDefinition(BaseModel):
     namespace: Optional[str] = Field(None, description="Indicator 命名空间（可选）")
     auto_disable_after: Union[float, str] = Field(600, description="自动禁用时间（秒或时间字符串）")
 
-    @cachedmethod
+    @cached_property
     def auto_disable_after_seconds(self) -> float:
         return parse_duration(self.auto_disable_after)

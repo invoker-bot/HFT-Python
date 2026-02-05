@@ -185,12 +185,16 @@ class VirtualMachine:
                     if filter_condition is not None:
                         if not self.eval(filter_condition, node):
                             continue  # 过滤条件不满足，跳过该节点
+                    should_continue = False
                     for required_indicator in layer_config.requires:
-                        indicator = app_core.query_indicator(required_indicator, scope)
+                        indicator = app_core.query_indicator(required_indicator, node)
                         if not indicator.ready:
-                            continue  # 指标未就绪，跳过该节点
+                            should_continue = True
+                            break
                         injected_vars = indicator.get_vars()
                         self.inject_vars(injected_vars, node, indicator.namespace)  # 注入指标
+                    if should_continue:
+                        continue
                     self.execute_vars(layer_config.standard_vars_definition, node)  # 执行变量
                     condition_expr = layer_config.condition  # 后验条件
                     if condition_expr is not None:

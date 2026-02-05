@@ -82,7 +82,7 @@ class AppFactory:
             self.load_cache()
         else:
             self._cache = {}
-
+        self._instance_cache: Dict[str, Listener] = {}
         self._lock = threading.RLock()
         self._daemon_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -154,7 +154,9 @@ class AppFactory:
         kwargs['name'] = name
         kwargs['parent'] = parent
         cache_key = self.build_cache_key(name, parent)
-        if cache_key in self._cache:
+        if cache_key in self._instance_cache:
+            instance = self._instance_cache[cache_key]  # 已存在实例，直接返回
+        elif cache_key in self._cache:
             # 从缓存恢复
             state = self._cache[cache_key]
             state['kwargs'] = kwargs  # 将构造函数参数传入
@@ -166,6 +168,7 @@ class AppFactory:
         instance.enabled = True  # 启用实例
         assert id(instance.parent) == id(parent), "Parent mismatch"
         assert parent is None or id(instance) == id(parent.children[instance.name]), "Child not registered in parent"
+        self._instance_cache[cache_key] = instance
         return instance
 
     def start_daemon(self, app_core: 'AppCore'):

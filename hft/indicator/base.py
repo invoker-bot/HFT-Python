@@ -46,7 +46,6 @@ class BaseIndicator(Listener):
     2. 通过 event 发出 update/ready/error 事件
     3. 支持 ready_condition 表达式判断就绪状态
     4. 自动过期机制（长时间未 query 自动停止）
-    5. interval=None 表示事件驱动，不创建 tick task
 
     子类需要实现：
     - calculate_vars(direction): 返回变量字典供 Executor 使用

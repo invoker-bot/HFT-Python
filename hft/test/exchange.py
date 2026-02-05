@@ -375,7 +375,7 @@ async def _test_swap_orders(results: list, exchange, markets: dict, symbol: str,
         results.append({"api": "swap_orders", "symbol": symbol, "status": "SKIP: symbol not found", "latency": None})
         return
 
-    contract_size = exchange.get_contract_size(symbol)
+    contract_size = await exchange.get_contract_size_async(symbol)
     if contract_size <= 0:
         console.print(f"[yellow]Skip swap order tests: invalid contractSize for {symbol}[/yellow]")
         results.append({"api": "swap_orders", "symbol": symbol, "status": "SKIP: invalid contractSize", "latency": None})

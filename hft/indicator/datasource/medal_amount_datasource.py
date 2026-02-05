@@ -16,9 +16,14 @@ class MedalAmountDataSource(BaseTradingPairDataSource[float]):
     - 形成标准 amount 字段
     - 注入到 exchange scope
     """
+    DEFAULT_IS_ARRAY = False
+
+    @property
+    def interval(self) -> float:
+        return 1.0
+
     async def on_tick(self) -> bool:
         """定期获取账户余额"""
-        await super().on_tick()
         if not self.exchange.ready:
             return
         amount = await self.exchange.medal_get_pair_amount(self.symbol)

@@ -47,8 +47,11 @@ class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
 
     订阅交易对的实时价格信息。
     """
+    @property
+    def interval(self) -> float:
+        return 0.001
+
     async def on_tick(self):
-        await super().on_tick()
         if not self.exchange.ready:
             return
         try:
@@ -57,14 +60,15 @@ class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
                 , timeout=5.0)
         except asyncio.TimeoutError:
             ticker: Ticker = await self.exchange.fetch_ticker(self.symbol)
-        data = TickerData.from_ccxt(ticker, contract_size=self.exchange.get_contract_size(self.symbol))
+        contract_size = await self.exchange.get_contract_size_async(self.symbol)
+        data = TickerData.from_ccxt(ticker, contract_size=contract_size)
         await self.data.update(data, data.timestamp)
 
     def get_vars(self) -> dict[str, Any]:
         """返回 ticker 变量"""
-        result = {
-            "ticker_history": self.data.data_list,
-        }
+        result = {}
+        if self.is_array:
+            result["ticker_history"] = self.data.data_list
         data = self.data.get_data()
         if data is not None:
             result.update({
@@ -80,6 +84,6 @@ class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
     async def on_stop(self):
         await super().on_stop()
         try:
-            self.exchange.un_watch_ticker(self.symbol)
+            await self.exchange.un_watch_ticker(self.symbol)
         except UnsubscribeError:
             pass

@@ -45,6 +45,10 @@ class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
     DEFAULT_WINDOW = 24 * 3600.0 # 默认 24 小时的数据窗口
     DEFAULT_HEALTHY_RANGE = 0.2  # 最少覆盖比例 20%
 
+    @property
+    def interval(self) -> float:
+        return 1.0
+
     def initialize(self, **kwargs) -> None:
         super().initialize(**kwargs)
         self.timeframe: str = kwargs.get("timeframe", "1m")
@@ -53,23 +57,24 @@ class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
     async def update_by_fetch(self):
         ohlcvs: list = await self.exchange.fetch_ohlcv(self.symbol, timeframe=self.timeframe)
         datas = []
+        contract_size = await self.exchange.get_contract_size_async(self.symbol)
         for ohlcv in ohlcvs:
-            candle_data = CandleData.from_ccxt(ohlcv, contract_size=self.exchange.get_contract_size(self.symbol))
+            candle_data = CandleData.from_ccxt(ohlcv, contract_size=contract_size)
             datas.append((candle_data, candle_data.timestamp))
         await self.data.assign(datas)
 
     async def on_tick(self):
-        await super().on_tick()
         if not self.exchange.ready:
             return
         try:
             if len(self.data) > 0:
+                contract_size = await self.exchange.get_contract_size_async(self.symbol)
                 ohlcvs: list = await asyncio.wait_for(self.exchange.watch_ohlcv(self.symbol, timeframe=self.timeframe),
                                                       timeout=self.data.max_age)
                 if len(ohlcvs) > 0:
                     ohlcv = ohlcvs[-1]
                     candle_data = CandleData.from_ccxt(
-                        ohlcv, contract_size=self.exchange.get_contract_size(self.symbol))
+                        ohlcv, contract_size=contract_size)
                     await self.data.update(candle_data, candle_data.timestamp)
             else:
                 await self.update_by_fetch()
@@ -78,9 +83,9 @@ class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
 
     def get_vars(self) -> dict[str, Any]:
         """返回 OHLCV 变量"""
-        result = {
-            "ohlcv_history": self.data.data_list,
-        }
+        result = {}
+        if self.is_array:
+            result["ohlcv_history"] = self.data.data_list
         data = self.data.get_data()
         if data is not None:
             result.update({
@@ -96,6 +101,6 @@ class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
     async def on_stop(self):
         await super().on_stop()
         try:
-            self.exchange.un_watch_ohlcv(self.symbol, timeframe=self.timeframe)
+            await self.exchange.un_watch_ohlcv(self.symbol, timeframe=self.timeframe)
         except UnsubscribeError:
             pass

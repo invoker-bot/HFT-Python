@@ -62,8 +62,11 @@ class OrderBookDataSource(BaseTradingPairClassDataSource[OrderBookData]):
     订阅交易对的实时订单簿。
     """
 
+    @property
+    def interval(self) -> float:
+        return 0.01
+
     async def on_tick(self):
-        await super().on_tick()
         if not self.exchange.ready:
             return
         try:
@@ -72,14 +75,16 @@ class OrderBookDataSource(BaseTradingPairClassDataSource[OrderBookData]):
                 , timeout=5.0)
         except asyncio.TimeoutError:
             ob: OrderBook = await self.exchange.fetch_order_book(self.symbol, limit=400)
-        data = OrderBookData.from_ccxt(ob, contract_size=self.exchange.get_contract_size(self.symbol))
+
+        contract_size = await self.exchange.get_contract_size_async(self.symbol)
+        data = OrderBookData.from_ccxt(ob, contract_size=contract_size)
         await self.data.update(data, data.timestamp)
 
     def get_vars(self) -> dict[str, Any]:
         """返回 order book 变量"""
-        result = {
-            "order_book_history": self.data.data_list,
-        }
+        result = {}
+        if self.is_array:
+            result["order_book_history"] = self.data.data_list
         data = self.data.get_data()
         if data is not None:
             result.update({
@@ -95,6 +100,6 @@ class OrderBookDataSource(BaseTradingPairClassDataSource[OrderBookData]):
     async def on_stop(self):
         await super().on_stop()
         try:
-            self.exchange.un_watch_order_book(self.symbol)
+            await self.exchange.un_watch_order_book(self.symbol)
         except UnsubscribeError:
             pass

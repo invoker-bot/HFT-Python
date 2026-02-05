@@ -57,8 +57,11 @@ class TradesDataSource(BaseTradingPairClassDataSource[TradeData]):
     """
     DEFAULT_DUPLICATE_TIMESTAMP_DELTA = 1e-12
 
+    @property
+    def interval(self) -> float:
+        return 0.001
+
     async def on_tick(self):
-        await super().on_tick()
         if not self.exchange.ready:
             return
         try:
@@ -67,15 +70,16 @@ class TradesDataSource(BaseTradingPairClassDataSource[TradeData]):
                 , timeout=5.0)
         except asyncio.TimeoutError:
             trades: list[Trade] = await self.exchange.fetch_trades(self.symbol)
+        contract_size = await self.exchange.get_contract_size_async(self.symbol)
         for trade in trades:
-            data = TradeData.from_ccxt(trade, contract_size=self.exchange.get_contract_size(self.symbol))
+            data = TradeData.from_ccxt(trade, contract_size=contract_size)
             await self.data.append(data, data.timestamp, is_duplicate_trade)
 
     def get_vars(self) -> dict[str, Any]:
         """返回 trades 变量"""
-        result = {
-            "trades_history": self.data.data_list,
-        }
+        result = {}
+        if self.is_array:
+            result["trades_history"] = self.data.data_list
         data = self.data.get_data()
         if data is not None:
             result.update({
@@ -89,6 +93,6 @@ class TradesDataSource(BaseTradingPairClassDataSource[TradeData]):
     async def on_stop(self):
         await super().on_stop()
         try:
-            self.exchange.un_watch_trades(self.symbol)
+            await self.exchange.un_watch_trades(self.symbol)
         except UnsubscribeError:
             pass

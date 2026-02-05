@@ -46,6 +46,7 @@ DataFunc = Callable[[], Awaitable[tuple[T, Optional[float]]]]
 class BaseHealthyData(ABC, Generic[T]):
 
     __pickle_excludes__ = {'_data_lock', '_update_data_lock'}
+    # is_array: bool = False  # 是否为数组类型数据
 
     def __init__(self, max_age: float = 10):
         self.max_age = max_age
@@ -257,6 +258,7 @@ class HealthyDataArray(BaseHealthyData[T]):
         self,
         max_age: float,
         window: Union[str, int, float, None],
+        healthy_window: Union[str, int, float, None] = None,
         duplicate_timestamp_delta: float = 1e-6,
         healthy_points: int = 3,  # 最少数据点数，越多越严格，采样是否充足
         healthy_cv: float = 0.8,  # 最多变异系数（倒数），越大越严格，采样间隔是否均匀
@@ -270,6 +272,7 @@ class HealthyDataArray(BaseHealthyData[T]):
         """
         super().__init__(max_age=max_age)
         self.window = parse_duration(window)
+        self.healthy_window = parse_duration(healthy_window) if healthy_window is not None else self.window
         self._data_list: list[tuple[T, float]] = []
         self._duplicate_timestamp_delta = duplicate_timestamp_delta
         self._healthy_points = healthy_points
@@ -298,16 +301,17 @@ class HealthyDataArray(BaseHealthyData[T]):
         async with self._data_lock:
             pos = len(self._data_list)
             for i in range(len(self._data_list) - 1, -1, -1):
-                delta_time = self._data_list[i][0] - timestamp
+                delta_time = timestamp - self._data_list[i][1]
                 if abs(delta_time) < self._duplicate_timestamp_delta:
-                    if duplicate_value_fn(self._data_list[i][1], value):
+                    if duplicate_value_fn(self._data_list[i][0], value):
                         # 覆盖旧值
-                        self._data_list[i] = (timestamp, value)
+                        self._data_list[i] = (value, timestamp)
                         return
-                if self._data_list[i][0] > timestamp:
-                    pos = i  # 保持升序
-                else:
+                if self._data_list[i][1] < timestamp:
+                    pos = i + 1  # 保持升序
                     break
+                else:
+                    pos = i
             self._data_list.insert(pos, (value, timestamp))
             self._dirty = False
             self._shrink()
@@ -383,7 +387,10 @@ class HealthyDataArray(BaseHealthyData[T]):
         if last_idx < start_pos:
             return False
         actual_range = self._data_list[last_idx][1] - self._data_list[start_pos][1]
-        expected_range = end_timestamp - start_timestamp
+        if start_timestamp is None and end_timestamp is None:
+            expected_range = self.healthy_window
+        else:
+            expected_range = end_timestamp - start_timestamp
         return expected_range * self._healthy_range < actual_range
 
     def get(self) -> tuple[Optional[T], float]:
