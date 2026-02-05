@@ -3,108 +3,83 @@ Ticker 数据源
 
 Feature 0006: Indicator 与 DataSource 统一架构
 """
-import time
+import asyncio
 from dataclasses import dataclass
 from typing import Any
-
-from ..base import BaseDataSource
+from ccxt.base.types import Ticker
+from ccxt.base.errors import UnsubscribeError
+from .base import BaseTradingPairClassDataSource
 
 
 @dataclass
 class TickerData:
     """Ticker 数据"""
-    symbol: str
     timestamp: float  # 秒
     last: float
     bid: float
     ask: float
-    high: float = 0.0
-    low: float = 0.0
-    volume: float = 0.0
-    quote_volume: float = 0.0
+    amount: float = 0.0  # 24h base volume
+    quote_amount: float = 0.0  # 24h quote volume
 
     @classmethod
-    def from_ccxt(cls, data: dict) -> "TickerData":
+    def from_ccxt(cls, data: Ticker, contract_size: float) -> "TickerData":
         """从 ccxt 格式创建"""
-        ts = data.get("timestamp") or 0
-        if ts and ts > 1e12:
-            ts = ts / 1000.0  # 毫秒转秒
-        if not ts:
-            ts = time.time()  # 无则用当前时间
-        return cls(
-            symbol=data.get("symbol", ""),
-            timestamp=ts,
-            last=data.get("last", 0.0) or 0.0,
-            bid=data.get("bid", 0.0) or 0.0,
-            ask=data.get("ask", 0.0) or 0.0,
-            high=data.get("high", 0.0) or 0.0,
-            low=data.get("low", 0.0) or 0.0,
-            volume=data.get("baseVolume", 0.0) or 0.0,
-            quote_volume=data.get("quoteVolume", 0.0) or 0.0,
+        timestamp = float(data['timestamp']) / 1000.0
+        return cls(timestamp=timestamp,
+            last=data["last"],
+            bid=data["bid"],
+            ask=data["ask"],
+            amount=(data.get("baseVolume", 0.0) or 0.0) * contract_size,
+            quote_amount=data.get("quoteVolume", 0.0) or 0.0,
         )
 
+    @property
+    def mid_price(self) -> float:
+        """中间价"""
+        if self.bid and self.ask:
+            return (self.bid + self.ask) / 2
+        return self.last
 
-class TickerDataSource(BaseDataSource[TickerData]):
+
+class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
     """
     Ticker 数据源
 
     订阅交易对的实时价格信息。
     """
-
-    def __init__(
-        self,
-        exchange_class: str,
-        symbol: str,
-        ready_condition: str = "timeout < 10",
-        **kwargs,
-    ):
-        name = f"Ticker:{exchange_class}:{symbol}"
-        super().__init__(
-            name=name,
-            exchange_class=exchange_class,
-            symbol=symbol,
-            ready_condition=ready_condition,
-            window=0,  # Ticker 不需要历史窗口
-            **kwargs,
-        )
-        # Feature 0012: 注入到 trading_pair_class 层级（所有 exchange 共享）
-        self.scope_level = "trading_pair_class"
-
-    async def _watch(self) -> None:
-        """WebSocket 订阅 ticker"""
-        exchange = self.exchange
-        if exchange is None:
-            raise RuntimeError("exchange not available")
-
-        while True:
-            data = await exchange.watch_ticker(self._symbol)
-            if data:
-                ticker = TickerData.from_ccxt(data)
-                self._data.append(ticker.timestamp, ticker)
-                self._emit_update(ticker.timestamp, ticker)
-
-    async def _fetch(self) -> None:
-        """REST API 获取 ticker"""
-        exchange = self.exchange
-        if exchange is None:
+    async def on_tick(self):
+        await super().on_tick()
+        if not self.exchange.ready:
             return
+        try:
+            ticker: Ticker = await asyncio.wait_for(
+                self.exchange.watch_ticker(self.symbol)
+                , timeout=5.0)
+        except asyncio.TimeoutError:
+            ticker: Ticker = await self.exchange.fetch_ticker(self.symbol)
+        data = TickerData.from_ccxt(ticker, contract_size=self.exchange.get_contract_size(self.symbol))
+        await self.data.update(data, data.timestamp)
 
-        data = await exchange.fetch_ticker(self._symbol)
-        if data:
-            ticker = TickerData.from_ccxt(data)
-            self._data.append(ticker.timestamp, ticker)
-            self._emit_update(ticker.timestamp, ticker)
-
-    def calculate_vars(self, direction: int) -> dict[str, Any]:
+    def get_vars(self) -> dict[str, Any]:
         """返回 ticker 变量"""
-        if not self._data:
-            return {}
-
-        ticker = self._data.latest
-        return {
-            "last": ticker.last,
-            "bid": ticker.bid,
-            "ask": ticker.ask,
-            "mid": (ticker.bid + ticker.ask) / 2 if ticker.bid and ticker.ask else ticker.last,
-            "spread": (ticker.ask - ticker.bid) / ticker.bid if ticker.bid else 0.0,
+        result = {
+            "ticker_history": self.data.data_list,
         }
+        data = self.data.get_data()
+        if data is not None:
+            result.update({
+                "ticker": data,
+                "last_price": data.last,
+                "bid_price": data.bid,
+                "ask_price": data.ask,
+                "amount_1d": data.amount,
+                "quote_amount_1d": data.quote_amount,
+                "mid_price": data.mid_price,
+            })
+
+    async def on_stop(self):
+        await super().on_stop()
+        try:
+            self.exchange.un_watch_ticker(self.symbol)
+        except UnsubscribeError:
+            pass

@@ -128,6 +128,8 @@ class Listener(ABC):
     def auto_disable_duration(self, value: Optional[float]):
         self._auto_disable_duration = value
         self._auto_disable_start_time = self.current_time
+        if value is not None:
+            self._enabled = True  # 启用监听器
 
     @property
     def interval(self) -> Optional[float]:

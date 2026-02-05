@@ -118,6 +118,13 @@ class VirtualMachine:
             if name not in scope.vars:
                 scope.set_var(name, initial_value, True)
 
+    def inject_vars(self, injected_vars: dict[str, Any], scope: 'VirtualScope', namespace: Optional[str]) -> None:
+        if namespace:
+            scope.set_var(namespace, injected_vars)
+        else:
+            for name, value in injected_vars.items():
+                scope.set_var(name, value)
+
     def execute(self, flow_config: 'ScopeFlowConfig', app_core: 'AppCore') -> dict[ScopeInstanceId, 'FlowScopeNode']:
         """
         执行一组变量赋值
@@ -140,7 +147,6 @@ class VirtualMachine:
                 raise ValueError(f"Unknown scope class: {layer_config.class_name}")
             if class_name not in includes:
                 instance_ids = scope_class.get_all_instance_ids(app_core)
-                # TODO: apply filters here
             else:
                 instance_ids = includes[class_name]  # 如果有，只使用已计算的结果
             if len(layers) == 0:  # 没有前节点
@@ -179,7 +185,12 @@ class VirtualMachine:
                     if filter_condition is not None:
                         if not self.eval(filter_condition, node):
                             continue  # 过滤条件不满足，跳过该节点
-                    # TODO: 执行indicator注入
+                    for required_indicator in layer_config.requires:
+                        indicator = app_core.query_indicator(required_indicator, scope)
+                        if not indicator.ready:
+                            continue  # 指标未就绪，跳过该节点
+                        injected_vars = indicator.get_vars()
+                        self.inject_vars(injected_vars, node, indicator.namespace)  # 注入指标
                     self.execute_vars(layer_config.standard_vars_definition, node)  # 执行变量
                     condition_expr = layer_config.condition  # 后验条件
                     if condition_expr is not None:
@@ -188,6 +199,4 @@ class VirtualMachine:
                     current_layer[instance_id] = node
             includes[class_name] = set(current_layer.keys())
             layers.append(current_layer)
-
-            # TODO: 判断条件
         return layers[-1] if len(layers) > 0 else {}

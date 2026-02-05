@@ -256,22 +256,6 @@ class BaseScope(VirtualScope):
 
     classes = {}
 
-    # @classmethod
-    # def all_classes(cls) -> dict[str, type['BaseScope']]:
-    #     """
-    #     递归获取所有子类
-    #
-    #     Returns:
-    #         字典，键为类名，值为类类型
-    #     """
-    #     result = {}
-    #     # 使用 cls.__name__ 而不是 cls.__class__.__name__
-    #     if not inspect.isabstract(cls):
-    #         result[cls.__name__] = cls
-    #     for subcls in cls.__subclasses__():
-    #         result.update(subcls.all_classes())
-    #     return result
-
     def __getstate__(self) -> dict:
         """
         Pickle 序列化：只保存条件变量的状态
@@ -344,7 +328,7 @@ class BaseScope(VirtualScope):
             cls.flow_mapper[parent_scope] = combined_functions
             cls.update_flow_mapper(parent_scope, combined_functions)
 
-    def __init_subclass__(cls):
+    def __init_subclass__(cls, **kwargs):
         cls.update_flow_mapper(cls, [])
         if not inspect.isabstract(cls):
             BaseScope.classes[cls.__name__] = cls  # 注册子类
@@ -482,5 +466,5 @@ class FlowScopeNode(VirtualScope):
 
     def __repr__(self) -> str:
         """字符串表示"""
-        return f"<LinkedScopeNode scope={self.scope} prev={self.prev}>"
-
+        prev = [node.scope for node in self.prev]
+        return f"<LinkedScopeNode scope={self.scope} prev={prev}>"

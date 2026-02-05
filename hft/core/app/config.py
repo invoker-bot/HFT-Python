@@ -12,6 +12,7 @@ from os import path
 from typing import ClassVar, Type
 from pydantic import Field
 from ...config.base import BaseConfig, BaseConfigPath
+from ...config.indicator import IndicatorDefinition
 from ...database.config import DatabaseConfig
 from ...strategy.config import StrategyConfigPath
 from ...executor.config import ExecutorConfigPath
@@ -62,7 +63,7 @@ class AppConfig(BaseConfig["AppCore"]):
     database: DatabaseConfig | None = Field(None, description="ClickHouse 数据库连接 URL（可选）")
 
     # Indicator 配置（Feature 0006）
-    indicators: dict[str, dict] = Field(
+    indicators: dict[str, IndicatorDefinition] = Field(
         default_factory=dict,
         description="指标配置，格式: {indicator_id: {class: 类名, params: {...}}}"
     )

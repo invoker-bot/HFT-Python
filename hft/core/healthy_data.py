@@ -427,3 +427,7 @@ class HealthyDataArray(BaseHealthyData[T]):
         # Keep it tuple-unpacking (instead of subscript) to avoid rare astroid/pylint crashes.
         for value, _ in self._data_list:
             yield value
+
+    def clear(self) -> None:
+        """清空数据"""
+        self._data_list.clear()

@@ -3,17 +3,18 @@ OHLCV 数据源
 
 Feature 0006: Indicator 与 DataSource 统一架构
 """
-import time
+import asyncio
 from dataclasses import dataclass
 from typing import Any
-
-from ..base import BaseDataSource
+from ccxt.base.errors import UnsubscribeError
+from ...core.duration import parse_duration
+from .base import BaseTradingPairClassDataSource
 
 
 @dataclass
 class CandleData:
     """K线数据"""
-    timestamp: float  # 秒
+    timestamp: float
     open: float
     high: float
     low: float
@@ -21,92 +22,80 @@ class CandleData:
     volume: float
 
     @classmethod
-    def from_ccxt(cls, data: list) -> "CandleData":
-        """从 ccxt 格式创建 [timestamp, open, high, low, close, volume]"""
-        ts = data[0] if data[0] else 0
-        if ts and ts > 1e12:
-            ts = ts / 1000.0  # 毫秒转秒
-        if not ts:
-            ts = time.time()  # 无时间戳时使用当前时间
+    def from_ccxt(cls, data: list, contract_size: float) -> "CandleData":
+        """从 ccxt [timestamp, open, high, low, close, volume]"""
+        ts, o, h, l, c, v = data
+        timestamp = ts / 1000.0
         return cls(
-            timestamp=ts,
-            open=data[1] or 0.0,
-            high=data[2] or 0.0,
-            low=data[3] or 0.0,
-            close=data[4] or 0.0,
-            volume=data[5] or 0.0,
+            timestamp=timestamp,
+            open=o,
+            high=h,
+            low=l,
+            close=c,
+            volume=v * contract_size,
         )
 
 
-class OHLCVDataSource(BaseDataSource[CandleData]):
+class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
     """
     OHLCV K线数据源
 
     订阅交易对的 K 线数据。
     """
+    DEFAULT_WINDOW = 24 * 3600.0 # 默认 24 小时的数据窗口
+    DEFAULT_HEALTHY_RANGE = 0.2  # 最少覆盖比例 20%
 
-    def __init__(
-        self,
-        exchange_class: str,
-        symbol: str,
-        timeframe: str = "1m",
-        window: float = 86400.0,  # 默认 1 天
-        ready_condition: str = "timeout < 60 and cv < 0.8 and range > 0.6",
-        **kwargs,
-    ):
-        name = f"OHLCV:{exchange_class}:{symbol}:{timeframe}"
-        super().__init__(
-            name=name,
-            exchange_class=exchange_class,
-            symbol=symbol,
-            ready_condition=ready_condition,
-            window=window,
-            **kwargs,
-        )
-        self._timeframe = timeframe
+    def initialize(self, **kwargs) -> None:
+        super().initialize(**kwargs)
+        self.timeframe: str = kwargs.get("timeframe", "1m")
+        self.data.max_age = parse_duration(self.timeframe)
 
-    async def _watch(self) -> None:
-        """WebSocket 订阅 OHLCV"""
-        exchange = self.exchange
-        if exchange is None:
-            raise RuntimeError("exchange not available")
+    async def update_by_fetch(self):
+        ohlcvs: list = await self.exchange.fetch_ohlcv(self.symbol, timeframe=self.timeframe)
+        datas = []
+        for ohlcv in ohlcvs:
+            candle_data = CandleData.from_ccxt(ohlcv, contract_size=self.exchange.get_contract_size(self.symbol))
+            datas.append((candle_data, candle_data.timestamp))
+        await self.data.assign(datas)
 
-        while True:
-            ohlcv_list = await exchange.watch_ohlcv(self._symbol, self._timeframe)
-            if ohlcv_list:
-                for data in ohlcv_list:
-                    candle = CandleData.from_ccxt(data)
-                    self._data.append(candle.timestamp, candle)
-                    self._emit_update(candle.timestamp, candle)
-
-    async def _fetch(self) -> None:
-        """REST API 获取 OHLCV"""
-        exchange = self.exchange
-        if exchange is None:
+    async def on_tick(self):
+        await super().on_tick()
+        if not self.exchange.ready:
             return
+        try:
+            if len(self.data) > 0:
+                ohlcvs: list = await asyncio.wait_for(self.exchange.watch_ohlcv(self.symbol, timeframe=self.timeframe),
+                                                      timeout=self.data.max_age)
+                if len(ohlcvs) > 0:
+                    ohlcv = ohlcvs[-1]
+                    candle_data = CandleData.from_ccxt(
+                        ohlcv, contract_size=self.exchange.get_contract_size(self.symbol))
+                    await self.data.update(candle_data, candle_data.timestamp)
+            else:
+                await self.update_by_fetch()
+        except asyncio.TimeoutError:
+            await self.update_by_fetch()
 
-        ohlcv_list = await exchange.fetch_ohlcv(self._symbol, self._timeframe)
-        if ohlcv_list:
-            for data in ohlcv_list:
-                candle = CandleData.from_ccxt(data)
-                self._data.append(candle.timestamp, candle)
-                self._emit_update(candle.timestamp, candle)
-
-    def calculate_vars(self, direction: int) -> dict[str, Any]:
+    def get_vars(self) -> dict[str, Any]:
         """返回 OHLCV 变量"""
-        candles = list(self._data)
-        if not candles:
-            return {
-                "ohlcv": [],
-                "candle_count": 0,
-                "last_close": None,
-                "last_volume": None,
-            }
-
-        latest = self._data.latest
-        return {
-            "ohlcv": candles,
-            "candle_count": len(candles),
-            "last_close": latest.close if latest else None,
-            "last_volume": latest.volume if latest else None,
+        result = {
+            "ohlcv_history": self.data.data_list,
         }
+        data = self.data.get_data()
+        if data is not None:
+            result.update({
+                "ohlcv": data,
+                "last_close_price": data.close,
+                "last_open_price": data.open,
+                "last_high_price": data.high,
+                "last_low_price": data.low,
+                "last_volume": data.volume,
+            })
+        return result
+
+    async def on_stop(self):
+        await super().on_stop()
+        try:
+            self.exchange.un_watch_ohlcv(self.symbol, timeframe=self.timeframe)
+        except UnsubscribeError:
+            pass

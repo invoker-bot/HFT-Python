@@ -25,11 +25,10 @@ AppCore 是整个 HFT 系统的入口，负责：
 # pylint: disable=import-outside-toplevel,protected-access
 import asyncio
 from functools import cached_property
-from typing import TYPE_CHECKING, Optional
-
+from typing import TYPE_CHECKING, Optional, Union
 from ...exchange.group import ExchangeGroup
 from ...executor.base import BaseExecutor
-from ...indicator.base import BaseIndicator
+from ...indicator.base import BaseIndicator, DEFAULT_DISABLE_SECONDS
 from ...indicator.group import IndicatorGroup
 from ...plugin import pm
 from ..scope.manager import ScopeManager
@@ -41,6 +40,7 @@ from .notify import NotifyService
 if TYPE_CHECKING:
     from .config import AppConfig
     from .factory import AppFactory
+    from ..scope.base import FlowScopeNode
 
 
 class AppCore(Listener):
@@ -125,16 +125,11 @@ class AppCore(Listener):
             strategy_config,
             parent=self
         )
-        return
-        # ...
-        # 2. 指标管理（Feature 0006/0007）
+        # 4. 指标管理（Feature 0006/0007）
         self.indicator_group = self.factory.get_or_create(
             IndicatorGroup,
-            "IndicatorGroup",
             parent=self
         )
-        # 注册配置中的 indicator factory
-        self._register_indicator_factories()
 
     @cached_property
     def database(self):   #  -> ClickHouseDatabase | None:
@@ -240,37 +235,11 @@ class AppCore(Listener):
     # ============================================================
     # Indicator 查询接口（Feature 0006）
     # ============================================================
-
-    def get_indicator(
-        self,
-        indicator_id: str,
-        exchange_class: Optional[str],
-        symbol: Optional[str],
-    ) -> Optional[BaseIndicator]:
-        """
-        获取 indicator 实例（不管 ready 与否）
-
-        行为：lazy 创建、自动启动、touch 更新。
-        用途：订阅 update/ready 事件、访问 _data、调试/观测。
-
-        Args:
-            indicator_id: 指标 ID
-            exchange_class: 交易所类名，GlobalIndicator 传 None
-            symbol: 交易对，GlobalIndicator 传 None
-
-        Returns:
-            BaseIndicator 实例，如果无法创建则返回 None
-        """
-        return self.indicator_group.get_indicator(
-            indicator_id, exchange_class, symbol
-        )
-
     def query_indicator(
         self,
-        indicator_id: str,
-        exchange_class: Optional[str],
-        symbol: Optional[str],
-    ) -> Optional[BaseIndicator]:
+        indicator: Union[str, type['BaseIndicator']],  # 要么传入class, 这种取法的indicator不需要定义
+        scope: 'FlowScopeNode'
+    ) -> BaseIndicator:
         """
         查询 indicator，支持 lazy 创建和自动启动
 
@@ -283,34 +252,26 @@ class AppCore(Listener):
             - BaseIndicator 实例：indicator ready
             - None：indicator 未 ready
         """
-        return self.indicator_group.query_indicator(
-            indicator_id, exchange_class, symbol
-        )
-
-    def _register_indicator_factories(self) -> None:
-        """
-        从配置注册 indicator factory
-
-        配置格式（Feature 0005 更新）:
-            indicators:
-              ticker:
-                class: TickerDataSource
-                ready_condition: "timeout < 10"  # 单独字段（可选）
-                params:
-                  # 构造参数（不包括 ready_condition）
-                  window: 300.0
-
-        ready_condition 通过 set_ready_condition() 单独注入，不放入 params。
-        """
-        from ...indicator.factory import IndicatorFactory
-
-        for indicator_id, config in self.config.indicators.items():
-            class_name = config.get("class")
-            params = config.get("params", {})
-            ready_condition = config.get("ready_condition")  # 单独字段
-
-            factory = IndicatorFactory(class_name, params, ready_condition=ready_condition)
-            self.indicator_group.register_factory(indicator_id, factory)
+        if isinstance(indicator, str):
+            indicator_config = self.config.indicators[indicator]
+            indicator_class = BaseIndicator.classes[indicator_config.class_name]
+            params = indicator_config.params
+            seconds = indicator_config.auto_disable_after_seconds
+            indicator_id = f"{scope.id}:{indicator}"
+            if indicator_config.namespace is not None:
+                params["namespace"] = indicator_config.namespace
+        else:
+            indicator_class = indicator
+            params = {}
+            seconds = DEFAULT_DISABLE_SECONDS
+            indicator_id = f"{scope.id}:{indicator_class.__name__}"
+        indicator_instance = self.factory.get_or_create(indicator_class,
+                                               name=indicator_id,
+                                               parent=self.indicator_group,
+                                               scope=scope,
+                                               **params)
+        indicator_instance.auto_disable_duration = seconds
+        return indicator_instance  # 之后还需要判断是否ready
 
     async def on_stop(self):
         """停止回调，同步保存缓存并停止守护线程"""

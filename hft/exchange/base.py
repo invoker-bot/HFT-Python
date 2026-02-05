@@ -242,6 +242,29 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                         result[key][field] += num
             return result
 
+    async def medal_get_pair_amount(self, pair: str | MarketTradingPair) -> float:
+        """获取指定交易对的持仓数量（正数表示多头，负数表示空头）"""
+        symbol = self.to_raw_symbol(pair)
+        markets = await self.get_markets_data()
+        market = markets[symbol]
+        match market['type']:
+            case 'swap':
+                positions = await self.get_positions_data()
+                return positions.get(symbol, 0.0)
+            case 'spot':
+                base = market['base'] # 获取基础货币数量
+                if self.unified_account:
+                    balances = await self.get_balances_data(self.config.ccxt_instance_key)
+                    return balances.get(base, {}).get("total", 0.0)  #
+                else:
+                    result = 0.0
+                    for ccxt_key in self.config.ccxt_instances.keys():
+                        balances = await self.get_balances_data(ccxt_key)
+                        result += balances.get(base, {}).get("total", 0.0)
+                    return result
+            case _:
+                raise NotImplementedError(f"Unsupported trade type for symbol {symbol}")
+
     def to_raw_symbol(self, pair: str | MarketTradingPair) -> str:
         if isinstance(pair, MarketTradingPair):
             return pair.id
