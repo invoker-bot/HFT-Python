@@ -24,6 +24,7 @@ Issue 0013: Strategy 数据驱动增强（单策略标量化）
 # pylint: disable=import-outside-toplevel,protected-access
 import time
 from abc import abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -31,11 +32,12 @@ from typing import TYPE_CHECKING, Any, Optional
 from ..core.scope.scopes import TradingPairScope
 from ..core.listener import Listener
 from ..plugin import pm
-
+from ..indicator.base import BaseIndicator
+from ccxt.base.types import OrderRequest, Order
 if TYPE_CHECKING:
-    from ..core.scope.tree import LinkedScopeNode
     from ..exchange.base import BaseExchange
     from ..exchange.group import ExchangeGroup
+    from ..strategy.base import BaseStrategy
     from .config import BaseExecutorConfig
 
 
@@ -73,27 +75,80 @@ class ActiveOrder:
     order_id: str
     exchange_path: str
     symbol: str
-    # side: str              # "buy" or "sell"
-    # level: int             # 订单层级
     price: float
     amount: float          # > 0 buy, < 0 sell
     created_at: float      # 创建时间
-    last_updated_at: float # 最后被认领时间
+    timeout_refresh_tolerance: float  # 超时时间（秒）
+    # last_updated_at: float # 最后被认领时间
+
+    @property
+    def outdated(self) -> bool:
+        """检查订单是否过期"""
+        return time.time() > self.created_at + self.timeout_refresh_tolerance
 
 
 @dataclass
 class OrderIntent:
     """
-    订单意图 - 子类计算后返回
+    订单意图
 
     描述"想要"在什么价格挂什么单，由基类统一处理订单生命周期。
     """
-    side: str              # "buy" or "sell"
-    level: int             # 订单层级（用于追踪）
-    price: float           # 目标价格
+    price: Optional[float]    # 目标价格，None 表示市价单
     amount: float          # 数量
-    timeout: float         # 超时时间（秒）
-    refresh_tolerance: float  # 刷新容忍度
+    timeout_refresh_tolerance: float # 超时时间（秒）
+    price_refresh_tolerance: float  # 刷新容忍度, 绝对值
+    post_only: bool = True  # 是否只挂 maker 单
+
+
+class ActiveOrdersTracker:
+
+    def __init__(self):
+        # exchange_path -> symbol -> order_id -> ActiveOrder
+        self.orders: dict[str, dict[str, dict[str, ActiveOrder]]] = defaultdict(self._default_dict_factory)
+
+    def _default_dict_factory(self):
+        return defaultdict(dict)
+
+    def is_in_tolerance(self, price: float, price_ref: float, tolerance: float) -> bool:
+        return abs(price - price_ref) <= abs(tolerance)
+
+    def calculate_changed_orders(self, exchange_path: str, symbol: str, orders: list[OrderIntent]) -> \
+            tuple[list[OrderIntent], list[ActiveOrder]]:  # 应该先place 再remove
+        orders_to_place: list[OrderIntent] = []
+        orders_to_remove: list[ActiveOrder] = []
+        for check_order in list(self.orders[exchange_path][symbol].values()):
+            if check_order.outdated:
+                orders_to_remove.append(check_order)
+                continue
+            matched = False
+            for order in orders:  # orders is the desired orders
+                if order.price is not None and self.is_in_tolerance(order.price, check_order.price, order.price_refresh_tolerance):
+                    matched = True
+                    break
+            if not matched:
+                orders_to_remove.append(check_order)
+
+        for order in orders:
+            if order.price is None:  # market order, always place
+                orders_to_place.append(order)
+                continue
+            matched = False
+            for tracked_order in list(self.orders[exchange_path][symbol].values()):
+                if (not tracked_order.outdated) and self.is_in_tolerance(order.price, tracked_order.price, order.price_refresh_tolerance):
+                    matched = True
+                    break
+            if not matched:
+                orders_to_place.append(order)
+        return orders_to_place, orders_to_remove
+
+    def add_active_orders(self, exchange_path: str, symbol: str, orders: list[ActiveOrder]):
+        for o in orders:
+            self.orders[exchange_path][symbol][o.order_id] = o
+
+    def remove_active_orders(self, exchange_path: str, symbol: str, order_ids: list[str]):
+        for order_id in order_ids:
+            self.orders[exchange_path][symbol].pop(order_id, None)
 
 
 class BaseExecutor(Listener):
@@ -106,41 +161,126 @@ class BaseExecutor(Listener):
     - 当差值超过阈值时执行交易
     - 管理限价单生命周期（复用、取消）
 
-    核心参数：
-        per_order_usd: 单笔订单大小 / 执行阈值（USD）
-            - delta 超过此值才会执行
-            - 每次执行的订单大小
-        cancel_delay: 取消延迟（秒）
-            - 订单未被认领超过此时间才取消
-
     子类需要实现：
         execute_delta(): 执行具体的交易逻辑
     """
 
-    # def __init__(self, **kwargs):
-    #     """
-    #     初始化执行器
-#
-    #     Args:
-    #         config: 执行器配置对象
-    #     """
-    #     # 限价单管理
-    #     # self._active_orders: dict[tuple[str, str, str, int], ActiveOrder] = {}
-    #     # key = (exchange_name, symbol, side, level)
-    #
-    #     # 执行统计
-    #     # self._stats = {
-    #     #     "ticks": 0,
-    #     #     "executions": 0,
-    #     #     "orders_created": 0,
-    #     #     "orders_cancelled": 0,
-    #     #     "orders_reused": 0,
-    #     #     "orders_failed": 0,
-    #     # }
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.active_orders_tracker = ActiveOrdersTracker()  # 这里管理所有类型的订单
 
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
         self.config: 'BaseExecutorConfig' = kwargs['config']
+        self.exchange_group.event.on("order:canceled", self.on_order_canceled)
+        self.exchange_group.event.on("order:updated", self.on_order_updated)
+
+    async def on_order_updated(self, exchange_path: str, symbol: str, order: Order):
+        if order['status'] in ["closed", "canceled", "expired", "rejected"]:
+            self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
+                order['id']
+            ])
+        elif order['status'] == "open":
+            direction = 1 if order['side'] == "buy" else -1
+            if order['id'] in self.active_orders_tracker.orders[exchange_path][symbol]:
+                return  # 已经在跟踪列表中
+            lastTradeTimestamp = order.get('lastTradeTimestamp', time.time() * 1000)
+            if lastTradeTimestamp is None:
+                lastTradeTimestamp = time.time()
+            else:
+                lastTradeTimestamp = float(lastTradeTimestamp) / 1000.0
+            self.active_orders_tracker.add_active_orders(exchange_path, symbol, [
+                ActiveOrder(
+                    order_id=order['id'],
+                    exchange_path=exchange_path,
+                    symbol=symbol,
+                    price=order.get('price', 0.0),
+                    amount=order.get('amount', 0.0) * direction,
+                    created_at=lastTradeTimestamp,
+                    timeout_refresh_tolerance=self.config.default_timeout
+                )
+            ])
+
+    async def on_order_canceled(self, exchange_path: str, symbol: str, order_id: str, order: Order):
+        self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
+                order_id
+            ])
+
+    async def create_orders_by_intents(
+        self,
+        exchange_path: str,
+        symbol: str,
+        intents: list[OrderIntent]
+    ) -> list[ActiveOrder]:
+        """根据订单意图创建订单"""
+        exchange = self.exchange_group.exchange_instances[exchange_path]
+        order_requests: list[OrderRequest] = []
+        created_orders: list[ActiveOrder] = []
+        contract_size = await exchange.get_contract_size_async(symbol)
+        for intent in intents:
+            side = "buy" if intent.amount > 0 else "sell"
+            if intent.post_only:
+                params = {"postOnly": True}
+            else:
+                params = {}
+            order_requests.append({
+                "symbol": symbol,
+                "type": "limit" if intent.price is not None else "market",
+                "side": side,
+                "amount": abs(intent.amount) / contract_size,
+                "price": intent.price,
+                "params": params
+            })
+        orders = await exchange.create_orders(order_requests)
+        for order, intent in zip(orders, intents):
+            if order.get('id', None) is not None and intent.price is not None:
+                created_orders.append(ActiveOrder(
+                    order_id=order['id'],
+                    exchange_path=exchange_path,
+                    symbol=symbol,
+                    price=intent.price,
+                    amount=intent.amount,
+                    created_at=time.time(),
+                    timeout_refresh_tolerance=intent.timeout_refresh_tolerance
+                ))
+        return created_orders
+
+    async def cancel_active_orders(
+        self,
+        exchange_path: str,
+        symbol: str,
+        orders: list[ActiveOrder]
+    ):
+        """取消活跃订单"""
+        exchange = self.exchange_group.exchange_instances[exchange_path]
+        order_ids = [o.order_id for o in orders]
+        await exchange.cancel_orders(order_ids, symbol)
+
+    async def process_intents(self, exchange_path: str, symbol: str, intents: list[OrderIntent]):
+        """
+        处理单个目标仓位
+
+        子类可覆盖此方法以实现不同的执行逻辑。
+        默认实现为市价单执行差值。
+        """
+        if len(intents) == 0:
+            return
+        orders_to_place, orders_to_remove = self.active_orders_tracker.calculate_changed_orders(
+            exchange_path, symbol, intents
+        )
+        # 1. 创建新订单
+        if len(orders_to_place) > 0:
+            created_orders = await self.create_orders_by_intents(exchange_path, symbol, orders_to_place)
+            self.active_orders_tracker.add_active_orders(exchange_path, symbol, created_orders)
+
+        # 2. 取消过期订单
+        if len(orders_to_remove) > 0:
+            await self.cancel_active_orders(exchange_path, symbol, orders_to_remove)
+        # self.active_orders_tracker.remove_active_orders(
+        #     exchange_path, symbol,
+        #     [o.order_id for o in orders_to_remove]
+        # )
+
 
     # ===== 属性 =====
     @property
@@ -148,62 +288,16 @@ class BaseExecutor(Listener):
         """获取 ExchangeGroup"""
         return self.root.exchange_group
 
-    # @property
-    # def strategy_group(self) -> "StrategyGroup":
-    #     """获取 StrategyGroup"""
-    #     return self.root.strategy_group
-
-    def _get_exchange_by_path(self, exchange_path: str) -> Optional["BaseExchange"]:
-        """根据配置路径获取交易所实例"""
-        for exchange in self.exchange_group.children.values():
-            if exchange.config.path == exchange_path:
-                return exchange
-        return None
+    @property
+    def strategy(self) -> "BaseStrategy":
+        """获取 Strategy"""
+        return self.root.strategy
 
     @property
-    @abstractmethod
-    def per_order_usd(self) -> float:
-        """获取单笔订单大小（子类必须实现）"""
-        ...
+    def virtual_machine(self):
+        """获取虚拟机"""
+        return self.root.vm
 
-    @property
-    def cancel_delay(self) -> float:
-        """获取取消延迟（子类可覆盖）"""
-        return getattr(self.config, 'cancel_delay', 5.0)
-
-    # @property
-    # def stats(self) -> dict:
-    #     return self._stats.copy()
-    #
-    # @property
-    # def active_orders_count(self) -> int:
-    #     return len(self._active_orders)
-
-    def get_dynamic_per_order_usd(
-        self,
-        exchange_class: str,
-        symbol: str,
-        direction: int,
-        speed: float,
-        notional: float,
-    ) -> float:
-        """
-        获取动态 per_order_usd（支持表达式）
-
-        子类可覆盖此方法以支持动态参数。
-        默认实现返回静态 per_order_usd 属性值。
-
-        Args:
-            exchange_class: 交易所类名
-            symbol: 交易对
-            direction: 交易方向（1=买，-1=卖）
-            speed: 执行紧急度
-            notional: 目标仓位的 USD 价值（绝对值）
-
-        Returns:
-            单笔订单大小（USD）
-        """
-        return self.per_order_usd
 
     # ===== 工具方法 =====
     # TODO: 可能需要考虑合约的 contract_size
@@ -237,670 +331,7 @@ class BaseExecutor(Listener):
     #     if contract_size is None:
     #         contract_size = 1.0  # 默认值，避免除零
     #     return base_amount / contract_size
-
-    # ===== 限价单管理（通用逻辑）=====
-
-    async def manage_limit_orders(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        intents: list[OrderIntent],
-        mid_price: float,
-    ) -> tuple[int, int, int]:
-        """
-        管理限价单：复用、创建、取消
-
-        核心逻辑：
-        1. 对每个 intent，检查是否有可复用的订单
-        2. 可复用 → 刷新 last_updated_at
-        3. 不可复用 → 创建新订单
-        4. 过期订单 → 批量取消
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            intents: 订单意图列表
-            mid_price: 中间价（用于计算容忍度）
-
-        Returns:
-            (created, cancelled, reused) 数量统计
-        """
-
-        now = time.time()
-
-        orders_to_create: list[tuple[OrderIntent, tuple]] = []  # [(intent, key)]
-        created = 0
-        cancelled = 0
-        reused = 0
-
-        # 1. 处理每个 intent
-        for intent in intents:
-            key = self._order_key(exchange.name, symbol, intent.side, intent.level)
-            active = self._active_orders.get(key)
-
-            if active:
-                # 检查是否可复用
-                if self._can_reuse_order(active, intent, mid_price, now):
-                    active.last_updated_at = now
-                    reused += 1
-                    continue
-                else:
-                    # 标记为过期（等待后续批量取消）
-                    active.last_updated_at = now - self.cancel_delay - 1
-
-            # 需要创建新订单
-            orders_to_create.append((intent, key))
-
-        # 2. 收集过期订单
-        orders_to_cancel = self._collect_expired_orders(exchange.name, symbol, now)
-
-        # 3. 批量创建新订单（先创建，确保始终在市场上）
-        if orders_to_create:
-            created = await self._batch_create_orders(
-                exchange, symbol, orders_to_create, now
-            )
-
-        # 4. 批量取消过期订单
-        if orders_to_cancel:
-            cancelled = await self._batch_cancel_orders(
-                exchange, symbol, orders_to_cancel
-            )
-
-        # 更新统计
-        self._stats["orders_created"] += created
-        self._stats["orders_cancelled"] += cancelled
-        self._stats["orders_reused"] += reused
-
-        return created, cancelled, reused
-
-    def _can_reuse_order(
-        self,
-        order: ActiveOrder,
-        intent: OrderIntent,
-        mid_price: float,
-        now: float,
-    ) -> bool:
-        """
-        检查订单是否可复用
-
-        条件：
-        1. 未超时（created_at < timeout）
-        2. 价格在容忍范围内
-        """
-        # 超时检查
-        if now - order.created_at > intent.timeout:
-            return False
-
-        # 价格容忍度检查
-        old_spread = abs(order.price - mid_price)
-        price_deviation = abs(intent.price - order.price)
-
-        if old_spread > 0:
-            return price_deviation / old_spread <= intent.refresh_tolerance
-        return price_deviation < 1e-9  # 几乎相同价格
-
-    def _collect_expired_orders(
-        self,
-        exchange_name: str,
-        symbol: str,
-        now: float,
-    ) -> list[ActiveOrder]:
-        """收集过期订单"""
-        expired = []
-        for key, order in list(self._active_orders.items()):
-            if order.exchange_name != exchange_name or order.symbol != symbol:
-                continue
-
-            # 条件：last_updated_at 超过 cancel_delay
-            if now - order.last_updated_at > self.cancel_delay:
-                expired.append(order)
-
-        return expired
-
-    async def _batch_create_orders(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        to_create: list[tuple[OrderIntent, tuple]],
-        now: float,
-    ) -> int:
-        """批量创建订单"""
-        if not to_create:
-            return 0
-
-        requests = []
-        for intent, _ in to_create:
-            requests.append({
-                "symbol": symbol,
-                "type": "limit",
-                "side": intent.side,
-                "amount": intent.amount,
-                "price": intent.price,
-            })
-
-        created = 0
-        try:
-            results = await exchange.create_orders(requests)
-            for (intent, key), result in zip(to_create, results):
-                if result and result.get("id"):
-                    self._active_orders[key] = ActiveOrder(
-                        order_id=result["id"],
-                        exchange_name=exchange.name,
-                        symbol=symbol,
-                        side=intent.side,
-                        level=intent.level,
-                        price=intent.price,
-                        amount=intent.amount,
-                        created_at=now,
-                        last_updated_at=now,
-                    )
-                    created += 1
-                    self.logger.info(
-                        "[%s] L%d %s %s @ %.6f",
-                        exchange.name, intent.level, intent.side.upper(),
-                        symbol, intent.price
-                    )
-        except Exception as e:
-            self.logger.warning("Failed to create orders: %s", e)
-            self._stats["orders_failed"] += len(to_create)
-
-        return created
-
-    async def _batch_cancel_orders(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        to_cancel: list[ActiveOrder],
-    ) -> int:
-        """批量取消订单"""
-        if not to_cancel:
-            return 0
-
-        # 去重
-        seen = set()
-        unique = []
-        for o in to_cancel:
-            if o.order_id not in seen:
-                seen.add(o.order_id)
-                unique.append(o)
-
-        cancel_ids = [o.order_id for o in unique]
-        cancelled = 0
-
-        try:
-            await exchange.cancel_orders(cancel_ids, symbol)
-            cancelled = len(unique)
-            for order in unique:
-                key = self._order_key(
-                    order.exchange_name, order.symbol, order.side, order.level
-                )
-                # 只移除 order_id 匹配的（避免误删新订单）
-                current = self._active_orders.get(key)
-                if current and current.order_id == order.order_id:
-                    self._active_orders.pop(key, None)
-                self.logger.debug(
-                    "[%s] Cancelled L%d %s %s",
-                    exchange.name, order.level, order.side, order.order_id
-                )
-        except Exception as e:
-            self.logger.warning("Failed to cancel orders: %s", e)
-            # 仍然从追踪中移除
-            for order in unique:
-                key = self._order_key(
-                    order.exchange_name, order.symbol, order.side, order.level
-                )
-                current = self._active_orders.get(key)
-                if current and current.order_id == order.order_id:
-                    self._active_orders.pop(key, None)
-
-        return cancelled
-
-    async def cancel_all_orders(self) -> int:
-        """
-        取消所有活跃订单
-
-        用于 on_stop 或紧急情况。
-        """
-        if not self._active_orders:
-            return 0
-
-        # 按 (exchange_name, symbol) 分组
-        by_key: dict[tuple[str, str], list[ActiveOrder]] = {}
-        for order in self._active_orders.values():
-            key = (order.exchange_name, order.symbol)
-            if key not in by_key:
-                by_key[key] = []
-            by_key[key].append(order)
-
-        total_cancelled = 0
-        for (exchange_name, symbol), orders in by_key.items():
-            try:
-                exchange = self.exchange_group.children.get(exchange_name)
-                if not exchange:
-                    self.logger.warning("Exchange %s not found", exchange_name)
-                    continue
-
-                cancel_ids = [o.order_id for o in orders]
-                await exchange.cancel_orders(cancel_ids, symbol)
-                total_cancelled += len(orders)
-                self.logger.info(
-                    "[%s] Cancelled %d orders for %s",
-                    exchange_name, len(orders), symbol
-                )
-            except Exception as e:
-                self.logger.warning("Failed to cancel orders: %s", e)
-
-        self._active_orders.clear()
-        return total_cancelled
-
-    async def cancel_orders_for_symbol(
-        self,
-        exchange_name: str,
-        symbol: str,
-    ) -> int:
-        """
-        取消特定 (exchange, symbol) 的所有活跃订单
-
-        用于 SmartExecutor 切换执行器时的订单清理。
-
-        Args:
-            exchange_name: 交易所名称
-            symbol: 交易对
-
-        Returns:
-            取消的订单数量
-        """
-        if not self._active_orders:
-            return 0
-
-        # 收集匹配的订单
-        orders_to_cancel = []
-        keys_to_remove = []
-
-        for key, order in self._active_orders.items():
-            if order.exchange_name == exchange_name and order.symbol == symbol:
-                orders_to_cancel.append(order)
-                keys_to_remove.append(key)
-
-        if not orders_to_cancel:
-            return 0
-
-        # 尝试取消订单
-        try:
-            exchange = self.exchange_group.children.get(exchange_name)
-            if not exchange:
-                self.logger.warning("Exchange %s not found", exchange_name)
-                return 0
-
-            cancel_ids = [o.order_id for o in orders_to_cancel]
-            await exchange.cancel_orders(cancel_ids, symbol)
-
-            # 从活跃订单中移除
-            for key in keys_to_remove:
-                self._active_orders.pop(key, None)
-
-            self.logger.info(
-                "[%s] Cancelled %d orders for %s",
-                exchange_name, len(orders_to_cancel), symbol
-            )
-            return len(orders_to_cancel)
-
-        except Exception as e:
-            self.logger.warning(
-                "[%s] Failed to cancel orders for %s: %s",
-                exchange_name, symbol, e
-            )
-            return 0
-
-    # ===== 条件求值与变量注入（Feature 0005）=====
-
-    # 保留变量名集合 - Indicator 的 calculate_vars() 不应覆盖这些变量
-    # Issue 0005: Executor 上下文变量名冲突
-    # Feature 0008: 添加 strategies namespace
-    RESERVED_CONTEXT_VARS = frozenset({
-        # 内置执行变量
-        "direction",
-        "buy",
-        "sell",
-        "speed",
-        "notional",
-        # SmartExecutor 路由变量
-        "target_notional",
-        "trades_notional",
-        # 价格变量（由 Executor 显式注入）
-        "mid_price",
-        "current_price",
-        "best_bid",
-        "best_ask",
-        # 仓位变量
-        "current_position_usd",
-        "current_position_amount",
-        "position_usd",
-        "max_position_usd",
-        "delta_usd",
-        # Strategy 聚合变量（Feature 0008）
-        "strategies",
-    })
-
-    @property
-    def requires(self) -> list[str]:
-        """依赖的 indicator ID 列表"""
-        return getattr(self.config, 'requires', None) or []
-
-    @property
-    def condition(self) -> Optional[str]:
-        """执行条件表达式，None 表示始终执行"""
-        return getattr(self.config, 'condition', None)
-
-    def _get_indicator(self, indicator_id: str, exchange_class: str, symbol: str):
-        """
-        获取 indicator 实例并标记为 required
-
-        通过 AppCore.query_indicator 获取，并自动标记为被依赖。
-
-        Args:
-            indicator_id: indicator ID
-            exchange_class: 交易所类名
-            symbol: 交易对
-
-        Returns:
-            Indicator 实例，如果不存在返回 None
-        """
-        if self.root is None:
-            return None
-        indicator_group = getattr(self.root, 'indicator_group', None)
-        if indicator_group is None:
-            return None
-
-        indicator = indicator_group.query_indicator(indicator_id, exchange_class, symbol)
-
-        # 标记为被 requires 依赖（Feature 0005）
-        if indicator is not None and hasattr(indicator, 'set_requires_flag'):
-            indicator.set_requires_flag(True)
-
-        return indicator
-
-    def check_requires_ready(self, exchange_class: str, symbol: str) -> bool:
-        """
-        检查所有 requires 中的 indicator 是否都 ready
-
-        当任一 requires indicator 未 ready 时，返回 False。
-        这是 Feature 0005 的 ready gate 机制。
-
-        Args:
-            exchange_class: 交易所类名
-            symbol: 交易对
-
-        Returns:
-            True: 所有 requires indicator 都 ready
-            False: 至少有一个 indicator 未 ready
-        """
-        if not self.requires:
-            return True  # 无依赖，直接通过
-
-        for indicator_id in self.requires:
-            indicator = self._get_indicator(indicator_id, exchange_class, symbol)
-            if indicator is None or not indicator.is_ready():
-                self.logger.debug(
-                    "Indicator %s not ready for %s:%s, skipping execution",
-                    indicator_id, exchange_class, symbol
-                )
-                return False
-
-        return True
-
-    def collect_context_vars(
-        self,
-        exchange_class: str,
-        symbol: str,
-        direction: int,
-        speed: float,
-        notional: float,
-        strategies_data: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
-        """
-        收集条件求值所需的所有变量
-
-        计算顺序（Feature 0010）：
-        1. 内置变量（direction, buy, sell, speed, notional）
-        2. strategies namespace（Issue 0013: 单策略标量化）
-        3. requires 中声明的 indicator 提供的变量
-        4. vars 列表（按顺序计算，包括条件变量）
-
-        Issue 0005: 保留变量名不允许被 Indicator 覆盖，冲突时会记录警告并跳过。
-
-        Args:
-            exchange_class: 交易所类名
-            symbol: 交易对
-            direction: 交易方向（1=买，-1=卖）
-            speed: 执行紧急度
-            notional: 目标仓位的 USD 价值（绝对值）
-            strategies_data: Strategy 聚合数据（Issue 0013: 单策略标量化，不再是列表）
-
-        Returns:
-            变量字典
-        """
-        # 内置变量
-        context: dict[str, Any] = {
-            "direction": direction,
-            "buy": direction == 1,
-            "sell": direction == -1,
-            "speed": speed,
-            "notional": notional,
-        }
-
-        # Issue 0013: 注入 strategies namespace（单策略标量化）
-        # Executor 可以通过 strategies["position_usd"] 直接访问值（不再是列表）
-        if strategies_data is not None:
-            context["strategies"] = strategies_data
-
-        # 从 indicator 收集变量
-        for indicator_id in self.requires:
-            indicator = self._get_indicator(indicator_id, exchange_class, symbol)
-            if indicator and indicator.is_ready():
-                try:
-                    vars_dict = indicator.calculate_vars(direction)
-
-                    # Debug 模式：记录 calculate_vars 结果（带间隔控制）
-                    if getattr(indicator, '_debug', False):
-                        should_log = True
-                        debug_log_interval = getattr(indicator, '_debug_log_interval', None)
-
-                        if debug_log_interval is not None:
-                            # 检查是否到达日志间隔
-                            current_time = time.time()
-                            last_log_time = getattr(indicator, '_last_debug_log_time', 0.0)
-
-                            if current_time - last_log_time < debug_log_interval:
-                                should_log = False
-                            else:
-                                # 更新最后日志时间
-                                indicator._last_debug_log_time = current_time
-
-                        if should_log:
-                            self.logger.info(
-                                "[DEBUG] Indicator %s calculate_vars(direction=%d): %s",
-                                indicator_id, direction, vars_dict
-                            )
-
-                    # Issue 0005: 检查并跳过保留变量名，避免覆盖
-                    for key, value in vars_dict.items():
-                        if key in self.RESERVED_CONTEXT_VARS:
-                            self.logger.warning(
-                                "Indicator %s attempted to override reserved var '%s', skipping",
-                                indicator_id, key
-                            )
-                            continue
-                        context[key] = value
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to get vars from indicator %s: %s",
-                        indicator_id, e
-                    )
-
-        # Feature 0010 Phase 1: 计算 vars 列表
-        config_vars = getattr(self.config, 'vars', None)
-        if config_vars:
-            if isinstance(config_vars, dict):
-                # 旧格式：dict 格式（向后兼容）
-                for var_name, var_expr in config_vars.items():
-                    try:
-                        value = self._safe_eval(var_expr, context)
-                        if value is not None:
-                            context[var_name] = value
-                    except Exception as e:
-                        self.logger.warning(
-                            "Failed to compute var %s: %s",
-                            var_name, e
-                        )
-            elif isinstance(config_vars, list):
-                # 新格式：list 格式（按顺序计算，支持条件变量）
-                now = time.time()
-                for var_def in config_vars:
-                    var_name = var_def.name
-                    try:
-                        # 检查是否有条件（on 字段）
-                        var_on = getattr(var_def, 'on', None)
-                        if var_on:
-                            # 条件变量
-                            state_key = (exchange_class, symbol, var_name)
-                            initial_value = getattr(var_def, 'initial_value', None)
-
-                            # 获取当前状态
-                            current_value, last_update = self._conditional_var_states.get(
-                                state_key, (initial_value, 0.0)
-                            )
-
-                            # 计算 duration（距上次更新的秒数）
-                            duration = now - last_update if last_update > 0 else float('inf')
-
-                            # 构建求值上下文（包含 duration）
-                            eval_context = {**context, "duration": duration}
-
-                            # 检查条件
-                            try:
-                                condition_met = self._safe_eval_bool(var_on, eval_context)
-                            except Exception as e:
-                                self.logger.warning(
-                                    "Failed to evaluate condition for %s: %s",
-                                    var_name, e
-                                )
-                                condition_met = False
-
-                            if condition_met:
-                                # 条件满足，更新值
-                                value = self._safe_eval(var_def.value, eval_context)
-                                self._conditional_var_states[state_key] = (value, now)
-                                context[var_name] = value
-                            else:
-                                # 条件不满足，保持当前值
-                                context[var_name] = current_value
-                        else:
-                            # 普通变量：每次都计算
-                            value = self._safe_eval(var_def.value, context)
-                            if value is not None:
-                                context[var_name] = value
-                    except Exception as e:
-                        self.logger.warning(
-                            "Failed to compute var %s: %s",
-                            var_name, e
-                        )
-
-        # Feature 0010 Phase 2: 计算条件变量
-        now = time.time()
-        config_conditional_vars = getattr(self.config, 'conditional_vars', None) or {}
-        for var_name, var_def in config_conditional_vars.items():
-            state_key = (exchange_class, symbol, var_name)
-
-            # 获取当前状态
-            current_value, last_update = self._conditional_var_states.get(
-                state_key, (var_def.default, 0.0)
-            )
-
-            # 计算 duration（距上次更新的秒数）
-            duration = now - last_update if last_update > 0 else float('inf')
-
-            # 构建求值上下文（包含 duration）
-            eval_context = {**context, "duration": duration}
-
-            # 检查条件
-            try:
-                condition_met = self._safe_eval_bool(var_def.on, eval_context)
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to evaluate condition for %s: %s",
-                    var_name, e
-                )
-                condition_met = False
-
-            if condition_met:
-                # 条件满足，更新值
-                try:
-                    new_value = self._safe_eval(var_def.value, eval_context)
-                    self._conditional_var_states[state_key] = (new_value, now)
-                    context[var_name] = new_value
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to compute conditional var %s: %s",
-                        var_name, e
-                    )
-                    context[var_name] = current_value
-            else:
-                # 条件不满足，保持当前值
-                context[var_name] = current_value
-
-        return context
-
-    def evaluate_condition(self, context: dict[str, Any]) -> bool:
-        """
-        求值 condition 表达式
-
-        Args:
-            context: 变量上下文
-
-        Returns:
-            True: 执行
-            False: 跳过（静默等待下次 tick）
-        """
-        if self.condition is None:
-            return True
-
-        return self._safe_eval_bool(self.condition, context)
-
-    def _safe_eval(self, expr: Any, context: 'LinkedScopeNode') -> Any:
-        """安全求值表达式"""
-        return self.root.vm.eval(expr, context)
-
-    def _safe_eval_bool(self, expr: Any, context: 'LinkedScopeNode', default: bool = False) -> bool:
-        """安全求值布尔表达式"""
-        result = self._safe_eval(expr, context)
-        return bool(result) if result is not None else default
-
-    # ===== 抽象方法 =====
-    @abstractmethod
-    async def execute_delta(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        delta_usd: float,
-        speed: float,
-        current_price: float,
-    ):
-        """
-        执行仓位调整
-
-        子类必须实现此方法，处理具体的下单逻辑。
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            delta_usd: 需要调整的 USD 价值（正=买入，负=卖出）
-            speed: 执行紧急度 [0, 1]
-            current_price: 当前价格
-
-        Returns:
-            执行结果
-        """
+    #
 
     # ===== 生命周期 =====
 
@@ -908,6 +339,106 @@ class BaseExecutor(Listener):
         """
         主循环：获取目标仓位，计算差值，执行交易
         """
+        nodes = self.strategy.calculate_flow_nodes()
+        vm = self.virtual_machine
+        app_core = self.root
+        for node in nodes.values():
+            if not isinstance(node.scope, TradingPairScope):
+                self.logger.warning("Skipping non-trading pair scope: %s", node.scope.path)
+            exchange_path = node.get_var("exchange_path")
+            exchange = self.exchange_group.exchange_instances[exchange_path]
+            symbol = node.get_var("symbol")
+            last_refresh_orders = node.get_var("__last_refresh_orders", 0)
+            if time.time() - last_refresh_orders > self.config.default_timeout:  # 每timeout秒刷新一次订单状态
+                for order in await exchange.fetch_open_orders(symbol):
+                    await self.on_order_updated(exchange_path, symbol, order)
+                node.set_var("__last_refresh_orders", time.time())
+            # process
+            # inject indicators data into vm context
+            should_continue = False
+            for required_indicator in self.config.requires:
+                indicator_class_name = app_core.config.indicators[required_indicator].class_name
+                indicator_class = BaseIndicator.classes[indicator_class_name]
+                indicator_node = node
+                while indicator_node is not None:
+                    if isinstance(indicator_node.scope, indicator_class.supported_scope):
+                        break
+                    if len(indicator_node.prev) > 0:
+                        indicator_node = indicator_node.prev[0]
+                    else:
+                        indicator_node = None
+                if indicator_node is None:
+                    raise ValueError(f"Cannot find suitable scope for indicator {required_indicator} in scope {node.scope.path}")
+                indicator = app_core.query_indicator(required_indicator, indicator_node)
+                if not indicator.ready:
+                    should_continue = True
+                    break
+                injected_vars = indicator.get_vars()
+                vm.inject_vars(injected_vars, node, indicator.namespace)  # 注入指标
+            if should_continue:
+                continue
+            vm.execute_vars(self.config.standard_vars_definition, node)  # 执行变量
+            if self.config.condition is not None and not vm.eval(self.config.condition, node):
+                self.logger.debug("Condition not met, skipping scope: %s", node.scope.path)
+                continue
+            # collect intents
+            intents: list[OrderIntent] = []
+            for order_def in self.config.total_order_definitions:
+                node.set_var("level", order_def.level)  # 设置当前订单层级变量
+                vm.execute_vars(order_def.standard_vars_definition, node)  # 计算订单级变量
+                if order_def.condition is not None and not vm.eval(order_def.condition, node):
+                    self.logger.debug("Order condition not met, skipping order level: %s", order_def.level)
+                    continue
+                amount = 0.0
+                if order_def.order_amount is not None:
+                    amount = vm.eval(order_def.order_amount, node)
+                elif order_def.order_usd is not None:
+                    usd = vm.eval(order_def.order_usd, node)
+                    current_price = node.get_var("last_price")  # 使用最新价
+                    amount = usd / current_price  # 简化处理
+                else:
+                    raise ValueError("Either order_amount or order_usd must be specified")
+                price = None
+                spread = None
+                if order_def.price is not None:
+                    price = vm.eval(order_def.price, node)
+                elif order_def.spread is not None:
+                    ask = node.get_var("ask_price")
+                    bid = node.get_var("bid_price")
+                    spread = vm.eval(order_def.spread, node)
+                    if amount > 0:  # buy
+                        price = bid - spread
+                    else:
+                        price = ask + spread
+                # else:  is market order
+                if price is None:
+                    post_only = False
+                else:
+                    post_only = vm.eval(order_def.post_only, node)
+
+                timeout = vm.eval(order_def.timeout, node)
+                refresh_tolerance = 0.0
+                if order_def.refresh_tolerance_usd is not None:
+                    refresh_tolerance = vm.eval(order_def.refresh_tolerance_usd, node)
+                elif order_def.refresh_tolerance is not None:
+                    refresh_tolerance_pct = vm.eval(order_def.refresh_tolerance, node)
+                    if spread is None:
+                        if price is not None:
+                            spread = abs(price - node.get_var("last_price"))
+                        else:
+                            spread = 0.0
+                        refresh_tolerance = spread * refresh_tolerance_pct
+                    intents.append(OrderIntent(
+                        price=price,
+                        amount=amount,
+                        timeout_refresh_tolerance=timeout,
+                        price_refresh_tolerance=refresh_tolerance,
+                        post_only=post_only
+                    ))
+            # print("Intents:", intents)
+            await self.process_intents(exchange_path, symbol, intents)
+
+
         # self._stats["ticks"] += 1
 
         # if self._executor_state == ExecutorState.PAUSED:
@@ -934,160 +465,6 @@ class BaseExecutor(Listener):
 
         # return False
 
-    async def _process_targets(self, targets: dict[str, 'LinkedScopeNode']): #  -> list[Optional[ExecutionResult]]:
-        """
-        处理所有目标仓位，返回每个目标的执行结果列表
-
-        Args:
-            targets: {(exchange_path, symbol): {"字段名": [值列表], ...}}
-                    (Feature 0008 新格式)
-
-        Returns:
-            执行结果列表，每个目标对应一个结果（失败/跳过时为 None）
-        """
-        results = []
-        for (exchange_path, symbol), strategies_data in targets.items():
-            # 根据 exchange_path 获取交易所
-            exchange = self._get_exchange_by_path(exchange_path)
-
-            if not exchange:
-                self.logger.debug("Exchange not found for path %s", exchange_path)
-                results.append(None)  # 记录失败
-                continue
-
-            try:
-                result = await self._process_single_target(
-                    exchange, symbol, strategies_data
-                )
-                results.append(result)
-            except Exception as e:
-                self.logger.warning(
-                    "[%s] Error processing %s: %s",
-                    exchange.name, symbol, e
-                )
-                results.append(None)  # 记录异常
-
-        return results
-
-    async def _process_single_target(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        context: 'LinkedScopeNode',
-    ): # -> Optional[ExecutionResult]:
-        """
-        处理单个目标仓位
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            strategies_data: Strategy 聚合数据 {"字段名": 值, ...}
-                           (Issue 0013: 单策略标量化，不再是列表)
-
-        Returns:
-            执行结果，如果未执行则返回 None
-        """
-        # 从 strategies_data 提取 target_usd 和 speed
-        # Issue 0013: 直接取值（不再是列表）
-        # position_usd = strategies_data.get("position_usd")
-        # speed = strategies_data.get("speed")
-
-        if position_usd is None:
-            return None
-
-        # 使用单策略的值（不再需要聚合）
-        target_usd = position_usd
-
-        # 1. 获取当前价格
-        try:
-            ticker = await exchange.fetch_ticker(symbol)
-            price = ticker.get('last', 0)
-            if price <= 0:
-                return None
-        except Exception as e:
-            self.logger.debug("[%s] Failed to get ticker for %s: %s", exchange.name, symbol, e)
-            return None
-
-        # 2. 获取当前仓位
-        try:
-            positions = await exchange.medal_fetch_positions()
-            current_amount = positions.get(symbol, 0.0)
-            current_usd = current_amount * price
-        except Exception as e:
-            self.logger.debug("[%s] Failed to get positions: %s", exchange.name, e)
-            current_usd = 0.0
-
-        # 3. 计算差值
-        delta_usd = target_usd - current_usd
-        direction = 1 if delta_usd > 0 else -1
-
-        # 4. 检查 requires ready gate（Feature 0005）
-        # 任一 requires indicator 未 ready 时，跳过执行
-        if not self.check_requires_ready(exchange.class_name, symbol):
-            return None
-
-        # 5. 收集上下文变量（Feature 0005）
-        # 无论 condition 是否为 None，都要收集变量（供 condition 和动态参数使用）
-        context = self.collect_context_vars(
-            exchange_class=exchange.class_name,
-            symbol=symbol,
-            direction=direction,
-            speed=speed,
-            notional=abs(delta_usd),
-            strategies_data=strategies_data,  # Feature 0008
-        )
-        # 注入 mid_price 供表达式使用
-        context["mid_price"] = price
-
-        # 6. 检查 condition（Feature 0005）
-        # condition=None 视为 True（无条件执行）
-        # condition 为 False 时静默跳过，等待下次 tick
-        if not self.evaluate_condition(context):
-            return None  # condition 不满足，跳过
-
-        # 7. 获取动态 per_order_usd（Feature 0005）
-        # 可能使用 context 中的变量
-        dynamic_per_order_usd = self.get_dynamic_per_order_usd(
-            exchange_class=exchange.class_name,
-            symbol=symbol,
-            direction=direction,
-            speed=speed,
-            notional=abs(delta_usd),
-        )
-
-        # 8. 检查是否需要执行
-        # always=True 时跳过阈值检查（market making 模式）
-        if not self.config.always and abs(delta_usd) < dynamic_per_order_usd:
-            return None  # 差值太小，不执行
-
-        self._stats["executions"] += 1
-
-        # 9. 执行交易（限制单笔大小）
-        # 如果 delta 很大，分多次执行，每次最多 per_order_usd
-        execute_usd = delta_usd
-        if abs(execute_usd) > dynamic_per_order_usd:
-            execute_usd = dynamic_per_order_usd if delta_usd > 0 else -dynamic_per_order_usd
-
-        self.logger.info(
-            "[%s] %s: target=%.2f, current=%.2f, delta=%.2f, execute=%.2f USD",
-            exchange.name, symbol, target_usd, current_usd, delta_usd, execute_usd
-        )
-
-        # 10. 调用子类实现的执行方法
-        result = await self.execute_delta(
-            exchange=exchange,
-            symbol=symbol,
-            delta_usd=execute_usd,
-            speed=speed,
-            current_price=price,
-        )
-
-        return result
-
-    async def on_stop(self):
-        """停止时取消所有活跃订单"""
-        # await self.cancel_all_orders()
-        await super().on_stop()
 
     # ===== 控制方法 =====
 

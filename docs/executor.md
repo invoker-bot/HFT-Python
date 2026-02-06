@@ -48,11 +48,11 @@
 
 ```
 BaseExecutor (抽象基类)
-├── MarketExecutor        # 市价单执行
-├── LimitExecutor         # 限价单执行（做市）
-├── MarketMakingExecutor  # 做市商执行器
-├── PCAExecutor           # Position Cost Averaging（金字塔加仓）
-└── SmartExecutor         # 智能路由执行器
+├── DefaultExecutor                # 默认（市价单）执行
+├── LimitExecutor                  # 限价单执行（做市）
+├── AvellanedaStoikovExecutor      # A-S 做市执行器
+├── PCAExecutor                    # Position Cost Averaging（金字塔加仓）
+└── SmartExecutor                  # 智能路由执行器
 ```
 
 ---
@@ -157,14 +157,14 @@ vars:
 
 ---
 
-## MarketExecutor
+## DefaultExecutor
 
-市价单执行器，立即以市场价格成交。
+默认执行器（市价单），立即以市场价格成交。
 
 ### 配置
 
 ```yaml
-class_name: market
+class_name: default
 
 requires:
   - ticker
@@ -223,14 +223,14 @@ exit_order:
 
 ---
 
-## MarketMakingExecutor
+## AvellanedaStoikovExecutor
 
-做市商执行器，使用 entry/exit 分离做市。
+A-S 做市执行器，使用 entry/exit 分离做市。
 
 ### 配置
 
 ```yaml
-class_name: market_making
+class_name: avellaneda_stoikov
 
 requires:
   - ticker

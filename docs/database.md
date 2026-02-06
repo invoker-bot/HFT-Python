@@ -1,13 +1,5 @@
 # 数据库模块文档
 
-## 迁移说明
-
-> **注意**: `DataListener` 及其子类已迁移到 `hft/indicator/persist/` 模块。
-> 旧路径 `hft.database.listeners` 仍可用但已废弃，请使用新路径：
-> ```python
-> from hft.indicator.persist import DataListener, FundingRatePersistListener
-> ```
-
 ## 概述
 
 数据库模块负责数据的持久化和缓存管理，采用多层架构：
@@ -43,12 +35,9 @@
 ```
 hft/database/
 ├── __init__.py
-├── client.py           # ClickHouseDatabase + Controllers
-└── listeners.py        # DEPRECATED: 重新导出 hft.indicator.persist
-
-hft/indicator/persist/  # 新位置
-├── __init__.py
-└── listeners.py        # DataListener 基类及子类
+├── client.py           # ClickHouseDatabase
+├── config.py           # 数据库配置
+└── controllers/        # 数据库控制器
 ```
 
 ## 缓存层

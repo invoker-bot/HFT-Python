@@ -571,7 +571,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         if not self.config.debug:
             try:
                 exchange = self.get_exchange(symbol)
-                self.event.emit("order:creating", resolved_order)   # TODO: 可以记录order_params
+                self.event.emit("order:creating", self.config.path, symbol, resolved_order)   # TODO: 可以记录order_params
                 order = await exchange.create_order(
                     **resolved_order
                 )
@@ -581,7 +581,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     await self._balances[market['type']].mark_dirty()
                     if market['type'] != "spot":
                         await self._positions.mark_dirty()  # 市价订单后标记持仓数据需要刷新
-                self.event.emit("order:created", resolved_order, order)  # TODO: 可以记录order
+                self.event.emit("order:created", self.config.path, symbol, resolved_order, order)  # TODO: 可以记录order
                 # 插件钩子：订单创建成功
                 # pm.hook.on_order_created(exchange=self, order=order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
@@ -616,7 +616,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         # only support swap for now
         try:
             for order_param in order_params:
-                self.event.emit("order:creating", order_param)
+                self.event.emit("order:creating", self.config.path, order_param["symbol"], order_param)
             results = await self.exchanges['swap'].create_orders(order_params)
             for order_param, order in zip(order_params, results):
                 place_str = self.__get_place_str(order)
@@ -624,7 +624,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     await self._balances[market['type']].mark_dirty()
                     if market['type'] != "spot":
                         await self._positions.mark_dirty()
-                self.event.emit("order:created", order_param, order)
+                self.event.emit("order:created", self.config.path, order_param["symbol"], order_param, order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
             return results
         except (InvalidOrder, KeyError) as e:
@@ -634,9 +634,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def cancel_order(self, order_id: str, symbol: str) -> Order:
         """撤销订单"""
         exchange = self.get_exchange(symbol)
-        self.event.emit("order:canceling", order_id, symbol)
+        self.event.emit("order:canceling", self.config.path, symbol, order_id)
         order = await exchange.cancel_order(order_id, symbol)
-        self.event.emit("order:canceled", order_id, symbol, order)
+        self.event.emit("order:canceled", self.config.path, symbol, order_id, order)
         # 插件钩子：订单取消
         # pm.hook.on_order_cancelled(exchange=self, order=order)
         self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
@@ -646,10 +646,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """批量撤销订单"""
         exchange = self.get_exchange(symbol)
         for order_id in orders:
-            self.event.emit("order:canceling", order_id, symbol)
+            self.event.emit("order:canceling", self.config.path, symbol, order_id)
         results = await exchange.cancel_orders(orders, symbol)
         for order_id, order in zip(orders, results):
-            self.event.emit("order:canceled", order_id, symbol, order)
+            self.event.emit("order:canceled", self.config.path, symbol, order_id, order)
             self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
         return results
 
@@ -657,7 +657,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """查询订单"""
         exchange = self.get_exchange(symbol)
         order = await exchange.fetch_order(order_id, symbol)
-        self.event.emit("order:updated", order)
+        self.event.emit("order:updated", self.config.path, symbol, order)
         return order
 
     async def fetch_open_orders(
@@ -670,7 +670,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         orders = await exchange.fetch_open_orders(symbol, since, limit)
         for order in orders:
-            self.event.emit("order:updated", order)
+            self.event.emit("order:updated", self.config.path, symbol, order)
         return orders
 
     async def fetch_closed_orders(
@@ -683,7 +683,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         orders = await exchange.fetch_closed_orders(symbol, since, limit)
         for order in orders:
-            self.event.emit("order:updated", order)
+            self.event.emit("order:updated", self.config.path, symbol, order)
         return orders
 
     async def watch_orders(self, ccxt_exchange_key: str) -> list[Order]:
@@ -691,8 +691,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.exchanges[ccxt_exchange_key]
         orders = await exchange.watch_orders()
         for order in orders:
-            self.event.emit("order:updated", order)
-        self._positions.mark_dirty()  # 订单更新后仓位可能变化
+            self.event.emit("order:updated", self.config.path, order['symbol'], order)
+        await self._positions.mark_dirty()  # 订单更新后仓位可能变化
         return orders
 
     async def un_watch_orders(self, ccxt_exchange_key: str):

@@ -38,11 +38,11 @@
 
 ```
 hft/indicator/
-├── base.py              # BaseIndicator, GlobalIndicator, BaseDataSource
+├── base.py              # BaseIndicator, GlobalIndicator
 ├── group.py             # IndicatorGroup, TradingPairIndicators
-├── factory.py           # IndicatorFactory 注册表
 │
 ├── datasource/          # 数据源类 Indicator
+│   ├── base.py
 │   ├── ticker_datasource.py
 │   ├── orderbook_datasource.py
 │   ├── trades_datasource.py
@@ -54,9 +54,6 @@ hft/indicator/
 │   ├── medal_edge_indicator.py
 │   ├── volume_indicator.py
 │   └── rsi_indicator.py
-│
-├── persist/             # 数据持久化
-│   └── listeners.py
 │
 └── lazy_indicator.py    # LazyIndicator (legacy)
 ```

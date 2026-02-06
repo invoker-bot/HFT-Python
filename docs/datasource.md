@@ -64,11 +64,11 @@ Context Variables
 
 ```
 hft/indicator/
-├── base.py              # BaseIndicator, BaseDataSource
+├── base.py              # BaseIndicator
 ├── group.py             # IndicatorGroup, TradingPairIndicators
-├── factory.py           # IndicatorFactory 注册表
 │
 ├── datasource/          # 数据源类 Indicator
+│   ├── base.py
 │   ├── ticker_datasource.py
 │   ├── orderbook_datasource.py
 │   ├── trades_datasource.py

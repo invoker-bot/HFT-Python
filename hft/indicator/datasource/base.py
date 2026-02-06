@@ -71,10 +71,7 @@ class BaseExchangeDataSource(BaseDataSource[T]):
     绑定到某个交易所实例。
     """
     __pickle_exclude__ = {*BaseDataSource.__pickle_exclude__, "exchange"}
-
-    def initialize(self, **kwargs):
-        super().initialize(**kwargs)
-        assert isinstance(self.scope.scope, ExchangeScope)
+    supported_scope = ExchangeScope
 
     @property
     def exchange_path(self) -> str:
@@ -94,11 +91,7 @@ class BaseTradingPairClassDataSource(BaseDataSource[T]):
     绑定到某个交易所实例和交易对。
     """
     __pickle_exclude__ = {*BaseDataSource.__pickle_exclude__, "exchange"}
-
-    def initialize(self, **kwargs):
-        super().initialize(**kwargs)
-        assert isinstance(self.scope.scope, TradingPairClassScope), \
-            "TradingPairClassDataSource must be used within TradingPairClassScope"
+    supported_scope = TradingPairClassScope
 
     @property
     def exchange_class(self) -> str:
@@ -125,11 +118,7 @@ class BaseTradingPairDataSource(BaseDataSource[T]):
     绑定到某个交易所实例和交易对。
     """
     __pickle_exclude__ = {*BaseDataSource.__pickle_exclude__, "exchange"}
-
-    def initialize(self, **kwargs):
-        super().initialize(**kwargs)
-        assert isinstance(self.scope.scope, TradingPairScope), \
-            "TradingPairDataSource must be used within TradingPairScope"
+    supported_scope = TradingPairScope
 
     @property
     def exchange_path(self) -> str:
@@ -146,5 +135,3 @@ class BaseTradingPairDataSource(BaseDataSource[T]):
     def exchange(self) -> 'BaseExchange':
         exchange_group = self.root.exchange_group
         return exchange_group.exchange_instances[self.exchange_path]
-
-

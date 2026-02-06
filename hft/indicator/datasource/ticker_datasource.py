@@ -80,6 +80,7 @@ class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
                 "quote_amount_1d": data.quote_amount,
                 "mid_price": data.mid_price,
             })
+        return result
 
     async def on_stop(self):
         await super().on_stop()

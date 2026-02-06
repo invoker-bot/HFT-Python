@@ -6,10 +6,10 @@ Feature 0005: 支持动态参数（表达式或字面量）
 from typing import TYPE_CHECKING, ClassVar, Type, Union
 from pydantic import Field
 from ..config import BaseExecutorConfig
-from .executor import MarketExecutor
+from .executor import DefaultExecutor
 
 
-class MarketExecutorConfig(BaseExecutorConfig):
+class DefaultExecutorConfig(BaseExecutorConfig):
     """
     市价单执行器配置
 
@@ -19,15 +19,11 @@ class MarketExecutorConfig(BaseExecutorConfig):
     Attributes:
         per_order_usd: 单笔订单大小（USD）或表达式
     """
-    class_name: ClassVar[str] = "market"
+    class_name: ClassVar[str] = "default"
 
-    per_order_usd: Union[float, str] = Field(100.0, description="单笔订单大小（USD）")
+    # per_order_usd: Union[float, str] = Field(100.0, description="单笔订单大小（USD）")
 
     @classmethod
-    def get_class_type(cls) -> Type["MarketExecutor"]:
-        return MarketExecutor
+    def get_class_type(cls) -> Type["DefaultExecutor"]:
+        return DefaultExecutor
 
-
-__all__ = [
-    "MarketExecutorConfig",
-]

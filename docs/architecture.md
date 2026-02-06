@@ -86,14 +86,16 @@ hft/
 │
 ├── executor/       # 执行器模块
 │   ├── base.py         # BaseExecutor 基类（数据驱动）
-│   ├── market_executor/    # 市价单执行器
+│   ├── default_executor/   # 默认（市价单）执行器
 │   ├── limit_executor/     # 限价单执行器
+│   ├── pca_executor/       # PCA 金字塔加仓执行器
+│   ├── avellaneda_stoikov_executor/  # A-S 做市执行器
+│   ├── spread_executor/    # 价差执行器
 │   └── smart_executor/     # 智能路由执行器
 │
 ├── indicator/      # 指标模块（统一架构）
-│   ├── base.py         # BaseIndicator, BaseDataSource
+│   ├── base.py         # BaseIndicator
 │   ├── group.py        # IndicatorGroup, TradingPairIndicators
-│   ├── factory.py      # IndicatorFactory 注册表
 │   ├── datasource/     # 数据源类 Indicator
 │   │   ├── ticker_datasource.py
 │   │   ├── orderbook_datasource.py
@@ -181,7 +183,7 @@ classDiagram
         +execute_delta()*
     }
 
-    class MarketExecutor {
+    class DefaultExecutor {
         +execute_delta()
     }
 
@@ -196,7 +198,7 @@ classDiagram
         +execute_delta()
     }
 
-    BaseExecutor <|-- MarketExecutor
+    BaseExecutor <|-- DefaultExecutor
     BaseExecutor <|-- LimitExecutor
     BaseExecutor <|-- SmartExecutor
 ```

@@ -11,9 +11,11 @@
 - PCAExecutorConfig: PCA 执行器配置
 - SmartExecutorConfig: 智能路由执行器配置
 """
+import copy
 from typing import ClassVar, Optional, Type, Union, Any
+from functools import cached_property
 from pydantic import BaseModel, Field
-from ..config.var import VarsDefinition
+from ..config.var import VarsDefinition, StandardVarsDefinition, to_standard_vars_definition
 from ..config.base import BaseConfig, BaseConfigPath
 from .base import BaseExecutor
 # from .avellaneda_stoikov_executor.config import (
@@ -55,12 +57,16 @@ class OrderDefinition(BaseModel):
           timeout: 60
           refresh_tolerance: 0.5
     """
-
     # 订单级变量
     vars: VarsDefinition = Field(
         default_factory=list,
         description="订单级变量列表"  # 可使用TempScope来记录变量
     )
+
+    @cached_property
+    def standard_vars_definition(self) -> StandardVarsDefinition:
+        """获取规范化后的变量定义列表"""
+        return to_standard_vars_definition(self.vars)
 
     # 挂单条件 用于判断是否执行
     condition: Any = Field(
@@ -102,6 +108,14 @@ class OrderDefinition(BaseModel):
         None,
         description="刷新容忍度（绝对值，USD）"
     )
+    level: Optional[int] = Field(
+        None,
+        description="订单层级（从 1 开始），用于多层订单时记录当前层级"
+    )
+    post_only: Union[bool, str] = Field(
+        False,
+        description="是否仅挂单，不吃单"
+    )
 
 
 class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
@@ -121,14 +135,13 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
             - 每次 tick 重新计算
             - 支持条件变量（通过 on 和 initial_value 字段）
     """
-
     class_dir: ClassVar[str] = "conf/executor"
 
     interval: float = Field(1.0, description="最小执行间隔（秒）")
     # always: bool = Field(False, description="是否总是执行（忽略 delta 阈值检查）")
     requires: list[str] = Field(default_factory=list, description="依赖的 indicator ID 列表")
-    condition: Optional[Union[bool, str]] = Field(None, description="执行条件表达式")
-
+    condition: Optional[Union[bool, str]] = Field(None, description="是否执行的条件表达式")
+    default_timeout: float = Field(60.0, description="默认订单的超时时间（秒）")
     # Feature 0010: vars
     # Feature 0012: scope
     # scope: Optional[str] = Field(None, description="关联的 Scope class ID")
@@ -136,18 +149,41 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
         default_factory=list,
         description="变量定义（支持三种格式：1. list[ExecutorVarDefinition] 标准格式，2. dict[str, str] 简化格式（计算顺序不确定），3. list[str] 'name=value' 格式）"
     )
+
+    @cached_property
+    def standard_vars_definition(self) -> StandardVarsDefinition:
+        """获取规范化后的变量定义列表"""
+        return to_standard_vars_definition(self.vars)
+
     orders: list[OrderDefinition] = Field(
         default_factory=list,
         description="订单列表配置"
     )
+    order: Optional[OrderDefinition] = Field(
+        None,
+        description="单订单配置"
+    )
+    order_levels: Optional[int] = Field(
+        None,
+        description="多层订单数量"
+    )
+
+    @cached_property
+    def total_order_definitions(self) -> list[OrderDefinition]:
+        """获取总的订单定义列表，合并 orders 和 order/order_levels"""
+        orders = copy.copy(self.orders)
+        if self.order_levels is not None:
+            for level in range(1, self.order_levels + 1):
+                for direction in (-1, 1):
+                    order = copy.copy(self.order)
+                    order.level = level * direction
+                    orders.append(order)
+        return orders
 
     @classmethod
     def get_class_type(cls) -> Type["BaseExecutor"]:
         return BaseExecutor
 
-    def get_orders_definitions(self) -> list[OrderDefinition]:
-        """获取订单定义列表"""
-        return self.orders
 
 class ExecutorConfigPath(BaseConfigPath):
     """执行器配置路径"""

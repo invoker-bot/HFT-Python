@@ -25,7 +25,7 @@ calculate_vars 用途：
 """
 import inspect
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 from pyee.asyncio import AsyncIOEventEmitter
 from ..core.listener import Listener
 
@@ -50,8 +50,8 @@ class BaseIndicator(Listener):
     子类需要实现：
     - calculate_vars(direction): 返回变量字典供 Executor 使用
     """
-    classes:dict[str, type['BaseIndicator']] = {}  #
-
+    classes: dict[str, type['BaseIndicator']] = {}  #
+    supported_scope: Optional[type['FlowScopeNode']] = None # 支持的 Scope 类型
     # 不 pickle 事件发射器
     __pickle_exclude__ = (*Listener.__pickle_exclude__, "event", "scope")
 
@@ -61,6 +61,8 @@ class BaseIndicator(Listener):
         self.namespace: str = kwargs.get("namespace", "")
         self.scope: 'FlowScopeNode' = kwargs["scope"]
         self.event = AsyncIOEventEmitter()
+        if self.supported_scope is not None:
+            assert isinstance(self.scope.scope, self.supported_scope)
         # ... additional initialization ...
 
     @abstractmethod
