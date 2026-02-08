@@ -9,7 +9,7 @@
 本项目采用**数据驱动**的执行架构：
 
 1. **Indicator 统一架构**：所有数据源（DataSource）都是特殊的 Indicator，统一通过 `IndicatorGroup` 管理
-2. **变量注入机制**：Indicator 通过 `calculate_vars(direction)` 提供变量，Executor 通过 `requires` 声明依赖
+2. **变量注入机制**：Indicator 通过 `get_vars()` 提供变量，Executor 通过 `requires` 声明依赖
 3. **Scope 系统集成**：Executor 可选通过 `scope` 字段声明其订单执行所在的 `scope_class_id`（Feature 0012；不用于声明 Scope 节点）
 4. **vars 变量系统**：支持变量计算和条件触发更新（详见 [vars 文档](vars.md)）
 5. **统一 order 配置**：所有 Executor 使用相同的 order 配置格式
@@ -25,8 +25,8 @@
 │           ▼ calculate_vars(direction)                       │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │  Context Variables                                   │   │
-│  │  {direction, buy, sell, speed, notional, mid_price,  │   │
-│  │   rsi, medal_edge, volume, ...}                      │   │
+│  │  {direction, buy, sell, speed, notional, last_price, │   │
+│  │   bid_price, ask_price, rsi, medal_edge, volume, ...} │   │
 │  └─────────────────────────────────────────────────────┘   │
 │           │                                                 │
 │           ▼ strategies namespace                            │
@@ -48,11 +48,7 @@
 
 ```
 BaseExecutor (抽象基类)
-├── DefaultExecutor                # 默认（市价单）执行
-├── LimitExecutor                  # 限价单执行（做市）
-├── AvellanedaStoikovExecutor      # A-S 做市执行器
-├── PCAExecutor                    # Position Cost Averaging（金字塔加仓）
-└── SmartExecutor                  # 智能路由执行器
+└── DefaultExecutor                # 默认执行器
 ```
 
 ---
@@ -66,7 +62,7 @@ BaseExecutor (抽象基类)
 ```yaml
 order:
   price: ...              # 绝对价格（可选）
-  spread: ...             # 价差（当 price 未定义时：买一/卖一价 - sign(amount) * spread）
+  spread: ...             # 价差（当 price 未定义时：买单 bid - spread，卖单 ask + spread）
   order_usd: ...          # 订单金额
   order_amount: ...       # 订单数量（正=买，负=卖；定义后忽略 order_usd）
   refresh_tolerance: ...  # 刷新容忍度（比例）
@@ -176,39 +172,6 @@ order:
   order_usd: 'abs(delta_usd)'
 ```
 
----
-
-## LimitExecutor
-
-限价单执行器，支持多层挂单。
-
-### 配置
-
-```yaml
-class_name: limit
-
-requires:
-  - ticker
-
-vars:
-  - name: q
-    value: 'clip((current_position_usd - position_usd) / max_position_usd, -1, 1)'
-
-entry_order_levels: 3
-entry_order:
-  spread: '0.0002 * mid_price * abs(level)'
-  order_usd: '100 - q * 50'
-  timeout: 7d
-  refresh_tolerance: 1.0
-
-exit_order_levels: 3
-exit_order:
-  spread: '0.0002 * mid_price * abs(level)'
-  order_usd: '100 + q * 50'
-  timeout: 7d
-  refresh_tolerance: 1.0
-```
-
 ### Duration 格式
 
 `timeout` 等时间参数支持人类可读格式：
@@ -220,156 +183,6 @@ exit_order:
 | `1h` | 3600 |
 | `7d` | 604800 |
 | `604800` | 604800（纯数字按秒解析） |
-
----
-
-## AvellanedaStoikovExecutor
-
-A-S 做市执行器，使用 entry/exit 分离做市。
-
-### 配置
-
-```yaml
-class_name: avellaneda_stoikov
-
-requires:
-  - ticker
-
-vars:
-  - name: inventory_ratio
-    value: 'current_position_usd / max_position_usd'
-  - name: base_spread
-    value: '0.0003 * mid_price'
-  - name: skew
-    value: 'inventory_ratio * base_spread * 0.5'
-
-entry_orders:
-  - spread: 'base_spread + skew'
-    order_usd: '100 * (1 - inventory_ratio * 0.5)'
-    refresh_tolerance: 0.5
-    timeout: 30s
-
-exit_orders:
-  - spread: 'base_spread - skew'
-    order_usd: '100 * (1 + inventory_ratio * 0.5)'
-    refresh_tolerance: 0.5
-    timeout: 30s
-```
-
-### 多层做市
-
-```yaml
-entry_order_levels: 3
-entry_order:
-  spread: 'base_spread * abs(level)'
-  order_usd: '50 * abs(level)'
-  refresh_tolerance: 0.8
-  timeout: 1h
-
-exit_order_levels: 3
-exit_order:
-  spread: 'base_spread * abs(level)'
-  order_usd: '50 * abs(level)'
-  refresh_tolerance: 0.8
-  timeout: 1h
-```
-
----
-
-## PCAExecutor
-
-Position Cost Averaging 执行器，金字塔式加仓/减仓。
-
-### 配置
-
-```yaml
-class_name: pca
-
-requires:
-  - ticker
-  - rsi
-
-vars:
-  - name: delta_position_usd
-    value: 'current_position_usd - position_usd'
-  - name: center_price
-    value: mid_price
-    on: 'rsi[-1] < 30 or rsi[-1] > 70 or duration > 7 * 24 * 3600'
-    initial_value: null
-
-reset: 'abs(delta_position_usd) < 50'
-
-entry_order_levels: 10
-entry_order:
-  vars:
-    - name: direction
-      value: '1 if rsi[-1] < 30 else (-1 if rsi[-1] > 70 else null)'
-    - name: spread_value
-      value: '0.0002 * mid_price * (entry_level ** 2 + entry_level)'
-  condition: 'direction is not null'
-  spread: 'spread_value'
-  price: 'center_price - direction * spread_value'
-  order_amount: '0.01 * (entry_level ** 2 + entry_level) * direction'
-  refresh_tolerance: 1.0
-  timeout: 7d
-
-exit_order_levels: 1
-exit_order:
-  vars:
-    - name: direction
-      value: '-1 if delta_position_usd > 0 else 1'
-  condition: 'abs(delta_position_usd) > 50'
-  price: '(1 - 0.01 * direction) * average_entry_price'
-  order_amount: '-delta_position_amount'
-  refresh_tolerance: 0.5
-  timeout: 1h
-```
-
-### PCAExecutor 内置变量
-
-| 变量 | 说明 |
-|------|------|
-| `entry_level` | 当前入场档位（0-based） |
-| `exit_level` | 当前出场档位（0-based） |
-| `total_entry_amount` | 累计入场数量 |
-| `total_entry_usd` | 累计入场金额 |
-| `average_entry_price` | 平均入场价格 |
-| `delta_position_amount` | 当前仓位数量偏差 |
-
-### 状态追踪
-
-- **entry_level 追踪**：记住当前档位，避免重复吃单
-- **订单状态追踪**：成交/取消后 level + 1
-- **reset 条件**：满足时重置所有统计
-
----
-
-## SmartExecutor
-
-智能路由执行器，根据条件选择执行方式。
-
-### 配置
-
-```yaml
-class_name: smart
-
-requires:
-  - ticker
-
-vars:
-  - name: spread_pct
-    value: '(best_ask - best_bid) / mid_price'
-  - name: is_liquid
-    value: 'spread_pct < 0.0005'
-
-routes:
-  - condition: 'is_liquid and abs(delta_usd) < 5000'
-    executor: market/basic
-  - condition: 'spread_pct < 0.002'
-    executor: limit/fixed_spread
-  - condition: 'spread_pct >= 0.002'
-    executor: market_making/symmetric
-```
 
 ---
 
@@ -385,8 +198,9 @@ routes:
 | `speed` | `float` | 目标仓位的紧急程度 |
 | `notional` | `float` | 目标仓位的 USD 价值（绝对值） |
 | `mid_price` | `float` | 当前中间价 |
-| `best_bid` | `float` | 买一价 |
-| `best_ask` | `float` | 卖一价 |
+| `bid_price` | `float` | 买一价 |
+| `ask_price` | `float` | 卖一价 |
+| `last_price` | `float` | 最新成交价 |
 | `current_position_usd` | `float` | 当前仓位价值 |
 | `current_position_amount` | `float` | 当前仓位数量 |
 
@@ -419,11 +233,7 @@ vars:
 
 | 场景 | 推荐执行器 |
 |------|-----------|
-| 快速调仓 | MarketExecutor |
-| 做市/低滑点 | LimitExecutor |
-| 双边做市 | MarketMakingExecutor |
-| 金字塔加仓 | PCAExecutor |
-| 复杂路由 | SmartExecutor |
+| 调仓 | DefaultExecutor |
 
 ### 网格交易技巧
 

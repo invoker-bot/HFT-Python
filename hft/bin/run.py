@@ -14,9 +14,6 @@ app = typer.Typer()
 test_group = typer.Typer(help="Test commands")
 app.add_typer(test_group, name="test")
 
-# 稳定币列表，价格按 1:1 计算
-STABLE_COINS = {'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USD', 'FDUSD'}
-
 
 @app.command()
 def main(app_name: str):

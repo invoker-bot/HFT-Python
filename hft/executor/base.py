@@ -2,72 +2,25 @@
 Executor 执行器基类
 
 执行器负责将策略的目标仓位转化为实际交易。
-
-工作流程：
-    1. on_tick() 获取聚合目标
-    2. 对每个 (exchange, symbol, scope)：
-        a. 获取当前仓位
-        b. 计算 delta = target - current
-        c. 如果 |delta| > per_order_usd，执行交易
-    # 3. speed 影响执行策略（市价/限价等）
-
-参数说明：
-    per_order_usd: 单笔订单大小，也是执行阈值
-        - delta > per_order_usd 时才执行
-        - 这避免了频繁的小额交易
-
-Issue 0013: Strategy 数据驱动增强（单策略标量化）
-    - strategies_data: {"字段名": 值, ...} 格式（不再是列表）
-    - Executor 可通过 strategies["字段名"] 直接访问值
-    - 单策略场景，不需要 sum/avg 聚合
 """
 # pylint: disable=import-outside-toplevel,protected-access
 import time
-from abc import abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
+from ccxt.base.types import OrderRequest, Order
 from ..core.scope.scopes import TradingPairScope
 from ..core.listener import Listener
-from ..plugin import pm
 from ..indicator.base import BaseIndicator
-from ccxt.base.types import OrderRequest, Order
 if TYPE_CHECKING:
-    from ..exchange.base import BaseExchange
     from ..exchange.group import ExchangeGroup
     from ..strategy.base import BaseStrategy
     from .config import BaseExecutorConfig
 
-
-# class ExecutorState(Enum):
-#     """执行器状态"""
-#     IDLE = "idle"               # 空闲
-#     EXECUTING = "executing"     # 执行中
-#     PAUSED = "paused"           # 暂停
-
-
-# @dataclass
-# class ExecutionResult:
-#     """执行结果"""
-#     exchange_class: str
-#     symbol: str
-#     success: bool
-#     exchange_name: str
-#     target_usd: float = 0.0
-#     current_usd: float = 0.0
-#     delta_usd: float = 0.0
-#     order_id: Optional[str] = None
-#     filled_amount: float = 0.0
-#     average_price: float = 0.0
-#     error: Optional[str] = None
-#     timestamp: datetime = field(default_factory=datetime.now)
-
-
 # ============================================================
 # 限价单管理相关数据结构
 # ============================================================
+
 
 @dataclass
 class ActiveOrder:
@@ -79,7 +32,6 @@ class ActiveOrder:
     amount: float          # > 0 buy, < 0 sell
     created_at: float      # 创建时间
     timeout_refresh_tolerance: float  # 超时时间（秒）
-    # last_updated_at: float # 最后被认领时间
 
     @property
     def outdated(self) -> bool:
@@ -298,43 +250,7 @@ class BaseExecutor(Listener):
         """获取虚拟机"""
         return self.root.vm
 
-
-    # ===== 工具方法 =====
-    # TODO: 可能需要考虑合约的 contract_size
-    # @staticmethod
-    # def usd_to_amount(
-    #     exchange: "BaseExchange",
-    #     symbol: str,
-    #     usd: float,
-    #     price: float,
-    # ) -> float:
-    #     """
-    #     将 USD 价值转换为下单数量（合约数量）
-#
-    #     计算公式：
-    #         base_amount = usd / price  # 基础货币数量（如 BTC）
-    #         amount = base_amount / contract_size  # 合约数量
-#
-    #     Args:
-    #         exchange: 交易所实例
-    #         symbol: 交易对
-    #         usd: USD 价值（可正可负）
-    #         price: 当前价格
-#
-    #     Returns:
-    #         合约数量（保持 usd 的正负符号）
-    #     """
-    #     if price <= 0:
-    #         return 0.0
-    #     base_amount = usd / price
-    #     contract_size = exchange.get_contract_size(symbol)
-    #     if contract_size is None:
-    #         contract_size = 1.0  # 默认值，避免除零
-    #     return base_amount / contract_size
-    #
-
     # ===== 生命周期 =====
-
     async def on_tick(self) -> bool:
         """
         主循环：获取目标仓位，计算差值，执行交易
@@ -355,30 +271,10 @@ class BaseExecutor(Listener):
                 node.set_var("__last_refresh_orders", time.time())
             # process
             # inject indicators data into vm context
-            should_continue = False
-            for required_indicator in self.config.requires:
-                indicator_class_name = app_core.config.indicators[required_indicator].class_name
-                indicator_class = BaseIndicator.classes[indicator_class_name]
-                indicator_node = node
-                while indicator_node is not None:
-                    if isinstance(indicator_node.scope, indicator_class.supported_scope):
-                        break
-                    if len(indicator_node.prev) > 0:
-                        indicator_node = indicator_node.prev[0]
-                    else:
-                        indicator_node = None
-                if indicator_node is None:
-                    raise ValueError(f"Cannot find suitable scope for indicator {required_indicator} in scope {node.scope.path}")
-                indicator = app_core.query_indicator(required_indicator, indicator_node)
-                if not indicator.ready:
-                    should_continue = True
-                    break
-                injected_vars = indicator.get_vars()
-                vm.inject_vars(injected_vars, node, indicator.namespace)  # 注入指标
-            if should_continue:
+            if not vm.inject_indicators(self.config.requires, node, app_core):
                 continue
             vm.execute_vars(self.config.standard_vars_definition, node)  # 执行变量
-            if self.config.condition is not None and not vm.eval(self.config.condition, node):
+            if not vm.eval_condition(self.config.condition, node):
                 self.logger.debug("Condition not met, skipping scope: %s", node.scope.path)
                 continue
             # collect intents
@@ -386,7 +282,7 @@ class BaseExecutor(Listener):
             for order_def in self.config.total_order_definitions:
                 node.set_var("level", order_def.level)  # 设置当前订单层级变量
                 vm.execute_vars(order_def.standard_vars_definition, node)  # 计算订单级变量
-                if order_def.condition is not None and not vm.eval(order_def.condition, node):
+                if not vm.eval_condition(order_def.condition, node):
                     self.logger.debug("Order condition not met, skipping order level: %s", order_def.level)
                     continue
                 amount = 0.0
@@ -435,56 +331,4 @@ class BaseExecutor(Listener):
                         price_refresh_tolerance=refresh_tolerance,
                         post_only=post_only
                     ))
-            # print("Intents:", intents)
             await self.process_intents(exchange_path, symbol, intents)
-
-
-        # self._stats["ticks"] += 1
-
-        # if self._executor_state == ExecutorState.PAUSED:
-        #     return False
-
-        # 获取聚合的目标仓位
-        # targets = self.strategy_group.get_aggregated_targets()
-
-        # if not targets:
-        #     return False
-        # self.logger.info("on_tick called - placeholder implementation")
-        # self._executor_state = ExecutorState.EXECUTING
-
-        # 插件钩子：执行开始
-        # pm.hook.on_execution_start(executor=self, targets=targets)
-
-        # results = []
-        # try:
-        #     results = await self._process_targets(targets)
-        # finally:
-        #     self._executor_state = ExecutorState.IDLE
-            # 插件钩子：执行完成
-        #     pm.hook.on_execution_complete(executor=self, results=results)
-
-        # return False
-
-
-    # ===== 控制方法 =====
-
-    # def pause(self) -> None:
-    #     """暂停执行"""
-    #     self._executor_state = ExecutorState.PAUSED
-    #     self.logger.info("Executor paused")
-
-    # def resume(self) -> None:
-    #     """恢复执行"""
-    #     self._executor_state = ExecutorState.IDLE
-    #     self.logger.info("Executor resumed")
-
-    # ===== 状态 =====
-
-    # @property
-    # def log_state_dict(self) -> dict:
-    #     return {
-    #         "state": self._executor_state.value,
-    #         "per_order_usd": self.per_order_usd,
-    #         "active_orders": self.active_orders_count,
-    #         **self._stats
-    #     }

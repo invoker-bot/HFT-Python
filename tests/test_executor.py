@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from hft.executor.base import BaseExecutor, ExecutionResult, ExecutorState, OrderIntent, ActiveOrder
-from hft.executor.market_executor import MarketExecutor
+from hft.executor.default_executor import MarketExecutor
 from hft.executor.config import BaseExecutorConfig, MarketExecutorConfig
 
 

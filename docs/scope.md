@@ -67,7 +67,7 @@ ChainMap(injected_vars, trading_pair_vars, exchange_vars, global_vars)
 
 ### 2.5 特殊变量（由 Scope 系统自动提供）
 
-所有 Scope 都拥有特殊变量 `instance_id`（等于 `scope_instance_id`）与 `class_id`（等于 `scope_class_id`），并且都会注入 `app_core`（实例创建时传入）。
+所有 Scope 都拥有特殊变量 `instance_id` 与 `class_name`，并且都会注入 `app_core`（实例创建时传入）。
 
 各 ScopeClass 的额外特殊变量：
 

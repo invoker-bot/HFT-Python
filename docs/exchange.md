@@ -106,11 +106,11 @@ class ExchangePositionListener(GroupListener):
 监控订单状态。
 
 ```python
-class ExchangeOrderBillListener(GroupListener, DataListener):
+class ExchangeOrderBillListener(CCXTExchangeGroupListener):
     """
     动态创建子节点：
-    - watch-{key}: WebSocket 监听订单
-    - fetch: REST 轮询订单状态
+    - watch-{key}: CCXTExchangeOrderBillWatchListener
+    - fetch: CCXTExchangeOrderBillListener
     """
 ```
 

@@ -10,7 +10,7 @@ Feature 0005: 支持动态参数（表达式或字面量）
 """
 from typing import TYPE_CHECKING
 
-from ..base import BaseExecutor  # , ExecutionResult
+from ..base import BaseExecutor
 
 if TYPE_CHECKING:
     from ...exchange.base import BaseExchange

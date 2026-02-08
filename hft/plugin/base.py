@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from ..exchange.base import BaseExchange
     from ..executor.base import BaseExecutor
     from ..strategy.base import BaseStrategy, TargetPositions
-    from ..strategy.group import AggregatedTargets, StrategyGroup
 
 # pluggy markers
 hookspec = pluggy.HookspecMarker(__appname__)

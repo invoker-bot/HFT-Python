@@ -114,21 +114,8 @@ return {
 
 ```yaml
 class_name: static_positions
-name: my_strategy
 interval: 1.0  # 主循环间隔（秒）
 debug: false   # 调试模式（不下真单）
-
-# 交易对过滤
-trading_pairs:
-  - '*'              # 所有交易对
-  - 'BTC/USDT:USDT'  # 指定交易对
-  - '!ETH/USDT'      # 排除某交易对
-max_trading_pairs: 12
-
-# 数据驱动（Feature 0008 & 0012）
-requires:
-  - equation
-  - rsi
 
 # Feature 0011: 全局 condition（可选）
 # - 默认为 null（等价 True）

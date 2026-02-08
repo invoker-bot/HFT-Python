@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from hft.executor.base import BaseExecutor, ExecutionResult
 from hft.executor.config import BaseExecutorConfig
-from hft.executor.market_executor import MarketExecutor
-from hft.executor.market_executor.config import MarketExecutorConfig
+from hft.executor.default_executor import MarketExecutor
+from hft.executor.default_executor.config import MarketExecutorConfig
 from hft.executor.limit_executor import LimitExecutor
 from hft.executor.limit_executor.config import LimitExecutorConfig, LimitOrderLevel
 

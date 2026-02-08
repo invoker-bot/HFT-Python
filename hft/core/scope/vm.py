@@ -8,7 +8,7 @@ from collections import defaultdict
 from simpleeval import (DEFAULT_FUNCTIONS, DEFAULT_NAMES, DEFAULT_OPERATORS,
                         EvalWithCompoundTypes)
 from .base import VirtualScope, FlowScopeNode, ScopeInstanceId
-
+from ...indicator.base import BaseIndicator
 if TYPE_CHECKING:
     from ...config.var import StandardVarDefinition, StandardVarsDefinition
     from ...config.scope import ScopeFlowConfig
@@ -75,6 +75,18 @@ class VirtualMachine:
             self.evaler.names = scope.vars
         return self.evaler.eval(expression)
 
+    def eval_condition(self, condition_expr: Optional[str], scope: 'VirtualScope') -> bool:
+        """
+        计算条件表达式的布尔值
+
+        Args:
+            condition_expr: 条件表达式字符串（可选）
+            scope: 用于表达式求值的 scope（可能是 LinkedScopeNode，包含继承的变量）
+        """
+        if condition_expr is None:
+            return True
+        return bool(self.eval(condition_expr, scope))
+
     def execute_vars(
         self,
         vars_def: Optional['StandardVarsDefinition'],
@@ -118,6 +130,10 @@ class VirtualMachine:
             if name not in scope.vars:
                 scope.set_var(name, initial_value, True)
 
+    def inject_functions(self, injected_functions: dict[str, Any], scope: 'VirtualScope') -> None:
+        for name, func in injected_functions.items():
+            scope.set_function(name, func)
+
     def inject_vars(self, injected_vars: dict[str, Any], scope: 'VirtualScope', namespace: Optional[str]) -> None:
         if namespace:
             scope.set_var(namespace, injected_vars)
@@ -125,15 +141,39 @@ class VirtualMachine:
             for name, value in injected_vars.items():
                 scope.set_var(name, value)
 
+    def inject_indicators(self, requires: list[str], node: 'FlowScopeNode', app_core: 'AppCore') -> bool:
+        # 返回是否ready
+        ready = True
+        for required_indicator in requires:
+            indicator_class_name = app_core.config.indicators[required_indicator].class_name
+            indicator_class = BaseIndicator.classes[indicator_class_name]
+            indicator_node = node  # 从当前节点查找前向节点
+            if indicator_class.supported_scope is not None:
+                while indicator_node is not None:
+                    if isinstance(indicator_node.scope, indicator_class.supported_scope):
+                        break
+                    if len(indicator_node.prev) > 0:
+                        indicator_node = indicator_node.prev[0]
+                    else:
+                        indicator_node = None
+            if indicator_node is None:
+                raise ValueError(f"Cannot find suitable scope for indicator {required_indicator} in scope {node.scope.path}")
+            indicator = app_core.query_indicator(required_indicator, indicator_node)
+            if not indicator.ready:
+                ready = False
+                break
+            injected_vars = indicator.get_vars()
+            injected_functions = indicator.get_functions()
+            self.inject_vars(injected_vars, node, indicator.namespace)  # 注入
+            self.inject_functions(injected_functions, node)
+        return ready
+
     def execute(self, flow_config: 'ScopeFlowConfig', app_core: 'AppCore') -> dict[ScopeInstanceId, 'FlowScopeNode']:
         """
         执行一组变量赋值
 
         Args:
             flow_config: 变量流配置
-            app_core:
-
-        首先，
         """
         scope_manager: 'ScopeManager' = app_core.scope_manager
         includes: dict[str, set[ScopeInstanceId]] = {}  # {class_name: {instance_id} }
@@ -149,7 +189,7 @@ class VirtualMachine:
                 instance_ids = scope_class.get_all_instance_ids(app_core)
             else:
                 instance_ids = includes[class_name]  # 如果有，只使用已计算的结果
-            if len(layers) == 0:  # 没有前节点
+            if len(layers) == 0:  # 如果没有前节点，则
                 for instance_id in instance_ids:
                     previous_scopes[instance_id] = []
             else:
@@ -181,25 +221,13 @@ class VirtualMachine:
                         scope=scope,
                         prev=previous_scopes[instance_id],
                     )
-                    filter_condition = layer_config.filter  # 前验条件
-                    if filter_condition is not None:
-                        if not self.eval(filter_condition, node):
-                            continue  # 过滤条件不满足，跳过该节点
-                    should_continue = False
-                    for required_indicator in layer_config.requires:
-                        indicator = app_core.query_indicator(required_indicator, node)
-                        if not indicator.ready:
-                            should_continue = True
-                            break
-                        injected_vars = indicator.get_vars()
-                        self.inject_vars(injected_vars, node, indicator.namespace)  # 注入指标
-                    if should_continue:
+                    if not self.eval_condition(layer_config.filter, node):
+                        continue
+                    if not self.inject_indicators(layer_config.requires, node, app_core):
                         continue
                     self.execute_vars(layer_config.standard_vars_definition, node)  # 执行变量
-                    condition_expr = layer_config.condition  # 后验条件
-                    if condition_expr is not None:
-                        if not self.eval(condition_expr, node):
-                            continue  # 条件不满足，跳过该节点
+                    if not self.eval_condition(layer_config.condition, node):  # 后验条件
+                        continue
                     current_layer[instance_id] = node
             includes[class_name] = set(current_layer.keys())
             layers.append(current_layer)

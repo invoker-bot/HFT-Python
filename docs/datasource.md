@@ -122,57 +122,55 @@ condition: "spread < 0.001"  # 价差小于 0.1% 时执行
 per_order_usd: 100
 ```
 
-## calculate_vars 接口
+## get_vars 接口
 
-所有 DataSource 必须实现 `calculate_vars` 方法：
+所有 DataSource 必须实现 `get_vars` 方法：
 
 ### TickerDataSource
 
 ```python
-def calculate_vars(self, direction: int) -> dict[str, Any]:
-    ticker = self._data.latest
-    if ticker is None:
-        return {"ticker": None, "last": None}
+def get_vars(self) -> dict[str, Any]:
     return {
-        "ticker": ticker,
-        "last": ticker.last,
-        "bid": ticker.bid,
-        "ask": ticker.ask,
-        "mid": (ticker.bid + ticker.ask) / 2,
-        "spread": (ticker.ask - ticker.bid) / ticker.bid,
+        "ticker": data,
+        "last_price": data.last,
+        "bid_price": data.bid,
+        "ask_price": data.ask,
+        "amount_1d": data.amount,
+        "quote_amount_1d": data.quote_amount,
+        "mid_price": data.mid_price,
     }
 ```
 
 ### TradesDataSource
 
 ```python
-def calculate_vars(self, direction: int) -> dict[str, Any]:
+def get_vars(self) -> dict[str, Any]:
     return {
-        "trades": list(self._data),
-        "trade_count": len(self._data),
-        "last_trade_price": self._data.latest.price if self._data.latest else None,
+        "trades": data,
+        "last_trade_time": data.timestamp,
+        "last_trade_price": data.price,
+        "last_trade_direction": sign(data.amount),
+        "last_trade_amount": abs(data.amount),
     }
 ```
 
 ### OrderBookDataSource
 
 ```python
-def calculate_vars(self, direction: int) -> dict[str, Any]:
-    ob = self._data.latest
-    if ob is None:
-        return {"order_book": None, "best_bid": None, "best_ask": None}
+def get_vars(self) -> dict[str, Any]:
     return {
-        "order_book": ob,
-        "best_bid": ob.bids[0].price if ob.bids else None,
-        "best_ask": ob.asks[0].price if ob.asks else None,
-        "bid_depth": sum(b.amount for b in ob.bids),
-        "ask_depth": sum(a.amount for a in ob.asks),
+        "order_book": data,
+        "best_bid_price": data.best_bid,
+        "best_ask_price": data.best_ask,
+        "mid_price": data.mid_price,
+        "bid_depth": sum(b.amount for b in data.bids),
+        "ask_depth": sum(a.amount for a in data.asks),
     }
 ```
 
 ## HealthyDataArray
 
-DataSource 使用 `HealthyDataArray` 存储数据，提供健康检查：
+DataSource 使用 `HealthyDataArray` 存储数据（通过 `self.data` 属性访问），提供健康检查：
 
 ```python
 class HealthyDataArray(Generic[T]):

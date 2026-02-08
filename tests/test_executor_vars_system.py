@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hft.executor.config import ExecutorVarDefinition
-from hft.executor.market_executor.config import MarketExecutorConfig
+from hft.executor.default_executor.config import MarketExecutorConfig
 
 
 class TestExecutorVarDefinition:
@@ -106,7 +106,7 @@ class TestExecutorCollectContextVars:
     @pytest.fixture
     def mock_executor(self):
         """创建 mock executor"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(per_order_usd=100)
         executor = MarketExecutor(config)
@@ -135,7 +135,7 @@ class TestExecutorCollectContextVars:
 
     def test_vars_dict_computation(self):
         """测试 vars dict 计算"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -161,7 +161,7 @@ class TestExecutorCollectContextVars:
 
     def test_vars_list_computation(self):
         """测试 vars list 计算（按顺序）"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -189,7 +189,7 @@ class TestExecutorCollectContextVars:
 
     def test_conditional_vars_triggered(self):
         """测试条件 vars 触发"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -218,7 +218,7 @@ class TestExecutorCollectContextVars:
 
     def test_conditional_vars_not_triggered(self):
         """测试条件 vars 未触发"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -247,7 +247,7 @@ class TestExecutorCollectContextVars:
 
     def test_conditional_vars_state_persistence(self):
         """测试条件 vars 状态持久化"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -287,7 +287,7 @@ class TestExecutorCollectContextVars:
 
     def test_conditional_vars_duration(self):
         """测试条件 vars 中的 duration 变量"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -328,7 +328,7 @@ class TestExecutorCollectContextVars:
 
     def test_strategies_namespace(self):
         """测试 strategies namespace（Issue 0013: 单策略标量化）"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,
@@ -361,7 +361,7 @@ class TestExecutorCollectContextVars:
 
     def test_vars_and_conditional_vars_combined(self):
         """测试普通 vars 和条件 vars 组合使用"""
-        from hft.executor.market_executor import MarketExecutor
+        from hft.executor.default_executor import MarketExecutor
 
         config = MarketExecutorConfig(
             per_order_usd=100,

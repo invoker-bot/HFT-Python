@@ -18,12 +18,6 @@ from pydantic import BaseModel, Field
 from ..config.var import VarsDefinition, StandardVarsDefinition, to_standard_vars_definition
 from ..config.base import BaseConfig, BaseConfigPath
 from .base import BaseExecutor
-# from .avellaneda_stoikov_executor.config import (
-#     ASOrderLevel, AvellanedaStoikovExecutorConfig)
-# from .limit_executor.config import LimitExecutorConfig, LimitOrderLevel
-# from .market_executor.config import MarketExecutorConfig
-# from .pca_executor.config import PCAExecutorConfig
-# from .smart_executor.config import SmartExecutorConfig
 
 __all__ = [
     "BaseExecutorConfig",
@@ -143,8 +137,6 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
     condition: Optional[Union[bool, str]] = Field(None, description="是否执行的条件表达式")
     default_timeout: float = Field(60.0, description="默认订单的超时时间（秒）")
     # Feature 0010: vars
-    # Feature 0012: scope
-    # scope: Optional[str] = Field(None, description="关联的 Scope class ID")
     vars: VarsDefinition = Field(
         default_factory=list,
         description="变量定义（支持三种格式：1. list[ExecutorVarDefinition] 标准格式，2. dict[str, str] 简化格式（计算顺序不确定），3. list[str] 'name=value' 格式）"

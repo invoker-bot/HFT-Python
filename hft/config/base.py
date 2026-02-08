@@ -21,7 +21,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator
 from promptantic import ModelGenerator
-from pydantic import BaseModel, Field, PrivateAttr, GetCoreSchemaHandler
+from pydantic import BaseModel, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 
 
@@ -76,7 +76,6 @@ class BaseConfig(BaseModel, Generic[T]):
     data_dir: ClassVar[str] = "data/"
     class_dir: ClassVar[str] = "conf/"
     class_name: ClassVar[Optional[str]] = None
-    # _instance: Optional[T] = PrivateAttr(None, init=True)
 
     @classmethod
     @abstractmethod
@@ -86,18 +85,6 @@ class BaseConfig(BaseModel, Generic[T]):
     def create_instance(self) -> T:
         """根据配置创建对应的实例对象"""
         return self.get_class_type()(self)
-
-    # @property
-    # def instance(self) -> T:
-    #     """根据配置创建并返回对应的实例对象"""
-    #     if self._instance is None:
-    #         self._instance = self.create_instance()
-    #     return self._instance
-
-    # @instance.setter
-    # def instance(self, value: T) -> None:
-    #     """设置实例对象"""
-    #     self._instance = value
 
     @classmethod
     def all_classes(cls) -> dict[str, type[Self]]:

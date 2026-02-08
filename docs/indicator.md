@@ -58,18 +58,14 @@ hft/indicator/
 └── lazy_indicator.py    # LazyIndicator (legacy)
 ```
 
-## Feature 0005: calculate_vars 接口
+## get_vars 接口
 
-所有 Indicator 必须实现 `calculate_vars` 方法，用于向 Executor 提供变量：
+所有 Indicator 必须实现 `get_vars` 方法，用于向 Executor 提供变量：
 
 ```python
-@abstractmethod
-def calculate_vars(self, direction: int) -> dict[str, Any]:
+def get_vars(self) -> dict[str, Any]:
     """
     计算并返回该指标提供的变量
-
-    Args:
-        direction: 交易方向，1 表示多（买入），-1 表示空（卖出）
 
     Returns:
         变量字典，例如 {"medal_edge": 0.0005, "rsi": 45.0}
@@ -80,17 +76,17 @@ def calculate_vars(self, direction: int) -> dict[str, Any]:
 ### 数据源类示例
 
 ```python
-class TickerDataSource(BaseDataSource[Ticker]):
-    def calculate_vars(self, direction: int) -> dict[str, Any]:
-        ticker = self._data.latest
-        if ticker is None:
-            return {"ticker": None, "last_price": None}
+class TickerDataSource(BaseDataSource[TickerData]):
+    def get_vars(self) -> dict[str, Any]:
+        data = self.data.get_data()
+        if data is None:
+            return {}
         return {
-            "ticker": ticker,
-            "last": ticker.last,
-            "bid": ticker.bid,
-            "ask": ticker.ask,
-            "mid": (ticker.bid + ticker.ask) / 2,
+            "ticker": data,
+            "last_price": data.last,
+            "bid_price": data.bid,
+            "ask_price": data.ask,
+            "mid_price": data.mid_price,
         }
 ```
 
@@ -99,8 +95,6 @@ class TickerDataSource(BaseDataSource[Ticker]):
 ```python
 class RSIIndicator(BaseIndicator[float]):
     def calculate_vars(self, direction: int) -> dict[str, Any]:
-        if not self.is_ready():
-            return {"rsi": 50.0}  # 默认中性值
         return {"rsi": self._calculate_rsi()}
 ```
 
@@ -121,18 +115,18 @@ class RSIIndicator(BaseIndicator[float]):
 
 | 类 | ID | 提供的变量 |
 |----|-----|-----------|
-| `TickerDataSource` | ticker | last, bid, ask, mid, spread |
-| `OrderBookDataSource` | order_book | best_bid, best_ask, bid_depth, ask_depth |
-| `TradesDataSource` | trades | trades, trade_count, last_trade_price |
-| `OHLCVDataSource` | ohlcv | ohlcv, candle_count |
+| `TickerDataSource` | ticker | last_price, bid_price, ask_price, mid_price, amount_1d, quote_amount_1d |
+| `OrderBookDataSource` | order_book | best_bid_price, best_ask_price, mid_price, bid_depth, ask_depth |
+| `TradesDataSource` | trades | last_trade_price, last_trade_time, last_trade_direction, last_trade_amount |
+| `OHLCVDataSource` | ohlcv | last_close_price, last_open_price, last_high_price, last_low_price, last_volume |
 
 ### 计算类
 
 | 类 | ID | 依赖 | 提供的变量 |
 |----|-----|------|-----------|
-| `MidPriceIndicator` | mid_price | order_book | mid_price |
+| `MidPriceIndicator` | mid_price | order_book | orderbook_mid_price, orderbook_best_bid, orderbook_best_ask, orderbook_spread |
 | `MedalEdgeIndicator` | medal_edge | trades | medal_edge, medal_buy_edge, medal_sell_edge |
-| `VolumeIndicator` | volume | trades | volume, buy_volume, sell_volume |
+| `VolumeIndicator` | volume | trades | volume, buy_volume, sell_volume, volume_notional, buy_volume_notional, sell_volume_notional |
 | `RSIIndicator` | rsi | ohlcv | rsi |
 
 ## Ready 语义（Feature 0005）

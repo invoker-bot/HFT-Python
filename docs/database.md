@@ -154,22 +154,20 @@ database_url: clickhouse://localhost:8123/hft
 persist:
   order_bill: true
   funding_rate_bill: true
-  balance_usd: true
-  positions: true
-  balances: true
+  exchange_state: true
   ohlcv: true
   ticker: true
+  ticker_volume: true
+  funding_rate: true
   trades: false      # 数据量大，默认关闭
   order_book: false  # 数据量大，默认关闭
 ```
 
 ## DataListener
 
-数据采集监听器基类（已迁移到 `hft.indicator.persist`）：
+数据采集监听器基类：
 
 ```python
-from hft.indicator.persist import DataListener
-
 class DataListener(Listener):
     persist_key: str = ""  # 子类覆盖，对应 PersistConfig 中的字段名
 

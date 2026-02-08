@@ -152,11 +152,11 @@ def on_ticker_update(exchange: "BaseExchange", symbol: str, ticker: dict):
     """Ticker 更新时调用"""
 
 @hookspec
-def on_balance_update(exchange: "BaseExchange", balance: dict):
+def on_balance_update(exchange: "BaseExchange", account: str, balance: dict):
     """余额更新时调用"""
 
 @hookspec
-def on_position_update(exchange: "BaseExchange", positions: dict):
+def on_position_update(exchange: "BaseExchange", account: str, positions: dict):
     """持仓更新时调用"""
 
 @hookspec

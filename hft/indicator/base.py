@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from ..core.scope.base import FlowScopeNode
 
 
-
 # 默认过期时间（秒）
 DEFAULT_DISABLE_SECONDS = 600.0  # 10 分钟
 
@@ -74,6 +73,16 @@ class BaseIndicator(Listener):
             变量字典，用于 Executor 的 condition 表达式求值
             例如 {"medal_edge": 0.0005, "rsi": 65.0}
         """
+
+    def get_functions(self) -> dict[str, Any]:
+        """
+        返回该指标可提供的函数字典
+
+        Returns:
+            函数字典，用于 Executor 的 condition 表达式求值
+            例如 {"is_overbought": func, "is_oversold": func}
+        """
+        return {}
 
     def __init_subclass__(cls, **kwargs):
         if not inspect.isabstract(cls):
