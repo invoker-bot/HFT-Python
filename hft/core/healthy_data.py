@@ -317,13 +317,14 @@ class HealthyDataArray(BaseHealthyData[T]):
             self._shrink()
 
     def _shrink(self) -> None:
-        """清理指定时间戳之前的数据"""
-        before_timestamp = time.time() - self.window
-        while len(self._data_list) > 0:
-            timestamp = self._data_list[0][1]
-            if timestamp >= before_timestamp:
-                break
-            self._data_list.pop(0)
+        """清理过期数据（摊还 O(1)：时间跨度超过 2*window 时一次性截断）"""
+        if len(self._data_list) < 2:
+            return
+        time_span = self._data_list[-1][1] - self._data_list[0][1]
+        if time_span > 2 * self.window:
+            cut = bisect.bisect_left(self._data_list, time.time() - self.window, key=lambda x: x[1])
+            if cut > 0:
+                self._data_list = self._data_list[cut:]
 
     async def assign(self, points: list[tuple[T, float]]):
         """

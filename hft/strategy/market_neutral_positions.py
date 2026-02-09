@@ -10,6 +10,74 @@ from pydantic import Field
 
 from .base import BaseStrategy, StrategyOutput
 from .config import BaseStrategyConfig
+from ..core.scope.base import BaseScope, FlowScopeNode, ScopeInstanceId
+from ..core.scope.scopes import ExchangeClassScope, TradingPairClassScope
+
+
+# ============================================================
+# TradingPairClassGroupScope - 策略私有 Scope
+# ============================================================
+
+def trading_pair_class_to_group_scope(current_instance_id: ScopeInstanceId) -> ScopeInstanceId:
+    """TradingPairClassScope instance_id -> TradingPairClassGroupScope instance_id"""
+    exchange_class, symbol = current_instance_id
+    # 提取 base currency 作为 group_id（如 "ETH/USDT" -> "ETH"）
+    group_id = symbol.split('/')[0] if '/' in symbol else symbol
+    return (exchange_class, group_id)
+
+
+def group_to_exchange_class_scope(current_instance_id: ScopeInstanceId) -> ScopeInstanceId:
+    """TradingPairClassGroupScope instance_id -> ExchangeClassScope instance_id"""
+    exchange_class, _group_id = current_instance_id
+    return (exchange_class, )
+
+
+class TradingPairClassGroupScope(BaseScope):
+    """
+    交易对分组 Scope（策略私有）
+
+    将同一 exchange_class 下的交易对按 base currency 分组。
+    例如 ETH/USDT 和 WBETH/USDT 可以归入 "ETH" 组。
+
+    instance_id: (exchange_class, group_id)，如 ("okx", "ETH")
+    """
+    flow_mapper = {
+        ExchangeClassScope: [group_to_exchange_class_scope],
+    }
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        exchange_class, group_id = self.instance_id
+        self.set_var("exchange_class", exchange_class)
+        self.set_var("group_id", group_id)
+
+    @classmethod
+    def get_all_instance_ids(cls, app_core: 'Any') -> set[ScopeInstanceId]:
+        """遍历所有交易对，提取 base currency 作为 group_id"""
+        exchange_group = app_core.exchange_group
+        results = set()
+        for exchange_class, exchange_paths in exchange_group.exchange_group.items():
+            for exchange_path in exchange_paths:
+                instance = exchange_group.exchange_instances[exchange_path]
+                if instance.ready:
+                    markets = instance.markets.get_data()
+                    for symbol in markets.keys():
+                        group_id = symbol.split('/')[0] if '/' in symbol else symbol
+                        results.add((exchange_class, group_id))
+        return results
+
+
+# 动态添加 TradingPairClassScope -> TradingPairClassGroupScope 的映射
+# __init_subclass__ 已自动将 TradingPairClassGroupScope 注册到 BaseScope.classes
+# 但 TradingPairClassScope 需要知道如何映射到 TradingPairClassGroupScope
+TradingPairClassScope.flow_mapper[TradingPairClassGroupScope] = [
+    trading_pair_class_to_group_scope
+]
+# 传播映射到 TradingPairClassScope 的子类（如 TradingPairScope）
+TradingPairClassScope.update_flow_mapper(
+    TradingPairClassGroupScope,
+    [trading_pair_class_to_group_scope]
+)
 
 
 class MarketNeutralPositionsConfig(BaseStrategyConfig):
@@ -93,9 +161,9 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
     DIRECTION_ENTRY_LONG = 1    # 建议开多仓
     DIRECTION_HOLD = None       # 建议持仓不动
 
-    def __init__(self, config: MarketNeutralPositionsConfig):
-        super().__init__(config)
-        self.config: MarketNeutralPositionsConfig = config
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.config: MarketNeutralPositionsConfig = kwargs['config']
 
     def _get_group_id(self, symbol: str) -> str:
         """
@@ -111,17 +179,8 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
         if symbol in self.config.trading_pair_group:
             return self.config.trading_pair_group[symbol]
 
-        # 使用默认规则
-        try:
-            context = {"symbol": symbol}
-            return self._safe_eval(self.config.default_trading_pair_group, context)
-        except Exception as e:
-            self.logger.warning(
-                "Failed to evaluate default_trading_pair_group for %s: %s",
-                symbol, e
-            )
-            # 降级：使用 symbol 的第一部分
-            return symbol.split('/')[0] if '/' in symbol else symbol
+        # 默认规则：提取 base currency
+        return symbol.split('/')[0] if '/' in symbol else symbol
 
     def _compute_direction(
         self,
@@ -199,12 +258,12 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
         else:
             return ratio
 
-    def _balance_ratios(self, group_scopes: List[Any]) -> None:
+    def _balance_ratios(self, group_scopes: list[FlowScopeNode]) -> None:
         """
         平衡组内 Ratio（确保总和为 0）
 
         Args:
-            group_scopes: 同一组内的所有 TradingPairClassScope
+            group_scopes: 同一组内的所有 TradingPairClassScope 节点
         """
         if len(group_scopes) < 2:
             return
@@ -233,12 +292,12 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             current = min_price_scope.get_var("ratio") or 0.0
             min_price_scope.set_var("ratio", current - ratio_sum)
 
-    def _adjust_hedge_ratios(self, group_scopes: List[Any]) -> None:
+    def _adjust_hedge_ratios(self, group_scopes: list[FlowScopeNode]) -> None:
         """
         对冲调整（确保 ratio_min - ratio_max = 2）
 
         Args:
-            group_scopes: 同一组内的所有 TradingPairClassScope
+            group_scopes: 同一组内的所有 TradingPairClassScope 节点
         """
         if len(group_scopes) < 2:
             return
@@ -314,278 +373,217 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
 
         return selected
 
-    def _compute_directions(self, all_nodes: List[Any]) -> None:
+    def _compute_directions(self, pair_class_nodes: list[FlowScopeNode]) -> None:
         """
-        计算所有 trading_pair_class scope 的 Direction
+        计算所有 TradingPairClassScope 节点的 Direction
 
         Args:
-            all_nodes: 所有 LinkedScopeNode 列表
+            pair_class_nodes: TradingPairClassScope 的 FlowScopeNode 列表
         """
-        for node in all_nodes:
-            scope = node.scope
-            scope_class_name = scope.__class__.__name__
-            if scope_class_name != "TradingPairClassScope":
-                continue
-
-            # 获取必要的变量
-            trading_pair_std_price = scope.get_var("trading_pair_std_price")
+        for node in pair_class_nodes:
+            trading_pair_std_price = node.get_var("trading_pair_std_price")
             if trading_pair_std_price is None:
                 continue
 
-            parent_node = node.parent
-            if parent_node is None:
-                continue
-            parent = parent_node.scope
-
-            fair_price_min = parent.get_var("fair_price_min")
-            fair_price_max = parent.get_var("fair_price_max")
+            # 通过 prev 回溯获取 group 层的 fair_price
+            fair_price_min = node.get_var("fair_price_min")
+            fair_price_max = node.get_var("fair_price_max")
 
             if fair_price_min is None or fair_price_max is None:
                 continue
 
-            # 计算 delta_min_price 和 delta_max_price
             delta_min_price = trading_pair_std_price - fair_price_min
             delta_max_price = fair_price_max - trading_pair_std_price
 
-            # 计算 Direction
             delta_min_direction = self._compute_direction(delta_min_price, is_min=True)
             delta_max_direction = self._compute_direction(delta_max_price, is_min=False)
 
-            # 存储到 scope
-            scope.set_var("delta_min_price", delta_min_price)
-            scope.set_var("delta_max_price", delta_max_price)
-            scope.set_var("delta_min_direction", delta_min_direction)
-            scope.set_var("delta_max_direction", delta_max_direction)
+            node.set_var("delta_min_price", delta_min_price)
+            node.set_var("delta_max_price", delta_max_price)
+            node.set_var("delta_min_direction", delta_min_direction)
+            node.set_var("delta_max_direction", delta_max_direction)
 
-    def _collect_group_scopes(self, all_scopes: List[Any]) -> Dict[str, Any]:
+    def _collect_group_nodes(
+        self,
+        all_nodes: dict[ScopeInstanceId, FlowScopeNode]
+    ) -> dict[str, FlowScopeNode]:
         """
-        收集所有 TradingPairClassGroupScope
+        从 flow 结果中收集所有 TradingPairClassGroupScope 节点
 
         Args:
-            all_scopes: 所有 Scope 列表
+            all_nodes: calculate_flow_nodes() 返回的节点字典
 
         Returns:
-            {group_id: TradingPairClassGroupScope}
+            {group_id: FlowScopeNode}
         """
-        group_scopes = {}
-        for scope in all_scopes:
-            scope_class_name = scope.__class__.__name__
-            if scope_class_name == "TradingPairClassGroupScope":
-                group_id = scope.get_var("group_id")
+        group_nodes = {}
+        for instance_id, node in all_nodes.items():
+            if isinstance(node.scope, TradingPairClassGroupScope):
+                group_id = node.scope.get_var("group_id")
                 if group_id:
-                    group_scopes[group_id] = scope
-        return group_scopes
+                    group_nodes[group_id] = node
+        return group_nodes
 
-    def _collect_pair_class_scopes(self, group_node: Any) -> List[Any]:
+    def _collect_pair_class_nodes(
+        self,
+        group_id: str,
+        all_nodes: dict[ScopeInstanceId, FlowScopeNode]
+    ) -> list[FlowScopeNode]:
         """
-        收集 group 下的所有 TradingPairClassScope
+        收集属于指定 group 的所有 TradingPairClassScope 节点
+
+        FlowScopeNode 没有 children 属性，改为从所有节点中按 group_id 过滤。
 
         Args:
-            group_node: TradingPairClassGroupScope 的 LinkedScopeNode
+            group_id: 分组 ID（如 "ETH"）
+            all_nodes: calculate_flow_nodes() 返回的节点字典
 
         Returns:
-            TradingPairClassScope 列表
+            匹配的 TradingPairClassScope FlowScopeNode 列表
         """
-        pair_class_scopes = []
-        for child_node in group_node.children:
-            child_scope = child_node.scope
-            if child_scope.__class__.__name__ == "TradingPairClassScope":
-                # 过滤掉 trading_pair_std_price 为 None 的
-                if child_scope.get_var("trading_pair_std_price") is not None:
-                    pair_class_scopes.append(child_scope)
-        return pair_class_scopes
+        pair_class_nodes = []
+        for instance_id, node in all_nodes.items():
+            if not isinstance(node.scope, TradingPairClassScope):
+                continue
+            # 检查该交易对是否属于此 group
+            symbol = node.scope.get_var("symbol")
+            if symbol is None:
+                continue
+            node_group_id = self._get_group_id(symbol)
+            if node_group_id != group_id:
+                continue
+            # 过滤掉 trading_pair_std_price 为 None 的
+            if node.get_var("trading_pair_std_price") is not None:
+                pair_class_nodes.append(node)
+        return pair_class_nodes
 
-    def _compute_initial_ratios(self, pair_class_scopes: List[Any]) -> None:
+    def _compute_initial_ratios(self, pair_class_nodes: list[FlowScopeNode]) -> None:
         """
         计算初始 ratio（从 ratio_est）
 
         Args:
-            pair_class_scopes: TradingPairClassScope 列表
+            pair_class_nodes: TradingPairClassScope 的 FlowScopeNode 列表
         """
-        for scope in pair_class_scopes:
-            ratio_est = scope.get_var("ratio_est") or 0.0
-            # Clip to [-1, 1]
+        for node in pair_class_nodes:
+            ratio_est = node.get_var("ratio_est") or 0.0
             ratio = max(-1.0, min(1.0, ratio_est))
-            scope.set_var("ratio", ratio)
+            node.set_var("ratio", ratio)
 
-    def _adjust_ratios_by_directions(self, pair_class_scopes: List[Any]) -> None:
+    def _adjust_ratios_by_directions(self, pair_class_nodes: list[FlowScopeNode]) -> None:
         """
         根据 Direction 调整所有 Ratio
 
         Args:
-            pair_class_scopes: TradingPairClassScope 列表
+            pair_class_nodes: TradingPairClassScope 的 FlowScopeNode 列表
         """
-        for scope in pair_class_scopes:
-            ratio = scope.get_var("ratio") or 0.0
-            delta_min_direction = scope.get_var("delta_min_direction")
-            delta_max_direction = scope.get_var("delta_max_direction")
+        for node in pair_class_nodes:
+            ratio = node.get_var("ratio") or 0.0
+            delta_min_direction = node.get_var("delta_min_direction")
+            delta_max_direction = node.get_var("delta_max_direction")
 
             adjusted_ratio = self._adjust_ratio_by_direction(
                 ratio, delta_min_direction, delta_max_direction
             )
-            scope.set_var("ratio", adjusted_ratio)
-
-    def _register_custom_scopes(self) -> None:
-        """
-        注册自定义 Scope 类型
-        """
-        if self.scope_manager is None:
-            return
-
-        from ..core.scope.scopes import TradingPairClassGroupScope
-        self.scope_manager.register_scope_class(
-            "TradingPairClassGroupScope",
-            TradingPairClassGroupScope
-        )
+            node.set_var("ratio", adjusted_ratio)
 
     def get_output(self) -> StrategyOutput:
         """
         获取策略输出（重写基类方法）
 
-        MarketNeutralPositions 特有流程：
-        1. 调用基类 get_output() 完成基础计算（Indicator 注入 + vars 计算）
-        2. 计算 Direction（delta_min_direction, delta_max_direction）
-        3. 选择 Top Groups
-        4. 计算并调整 Ratio
-        5. 平衡 Ratio（确保组内总和为 0）
-        6. 对冲调整（确保 ratio_min - ratio_max = 2）
-        7. 生成最终输出
+        使用 calculate_flow_nodes() 执行 flow 配置，
+        然后在结果上执行 MarketNeutralPositions 特有的后处理。
 
         Returns:
             {(exchange_path, symbol): {"position_usd": ..., "ratio": ..., ...}}
         """
-        if not self.config.links or not self.scope_manager:
+        if not self.config.flow:
             return {}
 
-        # 步骤 1: 调用基类完成基础计算
-        # 这会完成 Scope 树构建、Indicator 注入、vars 计算
-        # 但我们不使用基类的 target 输出，而是自己处理
-
-        # 重置所有 scope 的 ready 状态
-        self.scope_manager.reset_all_ready_states()
-
-        # 使用预构建的 scope_trees
-        if not self.scope_trees:
+        # 步骤 1: 通过 flow 系统完成基础计算（Indicator 注入 + vars 计算）
+        # calculate_flow_nodes() 返回最终层的 {instance_id: FlowScopeNode}
+        final_nodes = self.calculate_flow_nodes()
+        if not final_nodes:
             return {}
 
-        # 对每个树执行三遍计算
+        # 收集所有层的节点（通过 prev 回溯可访问上层变量）
+        # final_nodes 是最终层（TradingPairScope 或 TradingPairClassScope）
+
+        # 步骤 2: 找出 TradingPairClassScope 节点用于 Direction 计算
+        pair_class_nodes = [
+            node for node in final_nodes.values()
+            if isinstance(node.scope, TradingPairClassScope)
+        ]
+        # 如果最终层不是 TradingPairClassScope，从 prev 中提取
+        if not pair_class_nodes:
+            seen = set()
+            for node in final_nodes.values():
+                for prev_node in node.prev:
+                    if isinstance(prev_node.scope, TradingPairClassScope):
+                        node_id = id(prev_node)
+                        if node_id not in seen:
+                            pair_class_nodes.append(prev_node)
+                            seen.add(node_id)
+
+        # 步骤 3: 计算 Direction
+        self._compute_directions(pair_class_nodes)
+
+        # 步骤 4: 收集 group 信息（从 pair_class 节点的 prev 中提取）
+        group_nodes: dict[str, FlowScopeNode] = {}
+        for node in pair_class_nodes:
+            for prev_node in node.prev:
+                if isinstance(prev_node.scope, TradingPairClassGroupScope):
+                    group_id = prev_node.scope.get_var("group_id")
+                    if group_id and group_id not in group_nodes:
+                        group_nodes[group_id] = prev_node
+
+        # 步骤 5: 选择 Top Groups
+        group_scopes = {gid: node.scope for gid, node in group_nodes.items()}
+        selected_groups = self._select_top_groups(group_scopes)
+
+        # 构建 pair_class 节点的 instance_id -> node 映射
+        pair_class_map = {
+            node.scope.instance_id: node for node in pair_class_nodes
+        }
+
+        # 步骤 6-8: 对每个选中的 group 进行 Ratio 计算和平衡
+        for group_id in selected_groups:
+            pair_nodes = self._collect_pair_class_nodes(
+                group_id, pair_class_map
+            )
+            if len(pair_nodes) < 2:
+                continue
+
+            self._compute_initial_ratios(pair_nodes)
+            self._adjust_ratios_by_directions(pair_nodes)
+            self._balance_ratios(pair_nodes)
+            self._adjust_hedge_ratios(pair_nodes)
+
+        # 步骤 9: 生成输出
         output = {}
-        for tree in self.scope_trees:
-            all_nodes = self._breadth_first_traversal([tree.root])
-            computed_set = set()
+        for instance_id, node in final_nodes.items():
+            exchange_path = node.get_var("exchange_path")
+            symbol = node.get_var("symbol")
+            if not exchange_path or not symbol:
+                continue
 
-            # 第一遍：Indicator 注入
-            for node in all_nodes:
-                node_id = id(node)
-                if node_id in computed_set or node.scope.not_ready:
-                    continue
-                self._inject_indicator_vars_to_scope(node.scope)
-                computed_set.add(node_id)
+            # 获取 ratio（从 prev 中的 TradingPairClassScope）
+            ratio = node.get_var("ratio")
+            if ratio is None or abs(ratio) < 1e-10:
+                continue
 
-            # 第二遍：计算 post=false 的 vars
-            computed_set.clear()
-            for node in all_nodes:
-                node_id = id(node)
-                if node_id in computed_set or node.scope.not_ready:
-                    continue
-                self._compute_scope_vars(node.scope, post=False, node=node, tree=tree)
-                computed_set.add(node_id)
+            max_position_usd = (
+                node.get_var("max_position_usd")
+                or self.config.max_position_usd
+            )
+            position_usd = ratio * max_position_usd
 
-            # 第三遍：计算 post=true 的 vars
-            computed_set.clear()
-            for node in all_nodes:
-                node_id = id(node)
-                if node_id in computed_set or node.scope.not_ready:
-                    continue
-                self._compute_scope_vars(node.scope, post=True, node=node, tree=tree)
-                computed_set.add(node_id)
-
-            # 步骤 2: 计算 Direction
-            self._compute_directions(all_nodes)
-
-            # 步骤 3: 收集 group nodes
-            group_nodes = {}
-            for node in all_nodes:
-                scope = node.scope
-                scope_class_name = scope.__class__.__name__
-                if scope_class_name == "TradingPairClassGroupScope":
-                    group_id = scope.get_var("group_id")
-                    if group_id:
-                        group_nodes[group_id] = node
-
-            # 步骤 4: 选择 Top Groups
-            # 将 group_nodes 转换为 group_scopes 以兼容 _select_top_groups
-            group_scopes = {gid: node.scope for gid, node in group_nodes.items()}
-            selected_groups = self._select_top_groups(group_scopes)
-
-            # 步骤 5-7: 对每个选中的 group 进行 Ratio 计算和平衡
-            for group_id in selected_groups:
-                group_node = group_nodes[group_id]
-
-                # 收集该 group 下的所有 trading_pair_class scopes
-                pair_class_scopes = self._collect_pair_class_scopes(group_node)
-
-                if len(pair_class_scopes) < 2:
-                    # 单个交易对无法套利，跳过
-                    continue
-
-                # 计算初始 ratio
-                self._compute_initial_ratios(pair_class_scopes)
-
-                # 根据 Direction 调整 Ratio
-                self._adjust_ratios_by_directions(pair_class_scopes)
-
-                # 平衡 Ratio（确保总和为 0）
-                self._balance_ratios(pair_class_scopes)
-
-                # 对冲调整（确保 ratio_min - ratio_max = 2）
-                self._adjust_hedge_ratios(pair_class_scopes)
-
-            # 步骤 8: 生成输出（遍历叶子节点）
-            leaf_nodes = self._collect_leaf_nodes(tree.root)
-            for node in leaf_nodes:
-                scope = node.scope
-                if scope.not_ready:
-                    continue
-
-                exchange_path = scope.get_var("exchange_id")
-                symbol = scope.get_var("symbol")
-
-                if not exchange_path or not symbol:
-                    continue
-
-                # 获取 ratio（从 parent trading_pair_class scope）
-                parent_node = node.parent
-                if parent_node is None:
-                    continue
-                parent = parent_node.scope
-
-                ratio = parent.get_var("ratio")
-                if ratio is None or abs(ratio) < 1e-10:
-                    continue
-
-                # 计算 position_usd
-                max_position_usd = scope.get_var("max_position_usd") or self.config.max_position_usd
-                position_usd = ratio * max_position_usd
-
-                # 检查 target condition
-                if self.config.targets:
-                    target_output = self._evaluate_targets(scope, exchange_path, symbol)
-                    if target_output:
-                        key = (exchange_path, symbol)
-                        target_output["ratio"] = ratio
-                        target_output["delta_min_direction"] = parent.get_var("delta_min_direction")
-                        target_output["delta_max_direction"] = parent.get_var("delta_max_direction")
-                        output[key] = target_output
-                else:
-                    # 没有 targets 配置，直接输出
-                    key = (exchange_path, symbol)
-                    output[key] = {
-                        "position_usd": position_usd,
-                        "ratio": ratio,
-                        "delta_min_direction": parent.get_var("delta_min_direction"),
-                        "delta_max_direction": parent.get_var("delta_max_direction"),
-                    }
+            key = (exchange_path, symbol)
+            output[key] = {
+                "position_usd": position_usd,
+                "ratio": ratio,
+                "delta_min_direction": node.get_var("delta_min_direction"),
+                "delta_max_direction": node.get_var("delta_max_direction"),
+            }
 
         return output
 
@@ -610,21 +608,3 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
         """
         return False
 
-    # TODO: 实现以下方法以支持完整的 MarketNeutralPositions 逻辑
-    #
-    # 当前实现使用基类的 get_output()，它会：
-    # 1. 构建 Scope 树
-    # 2. 注入 Indicator 变量
-    # 3. 计算 vars（包括 fair_price_min/max、score 等）
-    # 4. 匹配 targets 并生成输出
-    #
-    # 完整的 MarketNeutralPositions 策略还需要：
-    # 1. 在 trading_pair_class_group 层级选择 top groups
-    # 2. 计算 Direction 并调整 Ratio
-    # 3. 平衡 Ratio（确保组内总和为 0）
-    # 4. 对冲调整（确保 ratio_min - ratio_max = 2）
-    #
-    # 这些逻辑可以通过以下方式实现：
-    # - 在 Scope vars 中定义 score、direction 等变量
-    # - 在 Strategy 中重写 get_output() 添加选择和平衡逻辑
-    # - 或者使用 post=True 的 vars 进行后处理

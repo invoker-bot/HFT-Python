@@ -18,7 +18,7 @@ DataSource 是从 exchange 获取数据的特殊 Indicator。
 - MedalAmountDataSource: 账户余额数据源（ExchangePath 级别）
 """
 from .equation_datasource import *
-# from .funding_rate_datasource import *
+from .funding_rate_datasource import *
 from .medal_amount_datasource import *
 from .ohlcv_datasource import *
 from .orderbook_datasource import *

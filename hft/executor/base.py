@@ -324,11 +324,11 @@ class BaseExecutor(Listener):
                         else:
                             spread = 0.0
                         refresh_tolerance = spread * refresh_tolerance_pct
-                    intents.append(OrderIntent(
-                        price=price,
-                        amount=amount,
-                        timeout_refresh_tolerance=timeout,
-                        price_refresh_tolerance=refresh_tolerance,
-                        post_only=post_only
-                    ))
+                intents.append(OrderIntent(
+                    price=price,
+                    amount=amount,
+                    timeout_refresh_tolerance=timeout,
+                    price_refresh_tolerance=refresh_tolerance,
+                    post_only=post_only
+                ))
             await self.process_intents(exchange_path, symbol, intents)

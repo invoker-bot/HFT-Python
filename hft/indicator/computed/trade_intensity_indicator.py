@@ -8,16 +8,6 @@
 - 统计不同价格偏离下的成交量分布
 - 拟合指数衰减模型：λ(δ) = A * exp(-k * δ)
 - 取对数后线性回归：log(λ) = log(A) - k * δ
-
-使用示例：
-    intensity = trading_pair.query_indicator(
-        TradeIntensityIndicator,
-        total_range_seconds=600.0,
-    )
-    if intensity:
-        result = intensity.get_value()
-        if result and result.is_valid:
-            spread = calculator.get_optimal_spread("buy", gamma=0.1)
 """
 import math
 import time
@@ -26,9 +16,11 @@ import numpy as np
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 import matplotlib.pyplot as plt
+
+from ..base import BaseIndicator
+
 if TYPE_CHECKING:
-    from ..core.healthy_data import HealthyDataArray
-    from .datasource.trades_datasource import TradeData, TradesDataSource
+    from ..datasource.trades_datasource import TradeData, TradesDataSource
 
 
 logger = logging.getLogger(__name__)
@@ -134,126 +126,94 @@ class TradeIntensityCalculator:
         plt.show()
 
 
-class TradeIntensityIndicator(LazyIndicator[IntensityResult]):
+class TradeIntensityIndicator(BaseIndicator):
     """
     交易强度指标 - 用于 AS 做市策略
 
-    将 TradeIntensityCalculator 封装为 LazyIndicator，
-    挂载到 TradingPairDataSource，享受统一的生命周期管理。
-
-    使用示例：
-        intensity = trading_pair.query_indicator(
-            TradeIntensityIndicator,
-            total_range_seconds=600.0,
-        )
-        if intensity:
-            result = intensity.get_value()
-            if result and result.is_valid:
-                inv_adj, arr_adj = intensity.get_optimal_spread("buy", gamma=0.1)
+    从 TradesDataSource 获取成交数据，通过 TradeIntensityCalculator 计算
+    订单到达率参数（buy_k, sell_k 等）。
     """
-    depends_on = ["trades", "order_book"]
+    supported_scope = None
 
-    def __init__(
-        self,
-        sub_range_seconds: float = 15.0,
-        total_range_seconds: float = 600.0,
-        precision: int = 20,
-        precision_std_range: float = 2.0,
-        min_correlation: float = 0.5,
-        min_trades: int = 50,
-        name: Optional[str] = None,
-        interval: float = 1.0,
-        auto_stop_timeout: float = 300.0,
-    ):
-        """
-        初始化交易强度指标
-
-        Args:
-            sub_range_seconds: 子区间长度（秒）
-            total_range_seconds: 总分析时间范围（秒）
-            precision: 价格分桶精度
-            precision_std_range: 价格范围（标准差的倍数）
-            min_correlation: 最小相关系数阈值
-            min_trades: 最少成交笔数
-            name: 指标名称
-            interval: 更新间隔（秒）
-            auto_stop_timeout: 自动停止超时（秒）
-        """
-        super().__init__(name=name, interval=interval, auto_stop_timeout=auto_stop_timeout)
-
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        window = kwargs.get("window", 600.0)
         self._calculator = TradeIntensityCalculator(
-            sub_range_seconds=sub_range_seconds,
-            total_range_seconds=total_range_seconds,
-            precision=precision,
-            precision_std_range=precision_std_range,
-            min_correlation=min_correlation,
-            min_trades=min_trades,
+            sub_range_seconds=kwargs.get("sub_range_seconds", 15.0),
+            total_range_seconds=window,
+            precision=kwargs.get("precision", 20),
+            precision_std_range=kwargs.get("precision_std_range", 1.0),
+            min_correlation=kwargs.get("min_correlation", 0.6),
+            min_trades=kwargs.get("min_trades", 50),
         )
+        # 缓存
+        self._cached_result: Optional[IntensityResult] = None
+        self._cache_ts: float = 0.0
+        self._cache_ttl: float = 10.0
 
     @property
     def calculator(self) -> TradeIntensityCalculator:
-        """获取内部计算器（用于访问 get_optimal_spread 等方法）"""
+        """获取内部计算器（用于访问 get_buy_spread/get_sell_spread 等方法）"""
         return self._calculator
 
-    @property
-    def is_ready(self) -> bool:
-        """检查是否有有效的计算结果"""
-        return self._value is not None and self._value.is_valid
+    def _get_trades_ds(self) -> Optional["TradesDataSource"]:
+        """获取 Trades 数据源"""
+        if self.root is None:
+            return None
+        from ..datasource.trades_datasource import TradesDataSource
+        return self.root.query_indicator(TradesDataSource, self.scope)
 
-    async def _update_value(self) -> None:
-        """更新指标值"""
-        trades_ds = self.get_datasource("trades")
-        ob_ds = self.get_datasource("order_book")
+    def _get_recent_trades(self) -> list[tuple["TradeData", float]]:
+        """获取窗口内的 trades"""
+        ds = self._get_trades_ds()
+        if ds is None or not ds.ready:
+            return []
 
-        if trades_ds is None:
-            return
+        now = time.time()
+        cutoff = now - self._calculator._total_range_seconds
+        return [
+            item for item in ds.data.data_list
+            if item[1] >= cutoff
+        ]
 
-        # 获取所有成交数据
-        trades = trades_ds.get_all()
+    def _compute_result(self) -> Optional[IntensityResult]:
+        """调用 calculator 计算结果"""
+        trades = self._get_recent_trades()
         if not trades:
-            return
+            return None
+        self._calculator.calculate(trades)
+        return self._calculator.result
 
-        # 获取订单簿（可选）
-        ob = None
-        if ob_ds is not None:
-            ob_data = ob_ds.get_latest()
-            if ob_data is not None:
-                # 转换为 dict 格式
-                ob = {
-                    'bids': getattr(ob_data, 'bids', []),
-                    'asks': getattr(ob_data, 'asks', []),
-                }
+    def _empty_vars(self) -> dict[str, Any]:
+        return {
+            "buy_k": 0.0,
+            "sell_k": 0.0,
+            "buy_b": 0.0,
+            "sell_b": 0.0,
+            "buy_correlation": 0.0,
+            "sell_correlation": 0.0,
+        }
 
-        # 更新计算
-        self._value = self._calculator.update(trades, ob)
+    def _result_to_vars(self, result: IntensityResult) -> dict[str, Any]:
+        return {
+            "buy_k": result.buy_k,
+            "sell_k": result.sell_k,
+            "buy_b": result.buy_b,
+            "sell_b": result.sell_b,
+            "buy_correlation": result.buy_correlation,
+            "sell_correlation": result.sell_correlation,
+        }
 
-    def get_optimal_spread(
-        self,
-        side: str,
-        gamma: float,
-        inventory: float = 0.0,
-    ) -> tuple[float, float]:
-        """
-        计算最优价差（委托给内部计算器）
+    def get_vars(self) -> dict[str, Any]:
+        """返回交易强度变量，带缓存"""
+        now = time.time()
+        if self._cached_result is not None and now - self._cache_ts < self._cache_ttl:
+            return self._result_to_vars(self._cached_result)
 
-        Args:
-            side: "buy" 或 "sell"
-            gamma: 风险厌恶系数
-            inventory: 标准化库存（正=多头）
+        result = self._compute_result()
+        if result is None:
+            return self._empty_vars()
 
-        Returns:
-            (inventory_adjustment, arrival_adjustment) 两部分价差
-        """
-        return self._calculator.get_optimal_spread(side, gamma, inventory)
-
-    @property
-    def log_state_dict(self) -> dict:
-        base = super().log_state_dict
-        if self._value:
-            base.update({
-                "buy_k": self._value.buy_k,
-                "sell_k": self._value.sell_k,
-                "imbalance": self._value.imbalance,
-                "is_valid": self._value.is_valid,
-            })
-        return base
+        self._cached_result = result
+        self._cache_ts = now
+        return self._result_to_vars(result)
