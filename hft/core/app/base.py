@@ -254,13 +254,11 @@ class AppCore(Listener):
         查询 indicator，支持 lazy 创建和自动启动
 
         Args:
-            indicator_id: 指标 ID
-            exchange_class: 交易所类名，GlobalIndicator 传 None
-            symbol: 交易对，GlobalIndicator 传 None
+            indicator: 指标类或配置中的指标 ID 字符串
+            scope: FlowScopeNode，决定指标绑定的层级
 
         Returns:
-            - BaseIndicator 实例：indicator ready
-            - None：indicator 未 ready
+            BaseIndicator 实例（调用方需自行判断 .ready 状态）
         """
         if isinstance(indicator, str):
             indicator_config = self.config.indicators[indicator]

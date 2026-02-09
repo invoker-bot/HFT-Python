@@ -5,69 +5,23 @@ Feature 0006: Indicator 与 DataSource 统一架构
 Feature 0005: Executor 动态条件与变量注入机制
 
 核心类：
-- BaseIndicator: 所有指标的基类
-- GlobalIndicator: 全局唯一的指标
+- BaseIndicator: 所有指标的基类，通过 scope 绑定层级
 - BaseDataSource: 从 exchange 获取数据的特殊 Indicator
 
 数据源类（Feature 0006）：
 - TickerDataSource, TradesDataSource, OrderBookDataSource, OHLCVDataSource
+- GlobalFundingRateIndicator: ExchangeClass 级别批量获取资金费率
+- FundingRateIndicator: TradingPairClass 级别，事件驱动从全局指标获取
+- MedalEquationDataSource, MedalAmountDataSource: 账户数据源
 
 计算类指标（Feature 0005）：
 - MidPriceIndicator, MedalEdgeIndicator, VolumeIndicator, RSIIndicator
+- TradeIntensityIndicator, FairPriceIndicator
 
 持久化类：
 - DataListener: 数据采集监听器基类
 - ExchangeFundingRateBillListener: 资金费率账单采集
 - ExchangeBalanceUsdListener: 账户余额快照采集
-- FundingRatePersistListener: 资金费率快照持久化
-
-兼容类（待迁移）：
-- LazyIndicator: 挂载到 TradingPairDataSource，轮询计算
 """
 
-# Feature 0005: Computed indicators
-# Feature 0006: DataSource classes
 from .datasource import *
-# Legacy lazy indicators
-
-# __all__ = [
-#     # Feature 0006 core classes
-#     "BaseIndicator",
-#     "GlobalIndicator",
-#     "BaseDataSource",
-#     "DEFAULT_EXPIRE_SECONDS",
-#     "GLOBAL_EXPIRE_SECONDS",
-#     # Indicator management
-#     "IndicatorGroup",
-#     "TradingPairIndicators",
-#     "GlobalIndicators",
-#     # Feature 0006: DataSource classes
-#     "TickerDataSource",
-#     "TickerData",
-#     "TradesDataSource",
-#     "TradeData",
-#     "OrderBookDataSource",
-#     "OrderBookData",
-#     "OrderBookLevel",
-#     "OHLCVDataSource",
-#     "CandleData",
-#     # Feature 0005: Computed indicators
-#     "ComputedMidPriceIndicator",
-#     "MedalEdgeIndicator",
-#     "VolumeIndicator",
-#     "RSIIndicator",
-#     # Lazy start indicators (legacy)
-#     "LazyIndicator",
-#     "VWAPIndicator",
-#     "SpreadIndicator",
-#     "MidPriceIndicator",
-#     # Trade intensity
-#     "IntensityResult",
-#     "TradeIntensityCalculator",
-#     "TradeIntensityIndicator",
-#     # Data persistence
-#     "DataListener",
-#     "ExchangeFundingRateBillListener",
-#     "ExchangeBalanceUsdListener",
-#     "FundingRatePersistListener",
-# ]

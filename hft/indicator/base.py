@@ -4,24 +4,17 @@ Indicator 指标基类
 Feature 0006: Indicator 与 DataSource 统一架构
 
 核心概念：
-- BaseIndicator: 所有指标的基类，使用 HealthyDataArray 存储数据
-- GlobalIndicator: 全局唯一的指标（如全局资金费率），更长过期时间
-- BaseDataSource: 从 exchange 获取数据的特殊 Indicator
+- BaseIndicator: 所有指标的基类，通过 scope 绑定到特定层级
+- BaseDataSource: 从 exchange 获取数据的特殊 Indicator，使用 HealthyData/HealthyDataArray 存储
+- ComputedIndicator: 从其他 Indicator/DataSource 派生计算的指标
 
-事件机制（通过 _event: AsyncIOEventEmitter）：
-- update: 新数据写入 _data 后触发，载荷 (timestamp: float, value: T)
-- ready: 从 not ready 变为 ready 时触发，载荷 ()
-- error: 发生错误时触发，载荷 (error: Exception)
+事件机制（通过 event: AsyncIOEventEmitter）：
+- 由子类自行定义和触发（如 FundingRate 的 "update" 事件）
 
-ready_condition 表达式变量：
-- timeout: 当前时间与最新数据的时间差（秒）
-- cv: 采样间隔变异系数（需要 window）
-- range: 覆盖比例（需要 window）
-
-calculate_vars 用途：
+get_vars 用途：
 - 供 Executor.condition 表达式使用
 - 供 Strategy 决策使用
-- 不用于 ready_condition 求值
+- 通过 VM.inject_indicators() 注入到 FlowScopeNode
 """
 import inspect
 from abc import abstractmethod
@@ -40,14 +33,11 @@ class BaseIndicator(Listener):
     """
     指标基类（Feature 0006 统一架构）
 
-    特性：
-    1. 使用 HealthyDataArray 存储时序数据
-    2. 通过 event 发出 update/ready/error 事件
-    3. 支持 ready_condition 表达式判断就绪状态
-    4. 自动过期机制（长时间未 query 自动停止）
+    通过 scope 绑定到特定层级（ExchangeClassScope、TradingPairClassScope 等）。
+    由 AppCore.query_indicator() 创建/查询，支持 lazy 创建和自动停止。
 
     子类需要实现：
-    - calculate_vars(direction): 返回变量字典供 Executor 使用
+    - get_vars(): 返回变量字典，注入到 FlowScopeNode 供表达式求值
     """
     classes: dict[str, type['BaseIndicator']] = {}  #
     supported_scope: Optional[type['FlowScopeNode']] = None # 支持的 Scope 类型

@@ -13,11 +13,12 @@ class BaseDataSource(Generic[T], BaseIndicator):
     数据源基类
 
     从 exchange 获取数据的特殊 Indicator，支持 watch/fetch 两种模式。
+    数据存储在 self.data（HealthyData 或 HealthyDataArray）中。
 
     子类需要实现：
     - _watch(): WebSocket 订阅模式
     - _fetch(): REST API 轮询模式
-    - calculate_vars(): 返回变量字典
+    - get_vars(): 返回变量字典
     """
     DEFAULT_IS_ARRAY = True
     DEFAULT_MAX_AGE = 15.0 # 15 秒数据过期，有可能过松，或者过严
