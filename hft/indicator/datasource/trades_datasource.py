@@ -9,7 +9,7 @@ from typing import Any
 from ccxt.base.types import Trade
 from ccxt.base.errors import UnsubscribeError
 from ...exchange.utils import sign
-from .base import BaseTradingPairClassDataSource
+from ..base import BaseTradingPairClassDataIndicator
 
 
 @dataclass
@@ -46,7 +46,7 @@ def is_duplicate_trade(trade1: TradeData, trade2: TradeData) -> bool:
     return trade1.id == trade2.id
 
 
-class TradesDataSource(BaseTradingPairClassDataSource[TradeData]):
+class TradesDataSource(BaseTradingPairClassDataIndicator[TradeData]):
     """
     Trades 数据源
 
@@ -89,6 +89,7 @@ class TradesDataSource(BaseTradingPairClassDataSource[TradeData]):
                 "last_trade_direction": sign(data.amount),
                 "last_trade_amount": abs(data.amount),
             })
+        return result
 
     async def on_stop(self):
         await super().on_stop()

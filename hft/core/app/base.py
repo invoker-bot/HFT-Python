@@ -28,7 +28,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Optional, Union
 from ...exchange.group import ExchangeGroup
 from ...executor.base import BaseExecutor
-from ...indicator.base import BaseIndicator, DEFAULT_DISABLE_SECONDS
+from ...indicator.base import BaseIndicator
 from ...indicator.group import IndicatorGroup
 from ...plugin import pm
 from ..scope.manager import ScopeManager
@@ -271,7 +271,7 @@ class AppCore(Listener):
         else:
             indicator_class = indicator
             params = {}
-            seconds = DEFAULT_DISABLE_SECONDS
+            seconds = indicator_class.DEFAULT_DISABLE_SECONDS
             indicator_id = f"{scope.scope.id}:{indicator_class.__name__}"
         indicator_instance = self.factory.get_or_create(indicator_class,
                                                name=indicator_id,
@@ -281,7 +281,7 @@ class AppCore(Listener):
         indicator_instance.auto_disable_duration = seconds
         # int("Queried indicator:", indicator_instance, "ready:", indicator_instance.ready,
         #     "parent:", indicator_instance.parent)
-        return indicator_instance  # 之后还需要判断是否ready
+        return indicator_instance  # 然而之后还需要判断是否ready
 
     async def on_stop(self):
         """停止回调，同步保存缓存并停止守护线程"""

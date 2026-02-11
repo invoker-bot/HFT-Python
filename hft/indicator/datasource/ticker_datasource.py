@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from ccxt.base.types import Ticker
 from ccxt.base.errors import UnsubscribeError
-from .base import BaseTradingPairClassDataSource
+from ..base import BaseTradingPairClassDataIndicator
 
 
 @dataclass
@@ -41,12 +41,13 @@ class TickerData:
         return self.last
 
 
-class TickerDataSource(BaseTradingPairClassDataSource[TickerData]):
+class TickerDataSource(BaseTradingPairClassDataIndicator[TickerData]):
     """
     Ticker 数据源
 
     订阅交易对的实时价格信息。
     """
+    DEFAULT_HEALTHY_WINDOW = 60.0  # 最小健康窗口 1 分钟
     @property
     def interval(self) -> float:
         return 0.001

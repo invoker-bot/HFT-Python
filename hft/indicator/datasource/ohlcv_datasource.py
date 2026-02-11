@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from ccxt.base.errors import UnsubscribeError
 from ...core.duration import parse_duration
-from .base import BaseTradingPairClassDataSource
+from ..base import BaseTradingPairClassDataIndicator
 
 
 @dataclass
@@ -36,14 +36,14 @@ class CandleData:
         )
 
 
-class OHLCVDataSource(BaseTradingPairClassDataSource[CandleData]):
+class OHLCVDataSource(BaseTradingPairClassDataIndicator[CandleData]):
     """
     OHLCV K线数据源
 
     订阅交易对的 K 线数据。
     """
     DEFAULT_WINDOW = 24 * 3600.0 # 默认 24 小时的数据窗口
-    DEFAULT_HEALTHY_RANGE = 0.2  # 最少覆盖比例 20%
+    DEFAULT_HEALTHY_WINDOW = 3600.0  # 最小健康窗口 1 小时
 
     @property
     def interval(self) -> float:

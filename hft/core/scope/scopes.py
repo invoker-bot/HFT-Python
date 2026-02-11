@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from ...exchange.base import BaseExchange
 
 
+__all__ = [
+    "GlobalScope",
+    "ExchangeClassScope",
+    "ExchangeScope",
+    "TradingPairClassScope",
+    "TradingPairScope",
+]
+
+
 class GlobalScope(BaseScope):
     """
     全局 Scope
@@ -154,7 +163,9 @@ class ExchangeScope(BaseScope):
     def initialize(self, **kwargs):
         """初始化 ExchangeScope 的变量"""
         super().initialize(**kwargs)
-        self.set_var("exchange_path", self.exchange_path)  # 向后兼容
+        exchange_class, exchange_path = self.instance_id
+        self.set_var("exchange_class", exchange_class)
+        self.set_var("exchange_path", exchange_path)  # 向后兼容
 
     @property
     def exchange_path(self) -> str:
@@ -169,9 +180,9 @@ class ExchangeScope(BaseScope):
     def get_all_instance_ids(cls, app_core: 'AppCore') -> set[ScopeInstanceId]:
         exchange_group = app_core.exchange_group
         results = set()
-        for exchange_group, exchange_items in exchange_group.exchange_group.items():
+        for exchange_class, exchange_items in exchange_group.exchange_group.items():
             for exchange_item in exchange_items:
-                results.add((exchange_group, exchange_item))
+                results.add((exchange_class, exchange_item))
         return results
 
 

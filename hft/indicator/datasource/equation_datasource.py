@@ -8,10 +8,10 @@ MedalEquationDataSource 是 ExchangePath 级别的 Indicator，
 
 """
 from typing import Any
-from .base import BaseExchangeDataSource
+from ..base import BaseExchangeDataIndicator
 
 
-class MedalEquationDataSource(BaseExchangeDataSource[float]):
+class MedalEquationDataSource(BaseExchangeDataIndicator[float]):
     """
     账户权益数据源（Feature 0008）
 

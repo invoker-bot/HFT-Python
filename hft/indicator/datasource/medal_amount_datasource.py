@@ -4,10 +4,10 @@ MedalAmountDataSource - 账户余额数据源
 用于 MarketNeutralPositions 策略，获取合约/现货账户的真实存量。
 """
 from typing import Any, Dict
-from .base import BaseTradingPairDataSource
+from ..base import BaseTradingPairDataIndicator
 
 
-class MedalAmountDataSource(BaseTradingPairDataSource[float]):
+class MedalAmountDataSource(BaseTradingPairDataIndicator[float]):
     """
     账户余额数据源
 
@@ -39,3 +39,4 @@ class MedalAmountDataSource(BaseTradingPairDataSource[float]):
         latest = self.data.get_data()
         if latest is not None:
             return {"amount": latest}
+        return {}

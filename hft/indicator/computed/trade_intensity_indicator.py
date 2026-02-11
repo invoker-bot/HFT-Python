@@ -12,12 +12,14 @@
 import math
 import time
 import logging
-import numpy as np
+from functools import cached_property
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
+import numpy as np
 import matplotlib.pyplot as plt
-
-from ..base import BaseIndicator
+from cachetools import cached, TTLCache
+from ...core.scope.scopes import TradingPairClassScope
+from ..base import BaseIndicator, BaseTradingPairClassDataIndicator
 
 if TYPE_CHECKING:
     from ..datasource.trades_datasource import TradeData, TradesDataSource
@@ -39,16 +41,27 @@ class IntensityResult:
     sell_correlation: float
 
 
-class TradeIntensityCalculator:
-    def __init__(self, sub_range_seconds = 15, total_range_seconds = 600,
-                 precision=20, precision_std_range=1.0, min_trades=50, min_correlation=0.6):
-        self._min_trades = min_trades
-        self._sub_range_seconds = sub_range_seconds
-        self._total_range_seconds = total_range_seconds
-        self._precision = precision
-        self._precision_std_range = precision_std_range
-        self._min_correlation = min_correlation
+class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
+    __pickle_exclude__ = {*BaseTradingPairClassDataIndicator.__pickle_exclude__, "_calculator", "_cached_result", "_cache_ts", "_cache_ttl"}
+
+    @cached_property
+    def trades_indicator(self) -> Optional["TradesDataSource"]:
+        app_core = self.root
+        return app_core.query_indicator(self.trade_indicator_id, self.scope)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.result: Optional[IntensityResult] = None
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self._min_trades = kwargs.get("min_trades", 50)
+        self._sub_range_seconds = kwargs.get("sub_range_seconds", 15)
+        self._total_range_seconds = kwargs.get("total_range_seconds", 600)
+        self._precision = kwargs.get("precision", 20)
+        self._precision_std_range = kwargs.get("precision_std_range", 1.0)
+        self._min_correlation = kwargs.get("min_correlation", 0.6)
+        self.trade_indicator_id = kwargs["trade_indicator_id"]
 
     def total_amount(self, trades: list[tuple['TradeData', float]]) -> float:
         return sum([abs(item[0].amount) for item in trades])
@@ -61,7 +74,11 @@ class TradeIntensityCalculator:
             k = 0
         return k, b, correlation
 
-    def calculate(self, trades: list[tuple['TradeData', float]]):
+    @cached(cache=TTLCache(maxsize=2048, ttl=60))
+    def calculate(self):
+        if not self.trades_indicator.ready:
+            return
+        trades = self.trades_indicator.data.data_list
         if len(trades) < self._min_trades:
             return
         average_price = sum([abs(item[0].price * item[0].amount) for item in trades]) / self.total_amount(trades)
@@ -125,95 +142,22 @@ class TradeIntensityCalculator:
         plt.plot(x, log_y_pred)
         plt.show()
 
-
-class TradeIntensityIndicator(BaseIndicator):
-    """
-    交易强度指标 - 用于 AS 做市策略
-
-    从 TradesDataSource 获取成交数据，通过 TradeIntensityCalculator 计算
-    订单到达率参数（buy_k, sell_k 等）。
-    """
-    supported_scope = None
-
-    def initialize(self, **kwargs):
-        super().initialize(**kwargs)
-        window = kwargs.get("window", 600.0)
-        self._calculator = TradeIntensityCalculator(
-            sub_range_seconds=kwargs.get("sub_range_seconds", 15.0),
-            total_range_seconds=window,
-            precision=kwargs.get("precision", 20),
-            precision_std_range=kwargs.get("precision_std_range", 1.0),
-            min_correlation=kwargs.get("min_correlation", 0.6),
-            min_trades=kwargs.get("min_trades", 50),
-        )
-        # 缓存
-        self._cached_result: Optional[IntensityResult] = None
-        self._cache_ts: float = 0.0
-        self._cache_ttl: float = 10.0
-
-    @property
-    def calculator(self) -> TradeIntensityCalculator:
-        """获取内部计算器（用于访问 get_buy_spread/get_sell_spread 等方法）"""
-        return self._calculator
-
-    def _get_trades_ds(self) -> Optional["TradesDataSource"]:
-        """获取 Trades 数据源"""
-        if self.root is None:
-            return None
-        from ..datasource.trades_datasource import TradesDataSource
-        return self.root.query_indicator(TradesDataSource, self.scope)
-
-    def _get_recent_trades(self) -> list[tuple["TradeData", float]]:
-        """获取窗口内的 trades"""
-        ds = self._get_trades_ds()
-        if ds is None or not ds.ready:
-            return []
-
-        now = time.time()
-        cutoff = now - self._calculator._total_range_seconds
-        return [
-            item for item in ds.data.data_list
-            if item[1] >= cutoff
-        ]
-
-    def _compute_result(self) -> Optional[IntensityResult]:
-        """调用 calculator 计算结果"""
-        trades = self._get_recent_trades()
-        if not trades:
-            return None
-        self._calculator.calculate(trades)
-        return self._calculator.result
-
-    def _empty_vars(self) -> dict[str, Any]:
-        return {
-            "buy_k": 0.0,
-            "sell_k": 0.0,
-            "buy_b": 0.0,
-            "sell_b": 0.0,
-            "buy_correlation": 0.0,
-            "sell_correlation": 0.0,
-        }
-
-    def _result_to_vars(self, result: IntensityResult) -> dict[str, Any]:
-        return {
-            "buy_k": result.buy_k,
-            "sell_k": result.sell_k,
-            "buy_b": result.buy_b,
-            "sell_b": result.sell_b,
-            "buy_correlation": result.buy_correlation,
-            "sell_correlation": result.sell_correlation,
-        }
+    async def on_tick(self):
+        self.calculate()
 
     def get_vars(self) -> dict[str, Any]:
         """返回交易强度变量，带缓存"""
-        now = time.time()
-        if self._cached_result is not None and now - self._cache_ts < self._cache_ttl:
-            return self._result_to_vars(self._cached_result)
-
-        result = self._compute_result()
+        result = self.result
         if result is None:
-            return self._empty_vars()
-
-        self._cached_result = result
-        self._cache_ts = now
-        return self._result_to_vars(result)
+            return {}
+        return {
+            "trade_intensity_average_price": result.average_price,
+            "trade_intensity_average_std": result.average_std,
+            "trade_intensity_buy_k": result.buy_k,
+            "trade_intensity_buy_b": result.buy_b,
+            "trade_intensity_buy_correlation": result.buy_correlation,
+            "trade_intensity_sell_k": result.sell_k,
+            "trade_intensity_sell_b": result.sell_b,
+            "trade_intensity_sell_correlation": result.sell_correlation,
+        }
+    # TODO: ready机制、functions注入

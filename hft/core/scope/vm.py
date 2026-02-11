@@ -147,15 +147,8 @@ class VirtualMachine:
         for required_indicator in requires:
             indicator_class_name = app_core.config.indicators[required_indicator].class_name
             indicator_class = BaseIndicator.classes[indicator_class_name]
-            indicator_node = node  # 从当前节点查找前向节点
-            if indicator_class.supported_scope is not None:
-                while indicator_node is not None:
-                    if isinstance(indicator_node.scope, indicator_class.supported_scope):
-                        break
-                    if len(indicator_node.prev) > 0:
-                        indicator_node = indicator_node.prev[0]
-                    else:
-                        indicator_node = None
+            # 从当前节点查找前向节点
+            indicator_node = node.search_prev_scope(indicator_class.supported_scope)
             if indicator_node is None:
                 raise ValueError(f"Cannot find suitable scope for indicator {required_indicator} in scope {node.scope.path}")
             indicator = app_core.query_indicator(required_indicator, indicator_node)

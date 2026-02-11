@@ -468,3 +468,15 @@ class FlowScopeNode(VirtualScope):
         """字符串表示"""
         prev = [node.scope for node in self.prev]
         return f"<LinkedScopeNode scope={self.scope} prev={prev}>"
+
+    def search_prev_scope(self, scope_class: type[BaseScope]) -> 'FlowScopeNode':
+        """查找前向节点"""
+        node = self
+        while node is not None:
+            if isinstance(node.scope, scope_class):
+                break
+            if len(node.prev) > 0:
+                node = node.prev[0]
+            else:
+                node = None
+        return node

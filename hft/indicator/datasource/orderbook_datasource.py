@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from ccxt.base.types import OrderBook
 from ccxt.base.errors import UnsubscribeError
-from .base import BaseTradingPairClassDataSource
+from ..base import BaseTradingPairClassDataIndicator
 
 
 @dataclass
@@ -55,12 +55,13 @@ class OrderBookData:
         return self.best_bid or self.best_ask or None
 
 
-class OrderBookDataSource(BaseTradingPairClassDataSource[OrderBookData]):
+class OrderBookDataSource(BaseTradingPairClassDataIndicator[OrderBookData]):
     """
     OrderBook 数据源
 
     订阅交易对的实时订单簿。
     """
+    DEFAULT_HEALTHY_WINDOW = 60.0  # 最小健康窗口 1 分钟
 
     @property
     def interval(self) -> float:
