@@ -56,41 +56,7 @@ DURATION_UNITS = {
 
 
 def _parse_duration(value: Union[str, int, float, None]) -> float:
-    """
-    解析 duration 字符串或数值为秒数。
-
-    Args:
-        value: duration 值，可以是：
-            - None: 返回 0.0（等价于无窗口）
-            - int/float: 直接返回（单位为秒）
-            - str: 解析 duration 字符串（如 "60s", "1m", "5m", "1h", "1d"）
-
-    Returns:
-        float: 秒数
-
-    Raises:
-        ValueError: 当字符串格式非法或单位不支持时
-
-    Examples:
-        >>> parse_duration(None)
-        0.0
-        >>> parse_duration(60)
-        60.0
-        >>> parse_duration(60.5)
-        60.5
-        >>> parse_duration("60s")
-        60.0
-        >>> parse_duration("1m")
-        60.0
-        >>> parse_duration("5m")
-        300.0
-        >>> parse_duration("1h")
-        3600.0
-        >>> parse_duration("1d")
-        86400.0
-        >>> parse_duration("500ms")
-        0.5
-    """
+    """(Deprecated) 使用 parse_duration() 代替。手动正则解析，仅支持 ms/s/m/h/d 单位。"""
     # None 等价于 0
     if value is None:
         return 0.0

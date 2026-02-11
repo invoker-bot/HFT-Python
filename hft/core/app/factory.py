@@ -3,7 +3,7 @@
 
 负责 Listener 实例的缓存、恢复和定期保存。
 """
-# import time
+import time
 import logging
 import pickle
 import threading
@@ -78,10 +78,9 @@ class AppFactory:
         # 设置缓存文件路径
         self.cache_file = self.config.data_path
         # 加载缓存
+        self._cache = {}
         if restore_cache:
             self.load_cache()
-        else:
-            self._cache = {}
         self._instance_cache: Dict[str, Listener] = {}
         self._lock = threading.RLock()
         self._daemon_thread: Optional[threading.Thread] = None
@@ -212,8 +211,20 @@ class AppFactory:
                 logger.error("Error in cache daemon: %s", e, exc_info=True)
 
     def update_cache(self):
-        """更新缓存字典"""
-        self._cache = self.collect(self._app_core)
+        """
+        更新缓存字典
+
+        增量合并当前 Listener 树的状态，并清除已过期的缓存条目。
+        过期判断：cache_time 不为 None 且 time.time() - update_time > cache_time。
+        """
+        self._cache.update(self.collect(self._app_core))
+        for key, listener in list(self._cache.items()):
+            cache_time = listener.get("cache_time", None)
+            update_time = listener.get("update_time", None)
+            if cache_time is not None and update_time is not None:
+                if time.time() - update_time > cache_time:
+                    logger.debug("Cache expired for %s, removing from cache", key)
+                    del self._cache[key]
         return self._cache
 
     def save_cache(self):
@@ -329,5 +340,5 @@ class AppFactory:
         Returns:
             缓存字典 {cache_key: state_dict}
         """
-        self._cache = self.load_cache_from_file(self.cache_file)
+        self._cache.update(self.load_cache_from_file(self.cache_file))
         return self._cache

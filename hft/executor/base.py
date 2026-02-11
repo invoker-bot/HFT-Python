@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Optional
 from ccxt.base.types import OrderRequest, Order
 from ..core.scope.scopes import TradingPairScope
 from ..core.listener import Listener
-from ..indicator.base import BaseIndicator
 if TYPE_CHECKING:
     from ..exchange.group import ExchangeGroup
     from ..strategy.base import BaseStrategy
@@ -208,6 +207,15 @@ class BaseExecutor(Listener):
         order_ids = [o.order_id for o in orders]
         await exchange.cancel_orders(order_ids, symbol)
 
+    async def cancel_all_active_orders(self):
+        """退出时取消所有交易所上的活跃订单（由 config.clean 控制）"""
+        for exchange_path, symbols in self.active_orders_tracker.orders.items():
+            exchange = self.exchange_group.exchange_instances[exchange_path]
+            for symbol, orders_dict in symbols.items():
+                order_ids = list(orders_dict.keys())
+                if len(order_ids) > 0:
+                    await exchange.cancel_orders(order_ids, symbol)
+
     async def process_intents(self, exchange_path: str, symbol: str, intents: list[OrderIntent]):
         """
         处理单个目标仓位
@@ -228,11 +236,11 @@ class BaseExecutor(Listener):
         # 2. 取消过期订单
         if len(orders_to_remove) > 0:
             await self.cancel_active_orders(exchange_path, symbol, orders_to_remove)
+        # event其实会自动触发移除订单的动作
         # self.active_orders_tracker.remove_active_orders(
         #     exchange_path, symbol,
         #     [o.order_id for o in orders_to_remove]
         # )
-
 
     # ===== 属性 =====
     @property
@@ -322,7 +330,7 @@ class BaseExecutor(Listener):
                         if price is not None:
                             spread = abs(price - node.get_var("last_price"))
                         else:
-                            spread = 0.0
+                            spread = abs(node.get_var("ask_price") - node.get_var("bid_price"))
                         refresh_tolerance = spread * refresh_tolerance_pct
                 intents.append(OrderIntent(
                     price=price,
@@ -332,3 +340,8 @@ class BaseExecutor(Listener):
                     post_only=post_only
                 ))
             await self.process_intents(exchange_path, symbol, intents)
+
+    async def on_stop(self):
+        await super().on_stop()
+        if self.config.clean:
+            await self.cancel_all_active_orders()

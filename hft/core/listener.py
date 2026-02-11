@@ -98,6 +98,9 @@ class Listener(ABC):
     # 延迟启动标志：True 时不跟随父节点自动启动，保持 STOPPED 状态直到显式 start()
     lazy_start: bool = False
     disable_tick: bool = False  # 是否禁用 tick 回调，关闭以禁用定时任务，节约开销
+    # 缓存过期时间（秒）：超过此时间未 tick 的 Listener 会从磁盘缓存中清除
+    # None 表示永不过期
+    cache_time: Optional[float] = None
 
     def __init__(self, **kwargs):
         """
@@ -115,6 +118,7 @@ class Listener(ABC):
         self._healthy = False
         self._healthy_since = time.time()
         self.start_time = self.current_time
+        self.update_time = self.current_time  # 最近一次 tick 的时间，用于缓存过期判断
         self.finished = False  # 任务完成标志，有此标记的 Listener 不会被重启
         self._auto_disable_start_time = self.current_time
         self._auto_disable_duration: Optional[float] = None  # 自动禁用时长（秒），None 表示不启用
@@ -171,6 +175,7 @@ class Listener(ABC):
         """
         saved = self.on_save()
         state = {k: v for k, v in self.__dict__.items() if k not in self.__pickle_exclude__}
+        state["cache_time"] = self.cache_time
         state.update(saved)
         return state
 
@@ -700,8 +705,9 @@ class Listener(ABC):
         return (not self.enabled) and self.state in (ListenerState.STOPPED, ListenerState.STOPPING)
 
     async def tick(self):
-        """执行一次 tick（加锁保证线程安全）"""
+        """执行一次 tick（加锁保证线程安全），并更新 update_time 用于缓存过期判断"""
         async with self._alock:
+            self.update_time = self.current_time
             return await self.__tick_internal()
 
     async def __start_internal(self, recursive: bool = True):
