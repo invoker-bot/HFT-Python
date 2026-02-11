@@ -22,6 +22,7 @@ Example:
 """
 import time
 import bisect
+import random
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Generic, Optional, TypeVar, Union
@@ -278,6 +279,7 @@ class HealthyDataArray(BaseHealthyData[T]):
         self._healthy_points = healthy_points
         self._healthy_cv = healthy_cv
         self._healthy_range = healthy_range
+        self._random_rate = random.random() # [0, 1] 用于打散shrink调用时间，避免多实例同时触发
 
     @property
     def data_list(self) -> list[tuple[T, float]]:
@@ -317,11 +319,11 @@ class HealthyDataArray(BaseHealthyData[T]):
             self._shrink()
 
     def _shrink(self) -> None:
-        """清理过期数据（摊还 O(1)：时间跨度超过 2*window 时一次性截断）"""
+        """清理过期数据（摊还 O(1)：时间跨度超过 (2+random)*window 时一次性截断，随机抖动避免多实例同时触发）"""
         if len(self._data_list) < 2:
             return
         time_span = self._data_list[-1][1] - self._data_list[0][1]
-        if time_span > 2 * self.window:
+        if time_span > (2 + self._random_rate) * self.window:
             cut = bisect.bisect_left(self._data_list, time.time() - self.window, key=lambda x: x[1])
             if cut > 0:
                 self._data_list = self._data_list[cut:]
