@@ -52,7 +52,6 @@ class ListenerState(StrEnum):
     RUNNING = "running"     # 运行中
     STOPPING = "stopping"   # 停止中
     STOPPED = "stopped"     # 已停止
-    # FINISHED = "finished"   # 任务完成（正常退出）
     ERROR = "error"         # 错误状态
 
 

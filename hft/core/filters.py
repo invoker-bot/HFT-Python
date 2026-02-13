@@ -36,6 +36,13 @@ def join_filters(includes: Optional[list[str]] = None, excludes: Optional[list[s
     return ",".join(parts)
 
 
+def get_matcher_quick(filters) -> Matcher:
+    """支持 str（逗号分隔）或 list 输入"""
+    if isinstance(filters, (list, tuple)):
+        return get_matcher_raw(",".join(filters))
+    return get_matcher_raw(filters)
+
+
 @lru_cache(maxsize=1024)
 def get_matcher_raw(filters: str) -> Matcher:
     includes, excludes = split_filters(filters)

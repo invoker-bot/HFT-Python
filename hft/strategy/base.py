@@ -25,27 +25,16 @@ Feature 0008: Strategy 数据驱动增强
 - 支持 requires、vars、conditional_vars
 """
 # pylint: disable=import-outside-toplevel,protected-access
-import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from ..core.listener import Listener
 # from ..core.scope.instance_ids import get_all_instance_ids
 if TYPE_CHECKING:
     from ..core.scope.manager import ScopeManager
     from .config import BaseStrategyConfig
 
-
-
-# 旧版目标仓位类型（向后兼容）: {(exchange_path, symbol): (position_usd, speed)}
-# exchange_path: 交易所配置路径，如 "okx/main"
-# symbol: 交易对，如 "BTC/USDT:USDT"
-# position_usd: 正数=多仓，负数=空仓，单位 USD
-# speed: 执行紧急度 [0.0, 1.0]，越高越急
-# TargetPositions = dict[tuple[str, str], tuple[float, float]]
-
 # 新版 Strategy 输出类型（Feature 0008）: {(exchange_path, symbol): {"字段名": 值, ...}}
 # 支持任意字段，如 position_usd, speed, position_amount, max_position_usd 等
 # 所有字段都会传递给 Executor，聚合到 strategies namespace
-StrategyOutput = dict[tuple[str, str], dict[str, Any]]
 
 
 class BaseStrategy(Listener):
@@ -57,10 +46,6 @@ class BaseStrategy(Listener):
     然后根据与当前仓位的差值决定是否执行交易。
 
     核心方法：
-
-            返回 {exchange_class: {symbol: (position_usd, speed)}}
-            - position_usd: 目标仓位价值（USD），正数=多仓，负数=空仓
-            - speed: 执行紧急度 [0.0, 1.0]
 
     多策略聚合：
         - position_usd: 直接求和

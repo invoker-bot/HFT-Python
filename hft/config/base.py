@@ -13,15 +13,13 @@ from abc import abstractmethod
 from glob import glob
 from os import makedirs, path
 from pathlib import Path
-# from functools import cached_property
 from typing import ClassVar, Generic, Optional, Self, Type, TypeVar, Union, Any
-
 import yaml
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator
 from promptantic import ModelGenerator
-from pydantic import BaseModel, Field, GetCoreSchemaHandler
+from pydantic import BaseModel, Field, GetCoreSchemaHandler, PrivateAttr
 from pydantic_core import core_schema
 
 

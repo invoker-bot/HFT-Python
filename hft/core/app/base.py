@@ -319,12 +319,6 @@ class AppCore(Listener):
             while duration < 0 or self.current_time - self.start_time < duration:
                 try:
                     loop_start = self.current_time
-                    # simple sleep interruptions
-                    # for child in list(self):
-                        # if isinstance(child, MedalAmountDataSource):
-                    # print(child.__class__.__name__, child.name, "enabled:", child.enabled)
-                    # await asyncio.wait_for(child.update_background_task(), timeout=15)
-                    # print("self:", self.state, self.enabled)
                     await self.update_background_task()
                     if self.finished:  # current app is stopped
                         break

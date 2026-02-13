@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Type
 
 from pydantic import Field
 
-from .base import BaseStrategy, StrategyOutput
+from .base import BaseStrategy
 from .config import BaseStrategyConfig
 from ..core.scope.base import BaseScope, FlowScopeNode, ScopeInstanceId
 from ..core.scope.scopes import ExchangeClassScope, TradingPairClassScope
@@ -486,16 +486,8 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
             )
             node.set_var("ratio", adjusted_ratio)
 
+    """
     def get_output(self) -> StrategyOutput:
-        """
-        获取策略输出（重写基类方法）
-
-        使用 calculate_flow_nodes() 执行 flow 配置，
-        然后在结果上执行 MarketNeutralPositions 特有的后处理。
-
-        Returns:
-            {(exchange_path, symbol): {"position_usd": ..., "ratio": ..., ...}}
-        """
         if not self.config.flow:
             return {}
 
@@ -585,16 +577,7 @@ class MarketNeutralPositionsStrategy(BaseStrategy):
                 "delta_max_direction": node.get_var("delta_max_direction"),
             }
 
-        return output
-
-    def get_target_positions_usd(self) -> StrategyOutput:
-        """
-        获取目标仓位
-
-        Returns:
-            策略输出：{(exchange_path, symbol): {"position_usd": ..., "speed": ..., ...}}
-        """
-        return self.get_output()
+        return output"""
 
     async def on_tick(self) -> bool:
         """
