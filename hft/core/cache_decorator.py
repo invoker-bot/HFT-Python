@@ -1,7 +1,5 @@
 """
 实例方法缓存装饰器
-
-解决 AsyncTTL 在 pickle 序列化后缓存键失效的问题。
 将 self 转换为 id(self)，然后使用 AsyncTTL 包装。
 """
 from functools import wraps

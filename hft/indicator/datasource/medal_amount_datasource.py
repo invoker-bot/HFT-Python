@@ -39,4 +39,4 @@ class MedalAmountDataSource(BaseTradingPairDataIndicator[float]):
         latest = self.data.get_data()
         if latest is not None:
             return {"amount": latest}
-        return {}
+        raise ValueError("Amount data is not available")

@@ -10,8 +10,6 @@
 - TradingPairScope: exchange_id, symbol
 """
 from typing import TYPE_CHECKING
-
-from injector import Scope
 from .base import BaseScope, ScopeInstanceId
 from ..filters import get_matcher_quick
 
@@ -281,7 +279,7 @@ class TradingPairScope(BaseScope):
         self.set_var("symbol", symbol)
 
     @classmethod
-    def get_all_instance_ids(cls, app_core: 'AppCore') -> set[Scope]:
+    def get_all_instance_ids(cls, app_core: 'AppCore') -> set[ScopeInstanceId]:
         exchange_group = app_core.exchange_group
         results = set()
         for exchange_path, instance in exchange_group.exchange_instances.items():

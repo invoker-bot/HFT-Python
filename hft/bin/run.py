@@ -24,7 +24,7 @@ def main(app_name: str):
         app_name: Name of the application config file (without .yaml extension)
     """
     factory = AppFactory(app_name)
-    app_core = factory.create_app_core()
+    app_core = factory.get_or_create_app_core()
     app_core.loop()
 
 

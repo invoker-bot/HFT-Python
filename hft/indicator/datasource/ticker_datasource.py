@@ -81,7 +81,9 @@ class TickerDataSource(BaseTradingPairClassDataIndicator[TickerData]):
                 "quote_amount_1d": data.quote_amount,
                 "mid_price": data.mid_price,
             })
-        return result
+            return result
+        else:
+            raise ValueError("Ticker data is not available")
 
     async def on_stop(self):
         await super().on_stop()

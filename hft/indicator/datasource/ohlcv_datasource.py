@@ -52,6 +52,9 @@ class OHLCVDataSource(BaseTradingPairClassDataIndicator[CandleData]):
     def initialize(self, **kwargs) -> None:
         super().initialize(**kwargs)
         self.timeframe: str = kwargs.get("timeframe", "1m")
+
+    async def on_start(self):  # TODO: 需要在 AppCore.on_start() 后才能获取 timeframe，是否需要重构生命周期？
+        await super().on_start()
         self.data.max_age = parse_duration(self.timeframe)
 
     async def update_by_fetch(self):
@@ -96,7 +99,9 @@ class OHLCVDataSource(BaseTradingPairClassDataIndicator[CandleData]):
                 "last_low_price": data.low,
                 "last_volume": data.volume,
             })
-        return result
+            return result
+        else:
+            raise ValueError("OHLCV data is not available")
 
     async def on_stop(self):
         await super().on_stop()

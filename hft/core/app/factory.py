@@ -114,7 +114,7 @@ class AppFactory:
         """获取缓存字典"""
         return self._cache
 
-    def create_app_core(self) -> 'AppCore':
+    def get_or_create_app_core(self) -> 'AppCore':
         """
         创建或恢复 AppCore 实例
 

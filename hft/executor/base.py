@@ -328,10 +328,16 @@ class BaseExecutor(Listener):
                     refresh_tolerance_pct = vm.eval(order_def.refresh_tolerance, node)
                     if spread is None:
                         if price is not None:
-                            spread = abs(price - node.get_var("last_price"))
+                            last_price = node.get_var("last_price")
+                            # if last_price is not None:
+                            spread = abs(price - last_price)
                         else:
-                            spread = abs(node.get_var("ask_price") - node.get_var("bid_price"))
-                        refresh_tolerance = spread * refresh_tolerance_pct
+                            ask_price = node.get_var("ask_price")
+                            bid_price = node.get_var("bid_price")
+                            # if ask_price is not None and bid_price is not None:
+                            spread = abs(ask_price - bid_price)
+                        if spread is not None:
+                            refresh_tolerance = spread * refresh_tolerance_pct
                 intents.append(OrderIntent(
                     price=price,
                     amount=amount,

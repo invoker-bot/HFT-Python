@@ -652,7 +652,6 @@ class FundingRateClickHouseController(FundingRateController, ClickHouseDatabaseC
                     SET
                         timestamp = min(timestamp),
                         funding_rate = avg(funding_rate),
-                        daily_funding_rate = avg(daily_funding_rate),
                 toDateTime(timestamp) + INTERVAL 30 DAY DELETE
         ''')
         await self.connector.command('''

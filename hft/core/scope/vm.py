@@ -155,10 +155,14 @@ class VirtualMachine:
             if not indicator.ready:
                 ready = False
                 break
-            injected_vars = indicator.get_vars()
-            injected_functions = indicator.get_functions()
-            self.inject_vars(injected_vars, node, indicator.namespace)  # 注入
-            self.inject_functions(injected_functions, node)
+            try:
+                injected_vars = indicator.get_vars()
+                injected_functions = indicator.get_functions()
+                self.inject_vars(injected_vars, node, indicator.namespace)  # 注入
+                self.inject_functions(injected_functions, node)
+            except ValueError:
+                ready = False
+                break
         return ready
 
     def execute(self, flow_config: 'ScopeFlowConfig', app_core: 'AppCore') -> dict[ScopeInstanceId, 'FlowScopeNode']:

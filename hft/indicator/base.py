@@ -131,20 +131,25 @@ class BaseDataIndicator(Generic[T], BaseIndicator):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        is_array: bool = kwargs.get("is_array", self.DEFAULT_IS_ARRAY)
+        is_array: Optional[bool] = kwargs.get("is_array", self.DEFAULT_IS_ARRAY)
         max_age = parse_duration(kwargs.get("max_age", self.DEFAULT_MAX_AGE))
         self.data_array_params = self.get_healthy_data_params(kwargs)
         self.data_params = {"max_age": max_age}
-        if is_array:
+        if is_array is None:
+            self.data = None
+        elif is_array:
             self.data = self.create_healthy_data_array()
         else:
             self.data = self.create_healthy_data()
+
 
     @property
     def ready(self) -> bool:
         """数据源就绪状态"""
         if not super().ready:
             return False
+        if self.data is None:
+            raise NotImplementedError("Data source must have data attribute")
         return self.data.is_healthy
 
     @property

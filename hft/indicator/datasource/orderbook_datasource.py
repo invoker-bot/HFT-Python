@@ -96,7 +96,8 @@ class OrderBookDataSource(BaseTradingPairClassDataIndicator[OrderBookData]):
                 "bid_depth": sum(b.amount for b in data.bids),
                 "ask_depth": sum(a.amount for a in data.asks),
             })
-        return result
+            return result
+        raise ValueError("Order book data is not available")
 
     async def on_stop(self):
         await super().on_stop()

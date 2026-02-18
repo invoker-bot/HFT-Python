@@ -43,6 +43,7 @@ class IntensityResult:
 
 class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
     __pickle_exclude__ = {*BaseTradingPairClassDataIndicator.__pickle_exclude__, "_calculator", "_cached_result", "_cache_ts", "_cache_ttl"}
+    DEFAULT_IS_ARRAY = None
 
     @cached_property
     def trades_indicator(self) -> Optional["TradesDataSource"]:

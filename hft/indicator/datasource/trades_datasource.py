@@ -89,7 +89,9 @@ class TradesDataSource(BaseTradingPairClassDataIndicator[TradeData]):
                 "last_trade_direction": sign(data.amount),
                 "last_trade_amount": abs(data.amount),
             })
-        return result
+            return result
+        else:
+            raise ValueError("Trade data is not available")
 
     async def on_stop(self):
         await super().on_stop()

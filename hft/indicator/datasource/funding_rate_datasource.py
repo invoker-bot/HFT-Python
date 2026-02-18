@@ -14,7 +14,7 @@ from ...core.healthy_data import HealthyData, HealthyDataArray
 from ...core.scope.scopes import ExchangeClassScope, TradingPairClassScope
 from ..base import BaseExchangeClassDataIndicator, BaseTradingPairClassDataIndicator, T
 if TYPE_CHECKING:
-    from ...exchange.base import BaseExchange, FundingRate
+    from ...exchange.base import FundingRate
 
 
 @dataclass
@@ -96,6 +96,7 @@ class LocalTradingPairFundingRateIndicator(BaseTradingPairClassDataIndicator[T])
     从 GlobalFundingRateIndicator 获取本交易对的资金费率。
     通过事件订阅实现实时更新，避免每个交易对单独请求 API。
     """
+    DEFAULT_IS_ARRAY = None
     disable_tick = True  # 不需要定时器
     __pickle_exclude__ = {*BaseTradingPairClassDataIndicator.__pickle_exclude__, "global_indicator"}
     supported_scope = TradingPairClassScope
@@ -124,7 +125,11 @@ class FundingRateMetaIndicator(LocalTradingPairFundingRateIndicator[FundingRateM
 
     从 GlobalFundingRateIndicator 获取本交易对的资金费率元数据。
     """
-    # TODO: 对现货交易对，应该返回默认值
+    # TODO: 对现货交易对，ready应该返回默认值
+
+    @property
+    def ready(self) -> bool:
+        return self.get_data.is_healthy
 
     @property
     def get_data(self) -> HealthyData[FundingRateMeta]:
@@ -143,7 +148,10 @@ class FundingRateMetaIndicator(LocalTradingPairFundingRateIndicator[FundingRateM
                 "funding_rate_minimum": data.minimum_funding_rate,
                 "funding_rate_maximum": data.maximum_funding_rate,
             })
-        return result
+            return result
+        else:
+            raise ValueError("Funding rate meta is not available")
+
 
 class FundingRateIndicator(LocalTradingPairFundingRateIndicator):
 
@@ -159,7 +167,9 @@ class FundingRateIndicator(LocalTradingPairFundingRateIndicator):
             result.update({
                 "funding_rate": data,
             })
-        return result
+            return result
+        else:
+            raise ValueError("Funding rate is not available")
 
 
 class IndexPriceIndicator(LocalTradingPairFundingRateIndicator):
@@ -176,7 +186,9 @@ class IndexPriceIndicator(LocalTradingPairFundingRateIndicator):
             result.update({
                 "index_price": data,
             })
-        return result
+            return result
+        else:
+            raise ValueError("Index price is not available")
 
 
 class MarkPriceIndicator(LocalTradingPairFundingRateIndicator):
@@ -193,4 +205,6 @@ class MarkPriceIndicator(LocalTradingPairFundingRateIndicator):
             result.update({
                 "mark_price": data,
             })
-        return result
+            return result
+        else:
+            raise ValueError("Mark price is not available")

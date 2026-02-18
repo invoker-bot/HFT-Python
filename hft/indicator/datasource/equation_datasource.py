@@ -46,4 +46,4 @@ class MedalEquationDataSource(BaseExchangeDataIndicator[float]):
         equation_usd = self.data.get_data()
         if equation_usd is not None:
             return {"equation_usd": equation_usd}
-        return {}
+        raise ValueError("Equation USD is not available")
