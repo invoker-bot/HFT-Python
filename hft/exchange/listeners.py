@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 # from ccxt.base.errors import UnsubscribeError
 from ..core.duration import parse_duration
 from ..core.listener import GroupListener, Listener
-from ..database.controllers import ExchangeStateController, OrderBillController
+from ..database.controllers import ExchangeStateController, OrderBillController, FundingRateBillController
 # from ..plugin import pm
 
 if TYPE_CHECKING:
@@ -25,6 +25,9 @@ class CCXTExchangeGroupListener(GroupListener):
         return self.parent
 
 class CCXTExchangeOrderBillWatchListener(Listener):
+    @property
+    def interval(self) -> float:
+        return 0.1  # watch 频率支持较高
 
     @property
     def exchange(self) -> 'BaseExchange':
@@ -35,23 +38,20 @@ class CCXTExchangeOrderBillWatchListener(Listener):
         if not self.exchange.ready:
             return
         order_lists = await self.exchange.watch_orders(self.name)
-        # TODO: 检查订单成交并触发 Hook
-        # self.exchange.event.emit("")
-        # for order in order_lists:
-        #     # 触发成交检查
-        #     pass
-        controller = self.root.database.get_controller(OrderBillController)
-        await controller.update(order_lists, self.exchange)
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(OrderBillController)
+            await controller.update(order_lists, self.exchange)
 
-    async def on_stop(self):
-        # 停止时取消所有挂单监听for
-        # try:
-        #     await self.exchange.un_watch_orders(self.name)
-        #     NotSupportedError
-        #     # current not supported in ccxt
-        # except UnsubscribeError:  # 可能已经取消订阅
-        #     pass
-        await super().on_stop()
+    # async def on_stop(self):
+    #     # 停止时取消所有挂单监听for
+    #     # try:
+    #     #     await self.exchange.un_watch_orders(self.name)
+    #     #     NotSupportedError
+    #     #     # current not supported in ccxt
+    #     # except UnsubscribeError:  # 可能已经取消订阅
+    #     #     pass
+    #     await super().on_stop()
 
 
 class CCXTExchangeOrderBillListener(Listener):
@@ -82,7 +82,10 @@ class CCXTExchangeOrderBillListener(Listener):
     async def on_tick(self):
         if not self.exchange.ready:
             return
-        controller = self.root.database.get_controller(OrderBillController)
+        db = self.root.database
+        if db is None:
+            return
+        controller = db.get_controller(OrderBillController)
         for order_id, symbol in await controller.get_should_updated_orders(self.exchange,
                                                                            (self.auto_cancel_orders_after,
                                                                             self.auto_tracking_orders_before)):
@@ -139,14 +142,14 @@ class ExchangePositionWatchListener(Listener):
             return
         await self.exchange.medal_watch_positions()
 
-    async def on_stop(self):
-        """停止时取消持仓订阅"""
-        # try:
-        #     # await self.exchange.un_watch_positions()
-        #     # current not supported in ccxt
-        # except UnsubscribeError:
-        #     pass
-        await super().on_stop()
+    # async def on_stop(self):
+    #     """停止时取消持仓订阅"""
+    #     # try:
+    #     #     # await self.exchange.un_watch_positions()
+    #     #     # current not supported in ccxt
+    #     # except UnsubscribeError:
+    #     #     pass
+    #     await super().on_stop()
 
 
 class ExchangePositionListener(Listener):
@@ -191,7 +194,8 @@ class ExchangeStateListener(Listener):
     async def on_tick(self) -> None:
         """获取并更新余额信息"""
         # print("tick: ExchangeStateListener")
-        if not self.exchange.ready:
+        db = self.root.database
+        if not self.exchange.ready or db is None:
             return
         result = {}
         for ccxt_key in self.exchange.exchanges.keys():
@@ -200,7 +204,7 @@ class ExchangeStateListener(Listener):
         total = sum(result.values())
         if self.exchange.unified_account:
             total = total / len(self.exchange.exchanges)
-        controller = self.root.database.get_controller(ExchangeStateController)
+        controller = db.get_controller(ExchangeStateController)
         await controller.update(result.get("swap", 0.0), result.get("spot", 0.0), total, self.exchange)
 
 
@@ -270,3 +274,25 @@ class ExchangeBalanceListener(CCXTExchangeGroupListener):
             name=name,
             parent=self
         )
+
+
+class ExchangeFundingRateBillListener(Listener):
+
+    @property
+    def interval(self) -> float:
+        return 30.0
+
+    @property
+    def exchange(self) -> 'BaseExchange':
+        """通过树形结构获取"""
+        return self.parent
+
+    async def on_tick(self):
+        """获取并更新资金费率信息"""
+        if not self.exchange.ready:
+            return
+        history = await self.exchange.medal_fetch_funding_rates_history()
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(FundingRateBillController)
+            await controller.update(history, self.exchange)

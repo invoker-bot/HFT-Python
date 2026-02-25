@@ -13,13 +13,8 @@ class DebugPlugin(PluginBase):
 
     name: str = "debug_plugin"
 
-    # def __init__(self):
-    #     """
-    #     初始化调试插件
-    #     """
-    #     self.config = {}
     @hookimpl
-    def on_listener_start(self, listener: "Listener"):
+    async def on_listener_start(self, listener: "Listener"):
         """
         任何 Listener 启动时调用
 
@@ -29,7 +24,7 @@ class DebugPlugin(PluginBase):
         listener.logger.info("listener started")
 
     @hookimpl
-    def on_listener_stop(self, listener: "Listener"):
+    async def on_listener_stop(self, listener: "Listener"):
         """
         任何 Listener 停止时调用
 
@@ -38,5 +33,14 @@ class DebugPlugin(PluginBase):
         """
         listener.logger.info("listener stopped")
 
+    @hookimpl
+    async def on_app_tick(self, app):
+        """
+        每个 tick 循环调用
+
+        Args:
+            app: AppCore 实例
+        """
+        app.logger.debug("app tick")
 
 pm.register(DebugPlugin())

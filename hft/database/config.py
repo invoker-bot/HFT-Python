@@ -14,8 +14,6 @@ class PersistConfig(BaseModel):
     order_bill: bool = Field(True, description="订单账单")
     funding_rate_bill: bool = Field(True, description="资金费率账单")
     exchange_state: bool = Field(True, description="账户余额快照")
-    # positions: bool = Field(True, description="持仓快照")
-    # balances: bool = Field(True, description="余额明细")
     ohlcv: bool = Field(True, description="K线数据")
     ticker: bool = Field(True, description="Ticker数据")
     ticker_volume: bool = Field(True, description="Ticker 成交量数据")

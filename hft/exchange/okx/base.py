@@ -3,11 +3,8 @@ OKX 交易所实现
 """
 import logging
 from typing import ClassVar
-
-from cache import AsyncTTL
-
+from ...core.cache_decorator import instance_cache
 from ..base import BaseExchange, FundingRate, FundingRateBill
-
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +51,7 @@ class OKXExchange(BaseExchange):
 
     def medal_balance_usd(self, data):
         return float(data['info']['data'][0]['totalEq'])
-    
+
     async def medal_fetch_balance_usd(self, ccxt_instance_key):
         data = await self.exchanges[ccxt_instance_key].fetch_balance()
         return self.medal_balance_usd(data)
@@ -81,7 +78,7 @@ class OKXExchange(BaseExchange):
         settle = item['settleCcy']
         return f"{base}/{quote}:{settle}"
 
-    @AsyncTTL(time_to_live=30, maxsize=32)
+    @instance_cache(ttl=30)
     async def __fetch_instruments(self) -> dict[str, dict]:
         """获取所有永续合约"""
         result = await self.exchanges["swap"].fetch(
@@ -89,7 +86,7 @@ class OKXExchange(BaseExchange):
         )
         return self._parse_response(result)
 
-    @AsyncTTL(time_to_live=30, maxsize=32)
+    @instance_cache(ttl=30)
     async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
         result = await self.exchanges["swap"].fetch(
@@ -97,7 +94,7 @@ class OKXExchange(BaseExchange):
         )
         return self._parse_response(result)
 
-    @AsyncTTL(time_to_live=30, maxsize=32)
+    @instance_cache(ttl=15)
     async def __fetch_tickers(self) -> dict[str, dict]:
         """获取所有 ticker"""
         result = await self.exchanges["swap"].fetch(
@@ -127,19 +124,19 @@ class OKXExchange(BaseExchange):
     #     index_res = await self.exchange.fetch(
     #         f"{self.REST_URL}{self.INDEX_PRICE_ENDPOINT}?quoteCcy=USDT"
     #     )
-    # 
+    #
     #     for mark in mark_res.get('data', []):
     #         inst_id = mark['instId']
     #         ts = float(mark['ts']) / 1000.0
     #         self._mark_prices_cache[inst_id].append(ts, float(mark['markPx']))
-    # 
+    #
     #     for index in index_res.get('data', []):
     #         inst_id = index['instId'] + "-SWAP"
     #         ts = float(index['ts']) / 1000.0
     #         self._index_prices_cache[inst_id].append(ts, float(index['idxPx']))
 
-    @AsyncTTL(time_to_live=5, maxsize=32)
-    async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
+    # @instance_cache(ttl=5)
+    async def medal_fetch_funding_rates_internal(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}
 
@@ -181,7 +178,7 @@ class OKXExchange(BaseExchange):
                     timestamp=float(funding['ts']) / 1000.0,
                     expiry=expiry,
                     base_funding_rate=float(funding['interestRate']),
-                    next_funding_rate=float(funding['fundingRate']),  
+                    next_funding_rate=float(funding['fundingRate']),
                     next_funding_timestamp=funding_time,  # intentionally using funding_time to match OKX's definition
                     funding_interval_hours=funding_interval_hours,
                     mark_price=mark_price,
@@ -198,6 +195,7 @@ class OKXExchange(BaseExchange):
 
         return funding_rates
 
+    @instance_cache(ttl=30)
     async def medal_fetch_funding_rates_history(self) -> list[FundingRateBill]:
         """获取资金费率账单"""
         bills = []

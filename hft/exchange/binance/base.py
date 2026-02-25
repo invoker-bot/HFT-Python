@@ -2,9 +2,7 @@
 Binance 交易所实现
 """
 from typing import ClassVar
-
-from cache import AsyncTTL
-
+from ...core.cache_decorator import instance_cache
 from ..base import BaseExchange, FundingRate, FundingRateBill
 
 
@@ -32,7 +30,7 @@ class BinanceExchange(BaseExchange):
             return float(balance)
         return super().medal_balance_usd(data)  # 回退到基类实现
 
-    @AsyncTTL(time_to_live=30, maxsize=32)
+    @instance_cache(ttl=30)
     async def __fetch_symbols(self) -> dict[str, dict]:
         """获取所有永续合约交易对"""
         data = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
@@ -50,12 +48,13 @@ class BinanceExchange(BaseExchange):
         margin = symbol_data["marginAsset"]
         return f"{base}/{quote}:{margin}"
 
-    @AsyncTTL(time_to_live=30, maxsize=32)
+    @instance_cache(ttl=5)
     async def __fetch_fundings(self) -> dict[str, dict]:
         """获取资金费率信息"""
         fundings = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.FUNDING_INFO_ENDPOINT}")
         return {f["symbol"]: f for f in fundings}
 
+    @instance_cache(ttl=5)
     async def __fetch_premium_indices(self) -> dict[str, dict]:
         """获取溢价指数"""
         indices = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.PREMIUM_INDEX_ENDPOINT}")
@@ -66,8 +65,8 @@ class BinanceExchange(BaseExchange):
         #     # self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
         return {indice["symbol"]: indice for indice in indices}
 
-    @AsyncTTL(time_to_live=3, maxsize=32)
-    async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
+    # @instance_cache(ttl=5)
+    async def medal_fetch_funding_rates_internal(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}
 
@@ -110,6 +109,7 @@ class BinanceExchange(BaseExchange):
 
         return funding_rates
 
+    @instance_cache(ttl=30)
     async def medal_fetch_funding_rates_history(self) -> list[FundingRateBill]:
         """获取资金费率账单"""
         bills = []

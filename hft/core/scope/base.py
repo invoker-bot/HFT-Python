@@ -43,7 +43,7 @@ class VirtualScope(ABC):
 
     @abstractmethod
     def get_var_update_time(self, name: str) -> float:
-        """获取变量的最后更新时间戳"""
+        """获取条件变量的最后更新时间戳"""
 
     @property
     @abstractmethod
@@ -127,6 +127,7 @@ class BaseScope(VirtualScope):
     @property
     def id(self) -> str:
         return self.calculate_id(self.class_name, self._instance_id)
+
     @property
     def app_core(self) -> 'AppCore':
         return self._app_core
@@ -254,7 +255,7 @@ class BaseScope(VirtualScope):
         """清空当前 scope 的函数（不影响继承的函数）"""
         self._functions.clear()
 
-    classes = {}
+    classes = {}  # class_name -> class
 
     def __getstate__(self) -> dict:
         """

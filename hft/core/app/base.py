@@ -180,6 +180,11 @@ class AppCore(Listener):
         except KeyboardInterrupt:
             self.logger.info("Received keyboard interrupt")
         finally:
+            # 确保正常关闭所有资源
+            try:
+                loop.run_until_complete(self.stop(True))
+            except Exception as e:
+                self.logger.error("Error during stop: %s", e, exc_info=True)
             # 取消所有待处理的任务
             pending = asyncio.all_tasks(loop)
             for task in pending:
@@ -206,7 +211,7 @@ class AppCore(Listener):
         # 启动缓存守护线程
         self.factory.start_daemon(self)
         # 触发插件钩子
-        pm.hook.on_app_start(app=self)
+        await asyncio.gather(*pm.hook.on_app_start(app=self))
 
     async def on_tick(self) -> bool:
         """
@@ -223,8 +228,7 @@ class AppCore(Listener):
             True 如果策略组已完成，程序应该退出
         """
         # 触发插件钩子
-        pm.hook.on_app_tick(app=self)
-        # self.logger.info("app tick:")
+        await asyncio.gather(*pm.hook.on_app_tick(app=self))
         # 检查策略组是否已完成
         if self.strategy.finished:
             self.logger.info("StrategyGroup finished, AppCore exiting")
@@ -290,7 +294,7 @@ class AppCore(Listener):
         # 同步保存缓存（确保数据不丢失）
         self.factory.save_cache()
         # 触发插件钩子
-        pm.hook.on_app_stop(app=self)
+        await asyncio.gather(*pm.hook.on_app_stop(app=self))
         if self.database is not None:
             await self.database.close()
         await super().on_stop()

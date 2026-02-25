@@ -662,7 +662,7 @@ class Listener(ABC):
             match self.state:
                 case ListenerState.STARTING:
                     if self.enabled:
-                        await self.on_start()
+                        await self.call_on_start()
                         self.start_time = self.current_time
                         self.state = ListenerState.RUNNING
                     else:
@@ -670,6 +670,7 @@ class Listener(ABC):
                 case ListenerState.RUNNING:
                     if self.enabled:
                         # try:
+                        await asyncio.gather(*pm.hook.on_listener_tick(listener=self))  # 插件钩子：Listener tick
                         result = await self.on_tick()
                         self._healthy = True
                         if result:  # task signaled completion
@@ -687,7 +688,7 @@ class Listener(ABC):
                     #     self.state = ListenerState.STOPPED
                 case ListenerState.STOPPING:
                     try:
-                        await asyncio.shield(self.on_stop())
+                        await asyncio.shield(self.call_on_stop())
                     except Exception as e:
                         if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt)):
                             raise
@@ -740,7 +741,12 @@ class Listener(ABC):
     async def on_start(self):
         """启动回调，子类可覆盖实现初始化逻辑"""
         # 插件钩子：Listener 启动
-        pm.hook.on_listener_start(listener=self)
+        # pm.hook.on_listener_start(listener=self)
+
+    async def call_on_start(self):
+        """调用 on_start（不加锁，供外部调用）"""
+        await asyncio.gather(*pm.hook.on_listener_start(listener=self))
+        await self.on_start()
 
     async def __stop_internal(self, recursive: bool = True):
         """stop() 的实际实现，被 shield 保护"""
@@ -781,7 +787,12 @@ class Listener(ABC):
     async def on_stop(self):
         """停止回调，子类可覆盖实现清理逻辑"""
         # 插件钩子：Listener 停止
-        pm.hook.on_listener_stop(listener=self)
+        # await pm.hook.on_listener_stop(listener=self)
+
+    async def call_on_stop(self):
+        """调用 on_stop（不加锁，供外部调用）"""
+        await self.on_stop()
+        await asyncio.gather(*pm.hook.on_listener_stop(listener=self))
 
     async def restart(self, recursive: bool = True):
         """

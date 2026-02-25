@@ -8,6 +8,8 @@ HFT 插件系统
 - 通知钩子 (on_notify, on_health_check_failed, ...)
 
 详见 docs/plugin.md
+
+TODO: 动态加载插件（从指定目录或 entry_points），插件配置管理，插件间通信机制。
 """
 from typing import TYPE_CHECKING
 
@@ -37,7 +39,7 @@ class HookSpec:
     # ========== 生命周期 Hooks ==========
 
     @hookspec
-    def on_app_start(self, app: "AppCore"):
+    async def on_app_start(self, app: "AppCore"):
         """
         应用启动时调用
 
@@ -46,7 +48,7 @@ class HookSpec:
         """
 
     @hookspec
-    def on_app_stop(self, app: "AppCore"):
+    async def on_app_stop(self, app: "AppCore"):
         """
         应用停止时调用
 
@@ -55,7 +57,7 @@ class HookSpec:
         """
 
     @hookspec
-    def on_app_tick(self, app: "AppCore"):
+    async def on_app_tick(self, app: "AppCore"):
         """
         每个 tick 循环调用
 
@@ -64,7 +66,7 @@ class HookSpec:
         """
 
     @hookspec
-    def on_listener_start(self, listener: "Listener"):
+    async def on_listener_start(self, listener: "Listener"):
         """
         任何 Listener 启动时调用
 
@@ -73,7 +75,7 @@ class HookSpec:
         """
 
     @hookspec
-    def on_listener_stop(self, listener: "Listener"):
+    async def on_listener_stop(self, listener: "Listener"):
         """
         任何 Listener 停止时调用
 
@@ -81,6 +83,14 @@ class HookSpec:
             listener: Listener 实例
         """
 
+    @hookspec
+    async def on_listener_tick(self, listener: "Listener"):
+        """
+        任何 Listener 每个 tick 循环调用
+
+        Args:
+            listener: Listener 实例
+        """
     # ========== 交易 Hooks ==========
 
     @hookspec(firstresult=True)

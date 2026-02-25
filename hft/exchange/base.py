@@ -16,6 +16,7 @@ from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ccxt.base.errors import InvalidOrder
@@ -27,11 +28,11 @@ from pyee.asyncio import AsyncIOEventEmitter
 from ..core.healthy_data import HealthyData
 from ..core.listener import Listener
 from ..core.cache_decorator import instance_cache
-# from ..indicator.persist import (ExchangeBalanceUsdListener,
-#                                  ExchangeFundingRateBillListener)
-from ..plugin import pm
+from ..database.controllers import TickerController, OrderBookController, \
+    TradesController, OHLCVController, FundingRateController, TickerVolumeController
+# from ..plugin import pm
 from .listeners import ExchangeStateListener, ExchangePositionListener, \
-    ExchangeBalanceListener, ExchangeOrderBillListener
+    ExchangeBalanceListener, ExchangeOrderBillListener, ExchangeFundingRateBillListener
 from .utils import round_to_precision
 
 if TYPE_CHECKING:
@@ -156,36 +157,29 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     """
     class_name: ClassVar[str] = "base_exchange"
     __pickle_exclude__ = {*Listener.__pickle_exclude__, "config", "event", "_positions",
-                          "_balances", "_markets", "_currencies"}
+                          "_balances", "_markets", "_currencies", "db_config"}
 
     # 是否为统一账户模式（现货和合约共用账户）, 从而影响了 balance计算
     # OKX 等交易所为 True，Binance 等为 False（默认）
     unified_account: ClassVar[bool] = False
     # ccxt key -> {pair -> "used/free/total"}
-    # self.add_child(ExchangeFundingRateBillListener())
-    # self.add_child(ExchangeBalanceUsdListener(60))
-    # self.add_child(ExchangeOrderBillListener())
-    # self.add_child(ExchangePositionListener())
-    # self.add_child(ExchangeBalanceListener())
-    # self.add_child(ExchangeCurrenciesListener())
-
     @property
     def event(self) -> AsyncIOEventEmitter:
-        """通过树形结构获取"""
+        """重要：使用parent的统一event"""
         return self.parent.event
 
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
         self.config: 'BaseExchangeConfig' = kwargs['config']
-        # self.event = AsyncIOEventEmitter()  # 重新创建事件发射器
         self._markets: HealthyData[dict[str, MarketInterface]] = HealthyData(max_age=1800.0)  # id -> market dict
         self._currencies: HealthyData[dict[str, CurrencyInterface]] = HealthyData(max_age=1800.0)  # 货币信息
         # 重新创建持仓数据管理器
-        # 持仓数据：使用 HealthyData 管理缓存和刷新
+        # 合约持仓数据：使用 HealthyData 管理缓存和刷新
         self._positions: HealthyData[dict[str, float]] = HealthyData(
             max_age=30.0  # 此数据主要是对合约生效
         )
         # 余额数据：使用 HealthyData 管理缓存和刷新 (symbol -> {"used":..., "free":..., "total":...})
+        # 现货主要是使用余额的total字段（对于非unified的账户合约账户中也可能含有同一种现货资产，对unified的账户不要重复计算）
         self._balances: dict[str, HealthyData[dict[str, dict[str, float]]]] = defaultdict(
             lambda: HealthyData(max_age=30.0)
         )
@@ -193,45 +187,56 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         factory.get_or_create(ExchangeStateListener, parent=self)  # 写入余额变化
         if "swap" in self.config.ccxt_instances:
             factory.get_or_create(ExchangePositionListener, parent=self)  # 定期同步持仓，仅合约需要
-        factory.get_or_create(ExchangeBalanceListener, parent=self)  # 定期同步余额
+            factory.get_or_create(ExchangeFundingRateBillListener, parent=self)  # 资金费率账单监听器
+        factory.get_or_create(ExchangeBalanceListener, parent=self)  # 定期同步余额，用于现货持仓
         factory.get_or_create(ExchangeOrderBillListener, parent=self)  # 订单账单监听器
+        self.event.on("ticker:update", self.on_ticker_update)  # 监听 ticker 更新事件
+        self.event.on("order_book:update", self.on_order_book_update)  # 监听订单簿更新事件
+        self.event.on("trades:update", self.on_trades_update)  # 监听成交更新事件
+        self.event.on("ohlcv:update", self.on_ohlcv_update)  # 监听 K 线更新事件
+
+    @cached_property
+    def db_config(self):
+        return self.root.config.database
 
     @property
     def markets(self) -> HealthyData[dict[str, MarketInterface]]:
-        """获取缓存的市场数据（不检查健康状态）"""
+        """直接获取缓存的市场数据（不检查健康状态）"""
         return self._markets
 
     async def get_markets_data(self) -> dict[str, MarketInterface]:
-        """获取最新的市场数据"""
+        """获取最新的市场数据，保证是健康的"""
         return await self.markets.get_data_or_update_by_func(self.load_markets_internal)
 
     @property
     def currencies(self) -> HealthyData[dict[str, CurrencyInterface]]:
-        """获取缓存的货币数据（不检查健康状态）"""
+        """直接获取缓存的货币数据（不检查健康状态）"""
         return self._currencies
 
     async def get_currencies_data(self) -> dict[str, CurrencyInterface]:
-        """获取最新的货币数据"""
+        """获取最新的货币数据，保证是健康的"""
         return await self.currencies.get_data_or_update_by_func(self.fetch_currencies_internal)
 
     @property
     def positions(self) -> HealthyData[dict[str, float]]:
-        """获取缓存的持仓数据（不检查健康状态）"""
+        """直接获取缓存的持仓数据（不检查健康状态）"""
         return self._positions
 
     async def get_positions_data(self) -> dict[str, float]:
-        """获取最新的持仓数据"""
+        """获取最新的持仓数据，保证是健康的"""
         return await self.medal_fetch_positions()
 
     @property
     def balances(self) -> dict[str, HealthyData[dict[str, dict[str, float]]]]:
+        """直接获取余额数据管理器（不检查健康状态）"""
         return self._balances
 
     async def get_balances_data(self, ccxt_instance_key: str) -> dict[str, Balance]:
-        """获取最新的余额数据"""
+        """获取最新的余额数据，保证是健康的"""
         return await self.medal_fetch_balance(ccxt_instance_key)
 
     async def get_total_balances_data(self) -> dict[str, dict[str, float]]:
+        """直接获取所有账户的余额数据，保证是健康的"""
         if self.unified_account:
             return await self.get_balances_data(self.config.ccxt_instance_key)
         else:
@@ -243,7 +248,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             return result
 
     async def medal_get_pair_amount(self, pair: str | MarketTradingPair) -> float:
-        """获取指定交易对的持仓数量（正数表示多头，负数表示空头）"""
+        """获取指定交易对的持仓数量（正数表示多头，负数表示空头），会转换现货交易的数量"""
         symbol = self.to_raw_symbol(pair)
         markets = await self.get_markets_data()
         market = markets[symbol]
@@ -271,6 +276,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         return pair
 
     def to_trading_pair(self, pair: str | MarketTradingPair | MarketInterface) -> MarketTradingPair:
+        """直接转换为 MarketTradingPair 对象，支持输入 MarketTradingPair、交易对字符串或市场数据字典"""
         if isinstance(pair, MarketTradingPair):
             return pair
         if isinstance(pair, str):
@@ -291,9 +297,24 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         return MarketTradingPair(
             self.class_name, base, quote, trade_type, market['id'], trade_sub_type, expiry)
 
+    async def to_trading_pair_async(self, pair: str | MarketTradingPair | MarketInterface) -> MarketTradingPair:
+        """异步版本的 to_trading_pair，支持输入 MarketTradingPair、交易对字符串或市场数据字典"""
+        if isinstance(pair, str):
+            pair = (await self.get_markets_data())[pair]
+        return self.to_trading_pair(pair)
+
     def get_symbol_ccxt_instance_key(self, pair: str | MarketTradingPair) -> str:
-        pair = self.to_raw_symbol(pair)
-        type_str = self._markets.get_data()[pair]['type']  # 需要提前load markets
+        if isinstance(pair, str):
+            markets = self._markets.get_data()
+            if markets is None:
+                if ":" in pair:
+                    type_str = "swap"
+                else:
+                    type_str = "spot"
+            else:
+                type_str = markets[pair]['type']
+        else:
+            type_str = pair["type"]
         return self.config.to_ccxt_instance_key(type_str)
 
     def get_exchange(self, pair: str | MarketTradingPair) -> CCXTExchange:  # 查询指定id的交易所实例
@@ -356,7 +377,6 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         await self.on_tick()
 
     # ========== 市场数据方法 ticker/order_book/trades/ohlcv ==========
-
     async def fetch_ticker(self, symbol: str) -> Ticker:
         """
         获取 ticker 数据
@@ -376,12 +396,25 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             }
         """
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_ticker(symbol)
+        ticker = await exchange.fetch_ticker(symbol)
+        if ticker is not None:
+            self.event.emit("ticker:update", self, symbol, ticker)
+        return ticker
 
     async def watch_ticker(self, symbol: str) -> Ticker:
         """订阅 ticker"""
         exchange = self.get_exchange(symbol)
-        return await exchange.watch_ticker(symbol)
+        ticker = await exchange.watch_ticker(symbol)
+        if ticker is not None:
+            self.event.emit("ticker:update", self, symbol, ticker)
+        return ticker
+
+    async def on_ticker_update(self, symbol: str, ticker: Ticker):
+        """ticker 更新时的回调，可以在这里添加额外的处理逻辑"""
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(TickerController)
+            await controller.update(ticker, self)
 
     async def un_watch_ticker(self, symbol: str):
         """取消订阅 ticker"""
@@ -402,12 +435,25 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             }
         """
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_order_book(symbol, limit)
+        order_book = await exchange.fetch_order_book(symbol, limit)
+        if order_book is not None:
+            self.event.emit("order_book:update", self, symbol, order_book)
+        return order_book
 
     async def watch_order_book(self, symbol: str, limit: Optional[int] = None) -> OrderBook:
         """订阅订单簿"""
         exchange = self.get_exchange(symbol)
-        return await exchange.watch_order_book(symbol, limit)
+        order_book = await exchange.watch_order_book(symbol, limit)
+        if order_book is not None:
+            self.event.emit("order_book:update", self, symbol, order_book)
+        return order_book
+
+    async def on_order_book_update(self, symbol: str, order_book: OrderBook):
+        """订单簿更新时的回调，可以在这里添加额外的处理逻辑"""
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(OrderBookController)
+            await controller.update(order_book, self)
 
     async def un_watch_order_book(self, symbol: str):
         """取消订阅订单簿"""
@@ -422,12 +468,25 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     ) -> list[Trade]:
         """获取成交记录"""
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_trades(symbol, since, limit)
+        trades = await exchange.fetch_trades(symbol, since, limit)
+        if trades is not None:
+            self.event.emit("trades:update", self, symbol, trades)
+        return trades
 
     async def watch_trades(self, symbol: str) -> list[Trade]:
         """订阅成交"""
         exchange = self.get_exchange(symbol)
-        return await exchange.watch_trades(symbol)
+        trades = await exchange.watch_trades(symbol)
+        if trades is not None:
+            self.event.emit("trades:update", self, symbol, trades)
+        return trades
+
+    async def on_trades_update(self, symbol: str, trades: list[Trade]):
+        """成交更新时的回调，可以在这里添加额外的处理逻辑"""
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(TradesController)
+            await controller.update(trades, self)
 
     async def un_watch_trades(self, symbol: str):
         """取消订阅成交"""
@@ -448,17 +507,30 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             [[timestamp, open, high, low, close, volume], ...]
         """
         exchange = self.get_exchange(symbol)
-        return await exchange.fetch_ohlcv(symbol, timeframe, since, limit)
+        ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, since, limit)
+        if ohlcv is not None:
+            self.event.emit("ohlcv:update", self, symbol, ohlcv)
+        return ohlcv
 
     async def watch_ohlcv(self, symbol: str, timeframe: str = '1m') -> list[list[float]]:
         """订阅 K 线"""
         exchange = self.get_exchange(symbol)
-        return await exchange.watch_ohlcv(symbol, timeframe)
+        ohlcv = await exchange.watch_ohlcv(symbol, timeframe)
+        if ohlcv is not None:
+            self.event.emit("ohlcv:update", self, symbol, ohlcv)
+        return ohlcv
+
+    async def on_ohlcv_update(self, symbol: str, ohlcv: list[list[float]]):
+        """K 线更新时的回调，可以在这里添加额外的处理逻辑"""
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(OHLCVController)
+            await controller.update(symbol, ohlcv, self)
 
     async def un_watch_ohlcv(self, symbol: str, timeframe: str = '1m'):
         """取消订阅 K 线"""
         exchange = self.get_exchange(symbol)
-        return await exchange.un_watch_ohlcv(symbol, timeframe)
+        await exchange.un_watch_ohlcv(symbol, timeframe)
 
     # ========== 交易方法 create/cancel/fetch/watch order ==========
     def _default_order_params(self) -> dict:
@@ -557,11 +629,11 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         }
 
         # 插件钩子：允许插件阻止订单
-        if pm.hook.on_order_creating(
-            exchange=self, symbol=symbol, side=side, amount=amount, price=price
-        ) is False:
-            self.logger.info("Order blocked by plugin: %s %s %s", symbol, side, amount)
-            return None
+        # if pm.hook.on_order_creating(
+        #     exchange=self, symbol=symbol, side=side, amount=amount, price=price
+        # ) is False:
+        #     self.logger.info("Order blocked by plugin: %s %s %s", symbol, side, amount)
+        #     return None
         market = (await self.get_markets_data()).get(symbol, None)
         resolved_order = await self.__resolve_order(order_params, market)
         if resolved_order is None:
@@ -588,7 +660,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 return order
             except (InvalidOrder, KeyError) as e:
                 # 插件钩子：订单创建失败
-                pm.hook.on_order_error(exchange=self, error=e, order_params=order_params)
+                # pm.hook.on_order_error(exchange=self, error=e, order_params=order_params)
                 self.logger.exception("Failed to create order: %s", e)
                 return None
         else:
@@ -743,13 +815,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def medal_cache_balance(self, ccxt_instance_key: str, balance: dict[str, Balance]):
         await self._balances[ccxt_instance_key].update(balance)
         # 插件钩子：余额更新
-        pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
+        # pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
         return balance
 
     async def medal_fetch_balance_internal(self, ccxt_instance_key: str) -> dict[str, Balance]:
         exchange = self.exchanges[ccxt_instance_key]
         balance = self._transform_balance(await exchange.fetch_balance())
-        pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
+        # pm.hook.on_balance_update(exchange=self, account=ccxt_instance_key, balance=balance)
         return balance, time.time()
 
     async def medal_fetch_balance(self, ccxt_instance_key: str) -> dict[str, Balance]:
@@ -800,14 +872,14 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def medal_fetch_positions_internal(self) -> tuple[dict[str, float], float]:
         """内部方法：获取并转换持仓数据（用于 HealthyData）"""
         positions = await self._transform_positions(await self.fetch_positions())
-        pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
+        # pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
         return positions, time.time()
 
     async def medal_cache_positions(self, positions: dict[str, float]) -> dict[str, float]:
         """缓存持仓数据（供 watch/fetch 调用）"""
         await self._positions.update(positions)
         # 插件钩子：持仓更新
-        pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
+        # pm.hook.on_position_update(exchange=self, account="swap", positions=positions)
         return positions
 
     async def medal_fetch_positions(self) -> dict[str, float]:
@@ -909,8 +981,17 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         return await exchange.fetch_funding_rate_history(symbol, since, limit)
 
-    @abstractmethod
+    @instance_cache(ttl=5)
     async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:
+        results = await self.medal_fetch_funding_rates_internal()
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(FundingRateController)
+            await controller.update(results, self)
+        return results
+
+    @abstractmethod
+    async def medal_fetch_funding_rates_internal(self) -> dict[str, FundingRate]:
         """
         获取所有交易对的资金费率
         子类应该覆盖此方法
