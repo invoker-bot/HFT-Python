@@ -563,35 +563,28 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         if abs(position_amount) <= min(1e-9, precision):  # 持仓为0
             await self.medal_initialize_symbol(symbol)
 
+        if price is not None:
+            amount = min(self.config.max_position_per_order_usd / price, amount)
+        aligned_amount = round_to_precision(amount, precision)
+
         # reverse direction, 减仓
         if (position_amount * direction <= -min(1e-9, precision)) or (market['type'] == 'spot' and order_request["side"] == "sell"):
-            aligned_amount = round_to_precision(amount, precision)
             if abs(aligned_amount) < precision:
                 self.logger.debug(
                     "Order rejected: reduce amount %.6f < precision %.6f",
                     abs(aligned_amount), precision
                 )
                 return None
-            order_request["amount"] = min(abs(aligned_amount), abs(position_amount)) # 减仓订单数量不能超过持仓数量
+            order_request["amount"] = min(aligned_amount, abs(position_amount)) # 减仓订单数量不能超过持仓数量
             order_request["params"]["reduceOnly"] = True  # 减仓订单
         else:
             # 开仓/加仓：检查持仓限制
             if price is not None:
-                # 检查当前持仓是否已超限
-                current_position_value = abs(position_amount) * price
-                if current_position_value >= self.config.max_position_per_pair_usd:
-                    self.logger.debug(
-                        "Order rejected: current position %.2f USD >= max %.2f USD",
-                        current_position_value, self.config.max_position_per_pair_usd
-                    )
-                    return None
-                # 限制单笔订单金额
-                amount = min(self.config.max_position_per_order_usd / price, amount)
-                # 限制订单后总持仓不超限
-                max_additional = (self.config.max_position_per_pair_usd - current_position_value) / price
-                amount = min(max_additional, amount)
-
-            aligned_amount = round_to_precision(amount, precision)
+                # 检查订单后持仓是否超限
+                new_position_amount = abs(position_amount + direction * aligned_amount)
+                new_position_value = new_position_amount * price
+                if new_position_value > self.config.max_position_per_pair_usd:
+                    return None  # 直接拒绝订单，避免复杂的调整逻辑
             if abs(aligned_amount) < limit_amount_min:
                 self.logger.debug(
                     "Order rejected: amount %.6f (original %.6f) < min %.6f",
