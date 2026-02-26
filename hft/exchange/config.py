@@ -58,7 +58,7 @@ class BaseExchangeConfig(BaseConfig["BaseExchange"]):
     support_types: Optional[list[str]] = Field(
         None, validate_default=True, description="Supported market types: 'spot', 'swap'")
 
-    #  下单相关配置
+    # 下单相关配置
     amount_refactor: float = Field(1.0, description="Refactor factor for order amounts")
     max_position_per_pair_usd: Optional[float] = Field(
         None, description="Maximum position size per trading pair in USD")
