@@ -700,8 +700,8 @@ class FundingRateClickHouseController(FundingRateController, ClickHouseDatabaseC
             exchange.class_name,
             funding_rate.symbol,
             funding_rate.base_funding_rate,
-            funding_rate.funding_rate,
-            funding_rate.interval_hours,
+            funding_rate.next_funding_rate,
+            funding_rate.funding_interval_hours,
         ] for funding_rate in funding_rates.values()]
         await self.connector.insert('funding_rate', data, [
             'timestamp', 'exchange_name', 'trading_pair',

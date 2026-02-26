@@ -559,14 +559,17 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         limit_cost_min = market["limits"]["cost"]["min"] or 0.0
         position_amount = (await self.get_positions_data()).get(symbol, 0.0)
         direction = 1 if order_request["side"] == "buy" else -1
+        if abs(position_amount) <= min(1e-9, precision):  # 持仓为0
+            await self.medal_initialize_symbol(symbol)
         # reverse direction, 减仓
-        if (position_amount * direction < -1e-9) or (market['type'] == 'spot' and order_request["side"] == "sell"):
+        if (position_amount * direction <= -min(1e-9, precision)) or (market['type'] == 'spot' and order_request["side"] == "sell"):
             if abs(aligned_amount) < precision:
                 self.logger.debug(
                     "Order rejected: reduce amount %.6f < precision %.6f",
                     abs(aligned_amount), precision
                 )
                 return None
+            order_request["amount"] = min(abs(aligned_amount), abs(position_amount)) # 减仓订单数量不能超过持仓数量
             order_request["params"]["reduceOnly"] = True  # 减仓订单
         else:
             price = order_request.get("price", None)
@@ -946,7 +949,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         await self.set_margin_mode(symbol, 'CROSSED')
         await self.set_leverage(symbol, leverage)
 
-    @instance_cache(ttl=3600.0)
+    @instance_cache(ttl=24 * 3600.0)
     async def medal_initialize_symbol(self, symbol: str) -> None:
         """初始化交易对（设置杠杆和保证金模式）"""
         self.get_exchange(symbol)  # 确保交易所实例存在
@@ -980,6 +983,19 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """获取历史资金费率"""
         exchange = self.get_exchange(symbol)
         return await exchange.fetch_funding_rate_history(symbol, since, limit)
+
+    @instance_cache(ttl=60)
+    async def medal_fetch_ticker_volumes(self) -> dict[str, float]:
+        results = await self.medal_fetch_ticker_volumes_internal()
+        db = self.root.database
+        if db is not None:
+            controller = db.get_controller(TickerVolumeController)
+            await controller.update(results, time.time(), self)
+        return results
+
+    @abstractmethod
+    async def medal_fetch_ticker_volumes_internal(self) -> dict[str, float]:
+        pass
 
     @instance_cache(ttl=5)
     async def medal_fetch_funding_rates(self) -> dict[str, FundingRate]:

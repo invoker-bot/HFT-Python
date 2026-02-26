@@ -22,6 +22,7 @@ class BinanceExchange(BaseExchange):
     FUNDING_INFO_ENDPOINT = "/fapi/v1/fundingInfo"
     PREMIUM_INDEX_ENDPOINT = "/fapi/v1/premiumIndex"
     EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
+    TICKER_24HR_ENDPOINT = "/fapi/v1/ticker/24hr"
     PING_ENDPOINT = "/fapi/v1/ping"
 
     def medal_balance_usd(self, data):
@@ -30,7 +31,7 @@ class BinanceExchange(BaseExchange):
             return float(balance)
         return super().medal_balance_usd(data)  # 回退到基类实现
 
-    @instance_cache(ttl=30)
+    @instance_cache(ttl=60)
     async def __fetch_symbols(self) -> dict[str, dict]:
         """获取所有永续合约交易对"""
         data = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.EXCHANGE_INFO_ENDPOINT}")
@@ -65,6 +66,27 @@ class BinanceExchange(BaseExchange):
         #     # self._index_prices_cache[symbol].append(ts, float(idx['indexPrice']))
         return {indice["symbol"]: indice for indice in indices}
 
+    @instance_cache(ttl=5)
+    async def __fetch_tickers(self) -> dict[str, dict]:
+        """获取24小时ticker数据"""
+        tickers = await self.exchanges['swap'].fetch(f"{self.REST_URL}{self.TICKER_24HR_ENDPOINT}")
+        return {ticker["symbol"]: ticker for ticker in tickers}
+
+    async def medal_fetch_ticker_volumes_internal(self) -> dict[str, float]:
+        """获取所有交易对的24小时交易量（合约张数）"""
+        symbols_dict = await self.__fetch_symbols()
+        tickers_dict = await self.__fetch_tickers()
+        results = {}
+
+        for raw_symbol, symbol_data in symbols_dict.items():
+            ticker = tickers_dict.get(raw_symbol, None)
+            if ticker is not None:
+                symbol = self.__to_ccxt_symbol_id(symbol_data)
+                volume = float(ticker['volume'])
+                results[symbol] = volume
+
+        return results
+
     # @instance_cache(ttl=5)
     async def medal_fetch_funding_rates_internal(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
@@ -74,12 +96,6 @@ class BinanceExchange(BaseExchange):
         fundings_dict = await self.__fetch_fundings()
         indices_dict = await self.__fetch_premium_indices()
 
-        # 更新资金费率缓存
-        # for raw_symbol, idx in indices_dict.items():
-        #     ts = float(idx['time']) / 1000.0
-        #     rate = float(idx['lastFundingRate'])
-        #     self._funding_rates_cache[raw_symbol].append(ts, rate)
-
         for raw_symbol, symbol_data in symbols_dict.items():
             info = fundings_dict.get(raw_symbol, None)
             indices = indices_dict.get(raw_symbol, None)
@@ -88,7 +104,7 @@ class BinanceExchange(BaseExchange):
                 ts = float(indices['time']) / 1000.0
                 symbol = self.__to_ccxt_symbol_id(symbol_data)
                 funding_interval_hours = int(info['fundingIntervalHours'])
-                base_funding_rate = float(info['interestRate']) * funding_interval_hours / 8.0
+                base_funding_rate = float(indices['interestRate']) * funding_interval_hours / 8.0
                 funding_rate = FundingRate(
                     exchange=self.class_name,
                     symbol=symbol,

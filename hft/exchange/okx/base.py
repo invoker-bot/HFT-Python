@@ -68,7 +68,7 @@ class OKXExchange(BaseExchange):
         return {
             item['instId']: item
             for item in result.get('data', [])
-            if item.get('instType') == 'SWAP'
+            # if item.get('instType') == 'SWAP'
         }
 
     @staticmethod
@@ -78,7 +78,7 @@ class OKXExchange(BaseExchange):
         settle = item['settleCcy']
         return f"{base}/{quote}:{settle}"
 
-    @instance_cache(ttl=30)
+    @instance_cache(ttl=60)
     async def __fetch_instruments(self) -> dict[str, dict]:
         """获取所有永续合约"""
         result = await self.exchanges["swap"].fetch(
@@ -96,11 +96,23 @@ class OKXExchange(BaseExchange):
 
     @instance_cache(ttl=15)
     async def __fetch_tickers(self) -> dict[str, dict]:
-        """获取所有 ticker"""
+        """获取所有 ticker,从而计算volume等信息"""
         result = await self.exchanges["swap"].fetch(
             f"{self.REST_URL}{self.TICKER_ENDPOINT}?instType=SWAP"
         )
         return self._parse_response(result)
+
+    async def medal_fetch_ticker_volumes_internal(self):
+        instruments_dict = await self.__fetch_instruments()
+        tickers = await self.__fetch_tickers()
+        results = {}
+        for inst_id, ticker in tickers.items():
+            instrument = instruments_dict.get(inst_id, None)
+            if instrument is not None:
+                symbol = self.__to_ccxt_symbol_id(instrument)
+                volume = float(ticker['volCcy24h'])
+                results[symbol] = volume
+        return results
 
     async def __fetch_index_prices(self) -> dict[str, dict]:
         """获取所有指数价格"""
@@ -116,26 +128,6 @@ class OKXExchange(BaseExchange):
         )
         return self._parse_response(result)
 
-    # async def _update_price_cache(self) -> None:
-    #     """更新标记价格和指数价格缓存"""
-    #     mark_res = await self.exchange.fetch(
-    #         f"{self.REST_URL}{self.MARK_PRICE_ENDPOINT}?instType=SWAP"
-    #     )
-    #     index_res = await self.exchange.fetch(
-    #         f"{self.REST_URL}{self.INDEX_PRICE_ENDPOINT}?quoteCcy=USDT"
-    #     )
-    #
-    #     for mark in mark_res.get('data', []):
-    #         inst_id = mark['instId']
-    #         ts = float(mark['ts']) / 1000.0
-    #         self._mark_prices_cache[inst_id].append(ts, float(mark['markPx']))
-    #
-    #     for index in index_res.get('data', []):
-    #         inst_id = index['instId'] + "-SWAP"
-    #         ts = float(index['ts']) / 1000.0
-    #         self._index_prices_cache[inst_id].append(ts, float(index['idxPx']))
-
-    # @instance_cache(ttl=5)
     async def medal_fetch_funding_rates_internal(self) -> dict[str, FundingRate]:
         """获取所有交易对的资金费率"""
         funding_rates = {}
@@ -144,11 +136,11 @@ class OKXExchange(BaseExchange):
         fundings_dict = await self.__fetch_fundings()
         index_prices_dict = await self.__fetch_index_prices()
         mark_prices_dict = await self.__fetch_mark_prices()
-
         for inst_id, instrument in instruments_dict.items():
             try:
                 funding = fundings_dict.get(inst_id)
-                index_price_data = index_prices_dict.get(inst_id)
+                index_price_key = inst_id.split("-SWAP")[0]
+                index_price_data = index_prices_dict.get(index_price_key)
                 mark_price_data = mark_prices_dict.get(inst_id)
 
                 if not funding or not index_price_data or not mark_price_data or instrument['state'] != 'live':
@@ -207,7 +199,7 @@ class OKXExchange(BaseExchange):
             })
             for raw in result.get('data', []):
                 # subType 173/174 是资金费率
-                if (raw.get('instType') == 'SWAP' and
+                if (# raw.get('instType') == 'SWAP' and
                     int(raw.get('subType', 0)) in (173, 174) and
                     raw.get('ccy') in ('USDT', 'USDC', 'USD')):
                     inst_id = raw['instId']

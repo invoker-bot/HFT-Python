@@ -93,189 +93,189 @@ class HookSpec:
         """
     # ========== 交易 Hooks ==========
 
-    @hookspec(firstresult=True)
-    def on_order_creating(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        side: str,
-        amount: float,
-        price: float
-    ) -> bool:
-        """
-        订单创建前调用
-
-        使用 firstresult=True，任何插件返回 False 将阻止订单创建。
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            side: 方向 ("buy" / "sell")
-            amount: 数量
-            price: 价格 (市价单为 None)
-
-        Returns:
-            True 允许创建，False 阻止创建
-        """
-
-    @hookspec
-    def on_order_created(self, exchange: "BaseExchange", order: dict):
-        """
-        订单创建成功后调用
-
-        Args:
-            exchange: 交易所实例
-            order: 订单信息 (ccxt 格式)
-        """
-
-    @hookspec
-    def on_order_filled(self, exchange: "BaseExchange", order: dict):
-        """
-        订单成交后调用
-
-        Args:
-            exchange: 交易所实例
-            order: 订单信息 (ccxt 格式)
-        """
-
-    @hookspec
-    def on_order_cancelled(self, exchange: "BaseExchange", order: dict):
-        """
-        订单取消后调用
-
-        Args:
-            exchange: 交易所实例
-            order: 订单信息 (ccxt 格式)
-        """
-
-    @hookspec
-    def on_order_error(
-        self,
-        exchange: "BaseExchange",
-        error: Exception,
-        order_params: dict
-    ):
-        """
-        订单创建失败时调用
-
-        Args:
-            exchange: 交易所实例
-            error: 异常对象
-            order_params: 订单参数
-        """
-
-    # ========== 策略 Hooks ==========
-
-    @hookspec
-    def on_strategy_targets_calculated(
-        self,
-        strategy: "BaseStrategy",
-        targets: "TargetPositions"
-    ):
-        """
-        策略计算出目标仓位后调用
-
-        Args:
-            strategy: 策略实例
-            targets: 目标仓位
-        """
-
-    @hookspec
-    def on_targets_aggregated(
-        self,
-        strategy_group: "StrategyGroup",
-        targets: "AggregatedTargets"
-    ):
-        """
-        策略组聚合目标后调用
-
-        Args:
-            strategy_group: 策略组实例
-            targets: 聚合后的目标仓位
-        """
-
-    @hookspec
-    def on_execution_start(
-        self,
-        executor: "BaseExecutor",
-        targets: "AggregatedTargets"
-    ):
-        """
-        执行器开始执行前调用
-
-        Args:
-            executor: 执行器实例
-            targets: 聚合后的目标仓位
-        """
-
-    @hookspec
-    def on_execution_complete(
-        self,
-        executor: "BaseExecutor",
-        results: list
-    ):
-        """
-        执行器执行完成后调用
-
-        Args:
-            executor: 执行器实例
-            results: 执行结果列表
-        """
-
-    # ========== 数据 Hooks ==========
-
-    @hookspec
-    def on_ticker_update(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        ticker: dict
-    ):
-        """
-        Ticker 更新时调用
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            ticker: Ticker 数据
-        """
-
-    @hookspec
-    def on_balance_update(self, exchange: "BaseExchange", account: str, balance: dict):
-        """
-        余额更新时调用
-
-        Args:
-            exchange: 交易所实例
-            balance: 余额数据
-        """
-
-    @hookspec
-    def on_position_update(self, exchange: "BaseExchange", account: str, positions: dict):
-        """
-        持仓更新时调用
-
-        Args:
-            exchange: 交易所实例
-            account: 账户名称
-            positions: 持仓数据
-        """
-
-    @hookspec
-    def on_funding_rate_update(
-        self,
-        exchange: "BaseExchange",
-        symbol: str,
-        funding_rate: dict
-    ):
-        """
-        资金费率更新时调用
-
-        Args:
-            exchange: 交易所实例
-            symbol: 交易对
-            funding_rate: 资金费率数据
-        """
+    # @hookspec(firstresult=True)
+    # def on_order_creating(
+    #     self,
+    #     exchange: "BaseExchange",
+    #     symbol: str,
+    #     side: str,
+    #     amount: float,
+    #     price: float
+    # ) -> bool:
+    #     """
+    #     订单创建前调用
+#
+    #     使用 firstresult=True，任何插件返回 False 将阻止订单创建。
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         symbol: 交易对
+    #         side: 方向 ("buy" / "sell")
+    #         amount: 数量
+    #         price: 价格 (市价单为 None)
+#
+    #     Returns:
+    #         True 允许创建，False 阻止创建
+    #     """
+#
+    # @hookspec
+    # def on_order_created(self, exchange: "BaseExchange", order: dict):
+    #     """
+    #     订单创建成功后调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         order: 订单信息 (ccxt 格式)
+    #     """
+#
+    # @hookspec
+    # def on_order_filled(self, exchange: "BaseExchange", order: dict):
+    #     """
+    #     订单成交后调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         order: 订单信息 (ccxt 格式)
+    #     """
+#
+    # @hookspec
+    # def on_order_cancelled(self, exchange: "BaseExchange", order: dict):
+    #     """
+    #     订单取消后调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         order: 订单信息 (ccxt 格式)
+    #     """
+#
+    # @hookspec
+    # def on_order_error(
+    #     self,
+    #     exchange: "BaseExchange",
+    #     error: Exception,
+    #     order_params: dict
+    # ):
+    #     """
+    #     订单创建失败时调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         error: 异常对象
+    #         order_params: 订单参数
+    #     """
+#
+    # # ========== 策略 Hooks ==========
+#
+    # @hookspec
+    # def on_strategy_targets_calculated(
+    #     self,
+    #     strategy: "BaseStrategy",
+    #     targets: "TargetPositions"
+    # ):
+    #     """
+    #     策略计算出目标仓位后调用
+#
+    #     Args:
+    #         strategy: 策略实例
+    #         targets: 目标仓位
+    #     """
+#
+    # @hookspec
+    # def on_targets_aggregated(
+    #     self,
+    #     strategy_group: "StrategyGroup",
+    #     targets: "AggregatedTargets"
+    # ):
+    #     """
+    #     策略组聚合目标后调用
+#
+    #     Args:
+    #         strategy_group: 策略组实例
+    #         targets: 聚合后的目标仓位
+    #     """
+#
+    # @hookspec
+    # def on_execution_start(
+    #     self,
+    #     executor: "BaseExecutor",
+    #     targets: "AggregatedTargets"
+    # ):
+    #     """
+    #     执行器开始执行前调用
+#
+    #     Args:
+    #         executor: 执行器实例
+    #         targets: 聚合后的目标仓位
+    #     """
+#
+    # @hookspec
+    # def on_execution_complete(
+    #     self,
+    #     executor: "BaseExecutor",
+    #     results: list
+    # ):
+    #     """
+    #     执行器执行完成后调用
+#
+    #     Args:
+    #         executor: 执行器实例
+    #         results: 执行结果列表
+    #     """
+#
+    # # ========== 数据 Hooks ==========
+#
+    # @hookspec
+    # def on_ticker_update(
+    #     self,
+    #     exchange: "BaseExchange",
+    #     symbol: str,
+    #     ticker: dict
+    # ):
+    #     """
+    #     Ticker 更新时调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         symbol: 交易对
+    #         ticker: Ticker 数据
+    #     """
+#
+    # @hookspec
+    # def on_balance_update(self, exchange: "BaseExchange", account: str, balance: dict):
+    #     """
+    #     余额更新时调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         balance: 余额数据
+    #     """
+#
+    # @hookspec
+    # def on_position_update(self, exchange: "BaseExchange", account: str, positions: dict):
+    #     """
+    #     持仓更新时调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         account: 账户名称
+    #         positions: 持仓数据
+    #     """
+#
+    # @hookspec
+    # def on_funding_rate_update(
+    #     self,
+    #     exchange: "BaseExchange",
+    #     symbol: str,
+    #     funding_rate: dict
+    # ):
+    #     """
+    #     资金费率更新时调用
+#
+    #     Args:
+    #         exchange: 交易所实例
+    #         symbol: 交易对
+    #         funding_rate: 资金费率数据
+    #     """
 
     # ========== 通知 Hooks ==========
 
