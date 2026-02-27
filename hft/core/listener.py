@@ -314,9 +314,11 @@ class Listener(ABC):
             # 记录调用方当前的取消计数，用于区分"框架主动取消"和"调用方被取消"
             cancelling_before = current_task.cancelling() if current_task else 0
             try:
+                self.logger.debug("Cancelling background task for: %s", self.name)
                 await asyncio.wait_for(bt, timeout=30)  # 等待取消完成，设置超时时间
+                self.logger.debug("Background task cancelled for: %s", self.name)
             except asyncio.TimeoutError:
-                self.logger.warning("Timeout while cancelling background task")
+                self.logger.warning("Timeout while cancelling background task for: %s", self.name)
             except asyncio.CancelledError:
                 # 检查是否是调用方被取消（取消计数增加）
                 cancelling_after = current_task.cancelling() if current_task else 0
@@ -751,10 +753,15 @@ class Listener(ABC):
     async def __stop_internal(self, recursive: bool = True):
         """stop() 的实际实现，被 shield 保护"""
         # async with self._alock:
+        self.logger.debug("Stopping listener: %s", self.name)
         await self.__delete_background_task_internal()
         if recursive:
+            stop_tasks = []
             for child in list(self.children.values()):
-                await child.stop(True)
+                self.logger.debug("Stopping child: %s", child.name)
+                stop_tasks.append(child.stop(True))
+            if len(stop_tasks) > 0:
+                await asyncio.gather(*stop_tasks)
         self.enabled = False
         if self.disable_tick:
             return
@@ -766,6 +773,7 @@ class Listener(ABC):
             # case _:
             #     self.logger.warning("Stop called but listener not running")
         await self.__tick_internal()
+        self.logger.debug("Listener stopped: %s", self.name)
 
     async def __stop_private(self, recursive: bool = True):
         async with self._alock:

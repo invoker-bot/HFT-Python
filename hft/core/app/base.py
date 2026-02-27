@@ -319,7 +319,7 @@ class AppCore(Listener):
             initialize: 是否在开始时调用 start()，默认无限循环时为 True
             finalize: 是否在结束时调用 stop()，默认无限循环时为 True
         """
-        self.logger.debug("Running %f total", self.to_duration_string(duration))
+        self.logger.debug("Running %s total", self.to_duration_string(duration))
 
         if initialize is None:
             initialize = duration < 0

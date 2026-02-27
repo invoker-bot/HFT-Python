@@ -692,11 +692,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def create_orders(self, order_params: list[OrderRequest]) -> list[Order]:
         """批量下单"""
         order_params_list = []
+        type_ = "swap"
         for order_param in order_params:
-            market = (await self.get_markets_data()).get(order_param["symbol"], None)
+            market = (await self.get_markets_data())[order_param["symbol"]]
             resolved_order = await self.__resolve_order(order_param, market)
             if resolved_order is not None:
                 order_params_list.append(resolved_order)
+            type_ = market['type'] if market is not None else type_
         if len(order_params_list) == 0:
             return []
 
@@ -709,14 +711,15 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
         # only support swap for now
         try:
-            for order_param in order_params:
+            for order_param in order_params_list:
                 self.event.emit("order:creating", self.config.path, order_param["symbol"], order_param)
-            results = await self.exchanges['swap'].create_orders(order_params)
-            for order_param, order in zip(order_params, results):
-                place_str = self.__get_place_str(order)
+
+            results = await self.exchanges[type_].create_orders(order_params_list)
+            for order_param, order in zip(order_params_list, results):
+                place_str = self.__get_place_str(order_param)
                 if order_param['type'] == "market":
-                    await self._balances[market['type']].mark_dirty()
-                    if market['type'] != "spot":
+                    await self._balances[type_].mark_dirty()
+                    if type_ != "spot":
                         await self._positions.mark_dirty()
                 self.event.emit("order:created", self.config.path, order_param["symbol"], order_param, order)
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
@@ -1385,4 +1388,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def close(self) -> None:
         """关闭连接"""
         tasks = [exchange.close() for exchange in list(self.exchanges.values())]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+        except asyncio.TimeoutError:
+            self.logger.warning("Timeout while closing exchange connections")

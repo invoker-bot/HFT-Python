@@ -122,7 +122,7 @@ class BaseExecutor(Listener):
 
     @property
     def interval(self) -> float:
-        return 5.0
+        return self.config.interval
 
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
@@ -133,9 +133,11 @@ class BaseExecutor(Listener):
     # async def update_order_status(self):
     #     for exchange_path, symbols in self.active_orders_tracker.orders.items():
     #         for symbol, orders in symbols.items():
-    #             for order_id, order in orders.items():
+    #             for order_id, active_order in orders.items():
     #                 # Update order status logic here
     #                 exchange = self.exchange_group.exchange_instances[exchange_path]
+    #                 order = await exchange.fetch_order(order_id, symbol)
+
 
     async def on_order_updated(self, exchange_path: str, symbol: str, order: Order):
         if order['status'] in ["closed", "canceled", "expired", "rejected"]:
@@ -296,8 +298,16 @@ class BaseExecutor(Listener):
             ident = f"{exchange_path}-{symbol}"
             last_refresh_orders = node.get_var("__last_refresh_orders", 0)
             if time.time() - last_refresh_orders > self.config.default_timeout:  # 每timeout秒刷新一次订单状态
+                order_ids = set()
                 for order in await exchange.fetch_open_orders(symbol):
                     await self.on_order_updated(exchange_path, symbol, order)
+                    order_ids.add(order['id'])
+                # 移除不在交易所状态中的订单
+                orders_dict = self.active_orders_tracker.orders[exchange_path][symbol]
+                print("orders:", orders_dict)
+                for order_id in list(orders_dict.keys()):
+                    if order_id not in order_ids:
+                        del orders_dict[order_id]  # 这里直接删除
                 node.set_var("__last_refresh_orders", time.time())
             # process
             # inject indicators data into vm context

@@ -48,6 +48,7 @@ class TickerDataSource(BaseTradingPairClassDataIndicator[TickerData]):
     订阅交易对的实时价格信息。
     """
     DEFAULT_HEALTHY_WINDOW = 60.0  # 最小健康窗口 1 分钟
+
     @property
     def interval(self) -> float:
         return 0.001

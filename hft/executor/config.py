@@ -123,7 +123,7 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
     """
     class_dir: ClassVar[str] = "conf/executor"
 
-    interval: float = Field(1.0, description="最小执行间隔（秒）")
+    interval: float = Field(5.0, description="最小执行间隔（秒）")
     # always: bool = Field(False, description="是否总是执行（忽略 delta 阈值检查）")
     clean: bool = Field(False, description="退出时是否清理所有活跃订单（取消）")
     requires: list[str] = Field(default_factory=list, description="依赖的 indicator ID 列表")
