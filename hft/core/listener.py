@@ -760,9 +760,9 @@ class Listener(ABC):
                 self.logger.debug("Stopping child: %s", child.name)
                 stop_tasks.append(child.stop(True))
             if len(stop_tasks) > 0:
-                self.logger.debug("Waiting for %d children to stop: %s", len(stop_tasks), self.name)
+                self.logger.info("Waiting for %d children to stop: %s", len(stop_tasks), self.name)
                 await asyncio.gather(*stop_tasks)
-                self.logger.debug("All children stopped: %s", self.name)
+                self.logger.info("All children stopped: %s", self.name)
         self.enabled = False
         await self.__delete_background_task_internal()
         if self.disable_tick:

@@ -1389,6 +1389,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         """关闭连接"""
         tasks = [exchange.close() for exchange in list(self.exchanges.values())]
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=15.0)
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=3.0)
         except asyncio.TimeoutError:
-            self.logger.warning("Timeout while closing exchange connections")
+            self.logger.warning("Timeout while closing exchange connections, forcing close")
+        except Exception as e:
+            self.logger.warning("Error while closing exchange connections: %s", e)

@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 # from ccxt.base.errors import UnsubscribeError
 from ..core.duration import parse_duration
-from ..core.listener import GroupListener, Listener
+from ..core.listener import GroupListener, Listener, ListenerState
 from ..database.controllers import ExchangeStateController, OrderBillController, FundingRateBillController
 # from ..plugin import pm
 
@@ -25,6 +25,10 @@ class CCXTExchangeGroupListener(GroupListener):
         return self.parent
 
 class CCXTExchangeOrderBillWatchListener(Listener):
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self._should_stop = False
+
     @property
     def interval(self) -> float:
         return 0.1  # watch 频率支持较高
@@ -37,11 +41,29 @@ class CCXTExchangeOrderBillWatchListener(Listener):
     async def on_tick(self):
         if not self.exchange.ready:
             return
-        order_lists = await self.exchange.watch_orders(self.name)
+        # 使用 wait_for 配合超时，定期检查停止标志
+        try:
+            order_lists = await asyncio.wait_for(
+                self.exchange.watch_orders(self.name),
+                timeout=30.0  # 30秒超时，定期检查是否需要停止
+            )
+        except asyncio.TimeoutError:
+            # 超时后检查是否需要停止
+            if self._should_stop or self.state != ListenerState.RUNNING:
+                raise asyncio.CancelledError()  # 主动退出
+            return  # 继续下一轮
+        except asyncio.CancelledError:
+            self.logger.debug("watch_orders cancelled for: %s", self.name)
+            raise
+
         db = self.root.database
         if db is not None:
             controller = db.get_controller(OrderBillController)
             await controller.update(order_lists, self.exchange)
+
+    async def on_stop(self):
+        self._should_stop = True
+        await super().on_stop()
 
     # async def on_stop(self):
     #     # 停止时取消所有挂单监听for
@@ -89,15 +111,31 @@ class CCXTExchangeOrderBillListener(Listener):
         for order_id, symbol in await controller.get_should_updated_orders(self.exchange,
                                                                            (self.auto_cancel_orders_after,
                                                                             self.auto_tracking_orders_before)):
-            order = await self.exchange.fetch_order(order_id, symbol)
+            try:
+                order = await asyncio.wait_for(
+                    self.exchange.fetch_order(order_id, symbol),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                self.logger.warning("Timeout fetching order %s:%s", symbol, order_id)
+                if self.state != ListenerState.RUNNING:  # 可能在等待订单更新时被停止，停止后不继续处理剩余订单
+                    break
+                continue
             if order['status'] not in ["closed", "canceled", "expired", "rejected"]:  # cancel if too old
                 if order['lastTradeTimestamp'] is not None:
                     order_timestamp = float(order['lastTradeTimestamp']) / 1000.0
                     if time.time() - order_timestamp > self.auto_cancel_orders_after.total_seconds():
-                        await self.exchange.cancel_order(order['id'], order['symbol'])
-                        self.logger.info("Cancel old open %s order %s:%s", order['side'], order['symbol'], order['id'])
-
+                        try:
+                            await asyncio.wait_for(
+                                self.exchange.cancel_order(order['id'], order['symbol']),
+                                timeout=5.0
+                            )
+                            self.logger.info("Cancel old open %s order %s:%s", order['side'], order['symbol'], order['id'])
+                        except asyncio.TimeoutError:
+                            self.logger.warning("Timeout canceling order %s:%s", order['symbol'], order['id'])
             await controller.update([order], self.exchange)
+            if self.state != ListenerState.RUNNING:  # 可能在等待订单更新时被停止，停止后不继续处理剩余订单
+                break
             await asyncio.sleep(1)  # 避免请求过快
 
     def initialize(self, **kwargs):
