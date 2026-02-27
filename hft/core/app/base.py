@@ -174,11 +174,20 @@ class AppCore(Listener):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.set_exception_handler(exception_handler)
+        main_task = None
         try:
             # 有限时长运行时也要正常初始化和清理
-            loop.run_until_complete(self.run_ticks(duration, initialize=True, finalize=True))
+            main_task = loop.create_task(self.run_ticks(duration, initialize=True, finalize=True))
+            loop.run_until_complete(main_task)
         except KeyboardInterrupt:
-            self.logger.info("Received keyboard interrupt")
+            self.logger.info("Received keyboard interrupt, stopping...")
+            # 取消主任务
+            if main_task and not main_task.done():
+                main_task.cancel()
+                try:
+                    loop.run_until_complete(main_task)
+                except asyncio.CancelledError:
+                    pass
         finally:
             # 确保正常关闭所有资源
             try:
