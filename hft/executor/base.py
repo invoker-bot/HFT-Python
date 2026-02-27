@@ -120,11 +120,22 @@ class BaseExecutor(Listener):
         super().__init__(**kwargs)
         self.active_orders_tracker = ActiveOrdersTracker()  # 这里管理所有类型的订单
 
+    @property
+    def interval(self) -> float:
+        return 5.0
+
     def initialize(self, **kwargs):
         super().initialize(**kwargs)
         self.config: 'BaseExecutorConfig' = kwargs['config']
         self.exchange_group.event.on("order:canceled", self.on_order_canceled)
         self.exchange_group.event.on("order:updated", self.on_order_updated)
+
+    # async def update_order_status(self):
+    #     for exchange_path, symbols in self.active_orders_tracker.orders.items():
+    #         for symbol, orders in symbols.items():
+    #             for order_id, order in orders.items():
+    #                 # Update order status logic here
+    #                 exchange = self.exchange_group.exchange_instances[exchange_path]
 
     async def on_order_updated(self, exchange_path: str, symbol: str, order: Order):
         if order['status'] in ["closed", "canceled", "expired", "rejected"]:
@@ -174,6 +185,7 @@ class BaseExecutor(Listener):
                 params = {"postOnly": True}
             else:
                 params = {}
+            # print("Creating order intent:", side, symbol, "price:", intent.price, "amount:", intent.amount, "post_only:", intent.post_only)
             order_requests.append({
                 "symbol": symbol,
                 "type": "limit" if intent.price is not None else "market",
@@ -204,8 +216,17 @@ class BaseExecutor(Listener):
     ):
         """取消活跃订单"""
         exchange = self.exchange_group.exchange_instances[exchange_path]
-        order_ids = [o.order_id for o in orders]
-        await exchange.cancel_orders(order_ids, symbol)
+        order_ids = {o.order_id for o in orders}
+        not_found_order_ids = set()
+        for order_id in order_ids:
+            print("fetching order to cancel:", order_id)
+            order = await exchange.fetch_order(order_id, symbol)  # 先确认订单状态
+            if order['status'] in ["closed", "canceled", "expired", "rejected"]:
+                not_found_order_ids.add(order_id)
+                self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [order_id])
+        canceled_orders = list(order_ids-not_found_order_ids)
+        if len(canceled_orders) > 0:
+            await exchange.cancel_orders(canceled_orders, symbol)
 
     async def cancel_all_active_orders(self):
         """退出时取消所有交易所上的活跃订单（由 config.clean 控制）"""
@@ -272,6 +293,7 @@ class BaseExecutor(Listener):
             exchange_path = node.get_var("exchange_path")
             exchange = self.exchange_group.exchange_instances[exchange_path]
             symbol = node.get_var("symbol")
+            ident = f"{exchange_path}-{symbol}"
             last_refresh_orders = node.get_var("__last_refresh_orders", 0)
             if time.time() - last_refresh_orders > self.config.default_timeout:  # 每timeout秒刷新一次订单状态
                 for order in await exchange.fetch_open_orders(symbol):
@@ -280,10 +302,13 @@ class BaseExecutor(Listener):
             # process
             # inject indicators data into vm context
             if not vm.inject_indicators(self.config.requires, node, app_core):
+                self.logger.debug("Not all required indicators are available for node: %s, required: %s", ident, self.config.requires)
+                # print("not inject indicators for node:", node.scope.class_name)
                 continue
             vm.execute_vars(self.config.standard_vars_definition, node)  # 执行变量
             if not vm.eval_condition(self.config.condition, node):
-                self.logger.debug("Condition not met, skipping scope: %s", node.scope.path)
+                # print("Condition not met, skipping node:", node.scope.class_name)
+                self.logger.debug("Condition not met, skipping scope: %s", ident)
                 continue
             # collect intents
             intents: list[OrderIntent] = []
@@ -291,7 +316,7 @@ class BaseExecutor(Listener):
                 node.set_var("level", order_def.level)  # 设置当前订单层级变量
                 vm.execute_vars(order_def.standard_vars_definition, node)  # 计算订单级变量
                 if not vm.eval_condition(order_def.condition, node):
-                    self.logger.debug("Order condition not met, skipping order level: %s", order_def.level)
+                    self.logger.debug("Order condition not met, skipping scope: %s, order level: %s", ident, order_def.level)
                     continue
                 amount = 0.0
                 if order_def.order_amount is not None:
@@ -301,14 +326,15 @@ class BaseExecutor(Listener):
                     current_price = node.get_var("last_price")  # 使用最新价
                     amount = usd / current_price  # 简化处理
                 else:
-                    raise ValueError("Either order_amount or order_usd must be specified")
+                    raise ValueError("Either order_amount or order_usd must be specified, scope: %s, order level: %s" % (ident, order_def.level))
                 price = None
                 spread = None
                 if order_def.price is not None:
                     price = vm.eval(order_def.price, node)
                 elif order_def.spread is not None:
-                    ask = node.get_var("ask_price")
-                    bid = node.get_var("bid_price")
+                    mid = node.get_var("mid_price")
+                    ask = node.get_var("ask_price", mid)
+                    bid = node.get_var("bid_price", mid)
                     spread = vm.eval(order_def.spread, node)
                     if amount > 0:  # buy
                         price = bid - spread
@@ -334,8 +360,10 @@ class BaseExecutor(Listener):
                         else:
                             ask_price = node.get_var("ask_price")
                             bid_price = node.get_var("bid_price")
-                            # if ask_price is not None and bid_price is not None:
-                            spread = abs(ask_price - bid_price)
+                            if ask_price is not None and bid_price is not None:
+                                spread = abs(ask_price - bid_price)
+                            else:
+                                self.logger.warning("Cannot calculate spread for refresh tolerance, missing price ticker data, scope: %s, order level: %s", ident, order_def.level)
                         if spread is not None:
                             refresh_tolerance = spread * refresh_tolerance_pct
                 intents.append(OrderIntent(

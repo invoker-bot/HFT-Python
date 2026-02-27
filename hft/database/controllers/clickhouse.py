@@ -573,16 +573,18 @@ class TickerClickHouseController(TickerController, ClickHouseDatabaseController)
         """插入 ticker 数据"""
         if not self.persist.ticker:
             return
-        contract_size = await exchange.get_contract_size_async(ticker.symbol)
+        if ticker['bidVolume'] is None or ticker['askVolume'] is None:
+            return
+        contract_size = await exchange.get_contract_size_async(ticker["symbol"])
         data = [[
             datetime.now(),
             exchange.class_name,
-            ticker.symbol,
-            ticker.bid,
-            ticker.bidVolume * contract_size,
-            ticker.ask,
-            ticker.askVolume * contract_size,
-            ticker.last,
+            ticker["symbol"],
+            ticker["bid"],
+            ticker["bidVolume"] * contract_size,
+            ticker["ask"],
+            ticker["askVolume"] * contract_size,
+            ticker["last"],
         ]]
         await self.connector.insert('ticker', data, [
             'timestamp', 'exchange_name', 'trading_pair', 'bid', 'bidVolume',

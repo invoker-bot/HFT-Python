@@ -61,6 +61,7 @@ class TickerDataSource(BaseTradingPairClassDataIndicator[TickerData]):
                 , timeout=5.0)
         except asyncio.TimeoutError:
             ticker: Ticker = await self.exchange.fetch_ticker(self.symbol)
+        # print("ticker:", self.symbol, ticker)
         contract_size = await self.exchange.get_contract_size_async(self.symbol)
         data = TickerData.from_ccxt(ticker, contract_size=contract_size)
         await self.data.update(data, data.timestamp)

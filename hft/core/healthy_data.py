@@ -262,8 +262,8 @@ class HealthyDataArray(BaseHealthyData[T]):
         healthy_window: Union[str, int, float, None] = None,
         duplicate_timestamp_delta: float = 1e-6,
         healthy_points: int = 3,  # 最少数据点数，越多越严格，采样是否充足
-        healthy_cv: float = 0.8,  # 最多变异系数（倒数），越大越严格，采样间隔是否均匀
-        healthy_range: float = 0.6,  # 最少覆盖面积，越大越严格，覆盖时间是否完整
+        healthy_cv: float = 0.5,  # 最多变异系数（倒数），越大越严格，采样间隔是否均匀
+        healthy_range: float = 0.25,  # 最少覆盖面积，越大越严格，覆盖时间是否完整
     ):
         """
         Args:

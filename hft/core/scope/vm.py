@@ -175,6 +175,7 @@ class VirtualMachine:
         scope_manager: 'ScopeManager' = app_core.scope_manager
         includes: dict[str, set[ScopeInstanceId]] = {}  # {class_name: {instance_id} }
         layers: ScopeFlowLayers = []  # [{instance_id: FlowScopeNode}, ...]
+        # print("Executing flow with layers:", len(flow_config))
         for layer_config in flow_config:
             class_name = layer_config.class_name
             scope_class = scope_manager.get_class(class_name)
@@ -227,5 +228,7 @@ class VirtualMachine:
                         continue
                     current_layer[instance_id] = node
             includes[class_name] = set(current_layer.keys())
+        #     print(" Layer:", class_name, "Instances:", len(current_layer))
             layers.append(current_layer)
+        # print("")
         return layers[-1] if len(layers) > 0 else {}

@@ -56,6 +56,7 @@ class OHLCVDataSource(BaseTradingPairClassDataIndicator[CandleData]):
     async def on_start(self):  # TODO: 需要在 AppCore.on_start() 后才能获取 timeframe，是否需要重构生命周期？
         await super().on_start()
         self.data.max_age = parse_duration(self.timeframe)
+        await self.update_by_fetch()
 
     async def update_by_fetch(self):
         ohlcvs: list = await self.exchange.fetch_ohlcv(self.symbol, timeframe=self.timeframe)

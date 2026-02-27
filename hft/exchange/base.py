@@ -190,10 +190,10 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             factory.get_or_create(ExchangeFundingRateBillListener, parent=self)  # 资金费率账单监听器
         factory.get_or_create(ExchangeBalanceListener, parent=self)  # 定期同步余额，用于现货持仓
         factory.get_or_create(ExchangeOrderBillListener, parent=self)  # 订单账单监听器
-        self.event.on("ticker:update", self.on_ticker_update)  # 监听 ticker 更新事件
-        self.event.on("order_book:update", self.on_order_book_update)  # 监听订单簿更新事件
-        self.event.on("trades:update", self.on_trades_update)  # 监听成交更新事件
-        self.event.on("ohlcv:update", self.on_ohlcv_update)  # 监听 K 线更新事件
+        self.event.on("ticker:update", self.__class__.on_ticker_update)  # 监听 ticker 更新事件
+        self.event.on("order_book:update", self.__class__.on_order_book_update)  # 监听订单簿更新事件
+        self.event.on("trades:update", self.__class__.on_trades_update)  # 监听成交更新事件
+        self.event.on("ohlcv:update", self.__class__.on_ohlcv_update)  # 监听 K 线更新事件
 
     @cached_property
     def db_config(self):
@@ -562,9 +562,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
 
         if abs(position_amount) <= min(1e-9, precision):  # 持仓为0
             await self.medal_initialize_symbol(symbol)
-
-        if price is not None:
-            amount = min(self.config.max_position_per_order_usd / price, amount)
+        max_position_per_order_usd = self.config.max_position_per_order_usd
+        if price is not None and max_position_per_order_usd is not None:
+            amount = min(max_position_per_order_usd / price, amount)
         aligned_amount = round_to_precision(amount, precision)
 
         # reverse direction, 减仓
@@ -578,12 +578,13 @@ class BaseExchange(Listener, metaclass=ABCMeta):
             order_request["amount"] = min(aligned_amount, abs(position_amount)) # 减仓订单数量不能超过持仓数量
             order_request["params"]["reduceOnly"] = True  # 减仓订单
         else:
+            max_position_per_pair_usd = self.config.max_position_per_pair_usd
             # 开仓/加仓：检查持仓限制
-            if price is not None:
+            if price is not None and max_position_per_pair_usd is not None:
                 # 检查订单后持仓是否超限
                 new_position_amount = abs(position_amount + direction * aligned_amount)
                 new_position_value = new_position_amount * price
-                if new_position_value > self.config.max_position_per_pair_usd:
+                if new_position_value > max_position_per_pair_usd:
                     return None  # 直接拒绝订单，避免复杂的调整逻辑
             if abs(aligned_amount) < limit_amount_min:
                 self.logger.debug(
@@ -605,11 +606,17 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         aligned_amount = order_request['amount']
         side = order_request['side']
         symbol = order_request['symbol']
-        if price is not None:
-            price_str = f"{aligned_amount:.4f} x ${price:.2f} = ${aligned_amount * price:.2f}"
+        contract_size = self.get_contract_size(symbol)
+        if aligned_amount is None:
+            price_str = "invalid amount"
         else:
-            price_str = f"{aligned_amount:.4f}"
-        return f"create the {side} {symbol} {type} order {price_str}"
+            if contract_size is not None:
+                aligned_amount *= contract_size
+            if price is not None:
+                price_str = f"{aligned_amount:.4f} x ${price:.2f} = ${aligned_amount * price:.2f}"
+            else:
+                price_str = f"{aligned_amount:.4f}"
+        return f"create the {side} {symbol} order {price_str}"
 
     async def create_order(
         self,
@@ -965,7 +972,8 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def medal_initialize_symbol(self, symbol: str) -> None:
         """初始化交易对（设置杠杆和保证金模式）"""
         self.get_exchange(symbol)  # 确保交易所实例存在
-        symbol_info = self._markets[symbol]
+        markets = await self.get_markets_data()
+        symbol_info = markets[symbol]
         if symbol_info["type"] in ("future", "swap"):
             max_leverage = symbol_info['limits']['leverage']['max'] or 125
             target_leverage = min(self.config.leverage or 10, max_leverage)

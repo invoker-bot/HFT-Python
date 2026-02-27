@@ -98,8 +98,8 @@ class BaseDataIndicator(Generic[T], BaseIndicator):
     DEFAULT_HEALTHY_WINDOW = 300.0 # 默认5分钟健康窗口
     DEFAULT_DUPLICATE_TIMESTAMP_DELTA = 1e-6
     DEFAULT_HEALTHY_POINTS = 3  # 最少数据点数，越多越严格，采样是否充足
-    DEFAULT_HEALTHY_CV = 0.8  # 最多变异系
-    DEFAULT_HEALTHY_RANGE = 0.6  # 最少覆盖比例
+    DEFAULT_HEALTHY_CV = 0.5  # 最多变异系
+    DEFAULT_HEALTHY_RANGE = 0.25  # 最少覆盖比例
 
     @classmethod
     def get_healthy_data_params(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
