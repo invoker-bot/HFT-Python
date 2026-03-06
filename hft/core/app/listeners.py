@@ -23,12 +23,17 @@ class StateLogListener(Listener):
     状态日志监听器
 
     定期打印 Listener 树的状态，使用树形目录格式显示：
-    📦 AppCore [running] ♥
-    ├── StateLogListener [running] ♥
-    ├── UnhealthyRestartListener [running] ♥
-    └── Strategy [running] ♥
-        ├── Controller [running] ♥
-        └── Executor [running] ♥
+    📦 AppCore [running] ♥ ✓
+    ├── StateLogListener [running] ♥ ✓
+    ├── UnhealthyRestartListener [running] ♥ ✓
+    └── Strategy [running] ♥ ✓
+        ├── Controller [running] ♥ ✓
+        └── Executor [running] ♥ ✓
+
+    图标说明：
+    - 状态: R(运行) S(停止) E(错误) >(启动中) <(停止中)
+    - 健康: OK(健康) !!!(不健康)
+    - 就绪: ✓(就绪) ✗(未就绪)
     """
     __pickle_exclude__ = {*Listener.__pickle_exclude__, "_console"}
 
@@ -69,6 +74,10 @@ class StateLogListener(Listener):
         """获取健康状态图标"""
         return "[green]OK[/green]" if listener.healthy else "[red]!!![/red]"
 
+    def _get_ready_icon(self, listener: Listener) -> str:
+        """获取就绪状态图标"""
+        return "[green]✓[/green]" if listener.ready else "[dim]✗[/dim]"
+
     def _print_tree(self, listener: Listener, prefix: str = "", is_last: bool = True, depth: int = 0) -> None:
         """
         递归打印 Listener 树
@@ -91,10 +100,11 @@ class StateLogListener(Listener):
         # 状态图标
         state_icon = self._get_state_icon(listener)
         health_icon = self._get_health_icon(listener)
+        ready_icon = self._get_ready_icon(listener)
 
         # 输出当前节点
         uptime_str = f"[dim]{self.to_duration_string(listener.uptime)}[/dim]" if listener.uptime > 0 else ""
-        self._console.print(f"{prefix}{connector}{state_icon} {listener.name} {health_icon} {uptime_str}")
+        self._console.print(f"{prefix}{connector}{state_icon} {listener.name} {health_icon} {ready_icon} {uptime_str}")
 
         # 准备子节点前缀
         if depth == 0:

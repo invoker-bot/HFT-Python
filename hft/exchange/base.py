@@ -486,7 +486,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         db = self.root.database
         if db is not None:
             controller = db.get_controller(TradesController)
-            await controller.update(trades, self)
+            await controller.update(symbol, trades, self)
 
     async def un_watch_trades(self, symbol: str):
         """取消订阅成交"""
@@ -715,6 +715,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 self.event.emit("order:creating", self.config.path, order_param["symbol"], order_param)
 
             results = await self.exchanges[type_].create_orders(order_params_list)
+            # print("orders created, emitting events...")
             for order_param, order in zip(order_params_list, results):
                 place_str = self.__get_place_str(order_param)
                 if order_param['type'] == "market":
@@ -722,6 +723,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                     if type_ != "spot":
                         await self._positions.mark_dirty()
                 self.event.emit("order:created", self.config.path, order_param["symbol"], order_param, order)
+                # print("order created event emitted")
                 self.logger.info("Successfully %s (id: %s)", place_str, order.get('id'))
             return results
         except (InvalidOrder, KeyError) as e:

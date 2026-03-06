@@ -17,9 +17,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 import matplotlib.pyplot as plt
-from cachetools import cached, TTLCache
-from ...core.scope.scopes import TradingPairClassScope
-from ..base import BaseIndicator, BaseTradingPairClassDataIndicator
+from ...core.cache_decorator import instance_cache_sync
+from ..base import BaseTradingPairClassDataIndicator
 
 if TYPE_CHECKING:
     from ..datasource.trades_datasource import TradeData, TradesDataSource
@@ -75,8 +74,10 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             k = 0
         return k, b, correlation
 
-    @cached(cache=TTLCache(maxsize=2048, ttl=60))
+    @instance_cache_sync(ttl=60)
     def calculate(self):
+        # if self.result is not None:
+        #     print("using result:", self.result)
         if not self.trades_indicator.ready:
             return
         trades = self.trades_indicator.data.data_list
@@ -111,6 +112,7 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         sell_x = x[self._precision + 2:-1]
         sell_y = log_y[self._precision + 2:-1]
         sell_k, sell_b, sell_correlation = self.polyfit(sell_x, sell_y)
+        # print(len(trades), "trades")
         self.result = IntensityResult(
             average_price=average_price,
             average_std=average_std,
@@ -121,14 +123,19 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             sell_b=sell_b,
             sell_correlation=sell_correlation,
         )
+        print("result:", self.result)
         return x, log_y
 
     # TODO: 注入 functions
     def get_buy_spread(self, gamma, q = 0):  # q是仓位，为正是多仓
-        return 0.5 * (1 - q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.buy_k) * self.result.average_std, 1e-6))
+        a, b = 0.5 * (1 - q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.buy_k) * self.result.average_std, 1e-6))
+        # print("buy spread:", a, b, self.result.average_std, self.result.buy_k)
+        return a + b
 
     def get_sell_spread(self, gamma, q = 0):  # q是仓位，为正是多仓
-        return 0.5 * (1 + q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.sell_k) * self.result.average_std, 1e-6))
+        a, b = 0.5 * (1 + q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.sell_k) * self.result.average_std, 1e-6))
+        # print("sell spread:", a, b, self.result.average_std, self.result.sell_k)
+        return a + b
 
     def plot(self, x, log_y):
         if self.result is None:
@@ -144,13 +151,17 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         plt.show()
 
     async def on_tick(self):
+        # print("calculating trade intensity...")
+        import time
+        dl = self.trades_indicator.data.data_list
+        print("len trades:", len(dl), "start time:", (time.time() - dl[0][0].timestamp) if len(dl) > 0 else None, "end time:", (time.time() - dl[-1][0].timestamp) if len(dl) > 0 else None)
         self.calculate()
 
     def get_vars(self) -> dict[str, Any]:
         """返回交易强度变量，带缓存"""
         result = self.result
         if result is None:
-            return {}
+            raise ValueError("Result not ready")
         return {
             "trade_intensity_average_price": result.average_price,
             "trade_intensity_average_std": result.average_std,
@@ -162,3 +173,13 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             "trade_intensity_sell_correlation": result.sell_correlation,
         }
     # TODO: ready机制、functions注入
+
+    @property
+    def ready(self) -> bool:
+        return self.result is not None
+
+    def get_functions(self):
+        return {
+            "get_buy_spread": self.get_buy_spread,
+            "get_sell_spread": self.get_sell_spread,
+        }

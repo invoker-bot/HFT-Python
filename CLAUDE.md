@@ -112,7 +112,13 @@ Uses `pluggy` (hft/plugin/base.py). Key hooks: `on_order_creating`, `on_order_er
 
 ## Key Patterns
 
-- **instance_cache decorator** (hft/core/cache_decorator.py): Wraps `AsyncTTL` with `id(self)` instead of `self` to avoid pickle serialization issues
+- **Cache decorators** (hft/core/cache_decorator.py): Time-based forced refresh caching
+  - `@cache(ttl)`: Auto-detect sync/async functions
+  - `@cache_sync(ttl)`: Sync function cache with forced refresh (not lazy like TTLCache)
+  - `@cache_async(ttl)`: Async function cache using AsyncTTL
+  - `@instance_cache(ttl)`: Auto-detect sync/async instance methods
+  - `@instance_cache_sync(ttl)`: Sync instance method cache
+  - `@instance_cache_async(ttl)`: Async instance method cache, uses `id(self)` to avoid pickle issues
 - **GroupListener**: Dynamically syncs children based on `sync_children_params()` return value
 - **Duration parsing**: `parse_duration()` accepts `"30s"`, `"5m"`, `"1h"`, `"7d"` or raw seconds
 - **Event system**: `pyee.AsyncIOEventEmitter` for order events (`order:creating`, `order:created`, `order:canceling`, `order:canceled`, `order:updated`)

@@ -56,6 +56,7 @@ class TradesDataSource(BaseTradingPairClassDataIndicator[TradeData]):
     因此使用 is_duplicate_fn=lambda x, y: False 关闭去重。
     """
     DEFAULT_DUPLICATE_TIMESTAMP_DELTA = 1e-12
+    DEFAULT_HEALTHY_CV = 0
 
     @property
     def interval(self) -> float:

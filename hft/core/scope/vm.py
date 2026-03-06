@@ -154,7 +154,7 @@ class VirtualMachine:
             indicator = app_core.query_indicator(required_indicator, indicator_node)
             if not indicator.ready:
                 ready = False
-                break
+                continue
             try:
                 injected_vars = indicator.get_vars()
                 injected_functions = indicator.get_functions()
@@ -162,7 +162,7 @@ class VirtualMachine:
                 self.inject_functions(injected_functions, node)
             except ValueError:
                 ready = False
-                break
+                continue
         return ready
 
     def execute(self, flow_config: 'ScopeFlowConfig', app_core: 'AppCore') -> dict[ScopeInstanceId, 'FlowScopeNode']:

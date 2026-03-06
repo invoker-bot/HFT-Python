@@ -18,11 +18,11 @@ ExchangeGroup 按交易所类型（class_name）组织多账户：
 """
 from functools import cached_property
 from typing import Optional
-from cachetools import cached, TTLCache
 from pyee.asyncio import AsyncIOEventEmitter
 from ..core.filters import get_matcher_raw
 from ..core.listener import Listener
 from ..core.group import Group
+from ..core.cache_decorator import cache_sync
 from .base import BaseExchange
 
 
@@ -74,7 +74,7 @@ class ExchangeGroup(Listener):
         """按交易所类型分组的 exchange 实例映射"""
         return Group(self.exchange_group_func, self.exchange_instances.keys())
 
-    @cached(TTLCache(maxsize=128, ttl=60))
+    @cache_sync(ttl=60)
     def get_trade_classes(self, filters: Optional[str] = None) -> set[str]:
         """获取所有交易所类型列表"""
         result = set()
@@ -91,7 +91,7 @@ class ExchangeGroup(Listener):
     def trade_class_group_func(self, trade_class: str) -> str:
         return trade_class.split("-", 1)[0]
 
-    @cached(TTLCache(maxsize=128, ttl=60))
+    @cache_sync(ttl=60)
     def get_trade_class_group(self, filters: Optional[str] = None) -> Group:
         """按交易所类型分组的 trade_class 映射"""
         return Group(self.trade_class_group_func, self.get_trade_classes(filters))

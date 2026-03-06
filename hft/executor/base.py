@@ -304,7 +304,6 @@ class BaseExecutor(Listener):
                     order_ids.add(order['id'])
                 # 移除不在交易所状态中的订单
                 orders_dict = self.active_orders_tracker.orders[exchange_path][symbol]
-                print("orders:", orders_dict)
                 for order_id in list(orders_dict.keys()):
                     if order_id not in order_ids:
                         del orders_dict[order_id]  # 这里直接删除

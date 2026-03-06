@@ -25,3 +25,4 @@ Feature 0005: Executor 动态条件与变量注入机制
 """
 
 from .datasource import *
+from .computed import *

@@ -52,9 +52,9 @@ class BaseIndicator(Listener):
         super().initialize(**kwargs)
         # should use get_or_create and query indicator function:
         self.namespace: str = kwargs.get("namespace", "")
-        self.scope: 'FlowScopeNode' = kwargs["scope"]
+        self.scope: 'FlowScopeNode' = kwargs.get("scope", None)  # 反序列化时可能为 None
         self.event = AsyncIOEventEmitter()
-        if self.supported_scope is not None:
+        if self.scope is not None and self.supported_scope is not None:
             assert isinstance(self.scope.scope, self.supported_scope)
         # ... additional initialization ...
 
@@ -98,7 +98,7 @@ class BaseDataIndicator(Generic[T], BaseIndicator):
     DEFAULT_HEALTHY_WINDOW = 300.0 # 默认5分钟健康窗口
     DEFAULT_DUPLICATE_TIMESTAMP_DELTA = 1e-6
     DEFAULT_HEALTHY_POINTS = 3  # 最少数据点数，越多越严格，采样是否充足
-    DEFAULT_HEALTHY_CV = 0.5  # 最多变异系
+    DEFAULT_HEALTHY_CV = 0.25  # 最多变异系
     DEFAULT_HEALTHY_RANGE = 0.25  # 最少覆盖比例
 
     @classmethod
