@@ -19,7 +19,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator
 from promptantic import ModelGenerator
-from pydantic import BaseModel, Field, GetCoreSchemaHandler, PrivateAttr
+from pydantic import BaseModel, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 
 
@@ -300,28 +300,6 @@ class BaseConfigPath:
             config: 配置实例
         """
         config.save_to_file(self._get_file_path())
-
-    # def instance(self) -> 'BaseConfig':
-    #     """
-    #     获取缓存的配置实例
-    #
-    #     Returns:
-    #         配置实例
-    #     """
-    #     if self._instance is None:
-    #         raise NotImplementedError("Please implement caching logic here.")
-    #     return self._instance
-    #     # return self._load()
-
-    # @cached_property
-    # def instance(self) -> 'BaseConfig':
-    #     """
-    #     获取缓存的配置实例
-    #
-    #     Returns:
-    #         配置实例
-    #     """
-    #     return self._load()
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self.name!r})"

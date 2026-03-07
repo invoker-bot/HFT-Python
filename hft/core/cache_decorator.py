@@ -7,7 +7,7 @@ import time
 import asyncio
 import inspect
 from functools import wraps
-from typing import Callable, Any
+from typing import Callable
 from cache import AsyncTTL
 
 
@@ -44,13 +44,13 @@ def cache_sync(ttl: float = 60.0):
             if cache_key not in cache_dict:
                 cache_dict[cache_key] = {'value': None, 'timestamp': 0, 'has_value': False}
 
-            cache = cache_dict[cache_key]
-            if not cache['has_value'] or now - cache['timestamp'] > ttl:
-                cache['value'] = func(*args, **kwargs)
-                cache['timestamp'] = now
-                cache['has_value'] = True
+            cache_ = cache_dict[cache_key]
+            if not cache_['has_value'] or now - cache_['timestamp'] > ttl:
+                cache_['value'] = func(*args, **kwargs)
+                cache_['timestamp'] = now
+                cache_['has_value'] = True
 
-            return cache['value']
+            return cache_['value']
 
         return wrapper
 
@@ -95,7 +95,7 @@ def cache(ttl: float = 60.0):
             return await fetch_data()
     """
     def decorator(func: Callable) -> Callable:
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return cache_async(ttl)(func)
         else:
             return cache_sync(ttl)(func)
@@ -104,7 +104,7 @@ def cache(ttl: float = 60.0):
 
 
 def instance_cache_sync(ttl: float = 60.0):
-    """实例方法同步缓存装饰器
+    """实例方法同步缓存装饰器（复用 cache_sync）
 
     为类的实例方法提供缓存，使用 id(self) + 方法参数区分不同调用。
 
@@ -118,30 +118,17 @@ def instance_cache_sync(ttl: float = 60.0):
                 return expensive_calculation(x)
     """
     def decorator(method: Callable) -> Callable:
-        cache_dict = {}  # {(instance_id, args, kwargs): {'value': ..., 'timestamp': ..., 'has_value': ...}}
+        # 创建辅助函数，接收 self_id 而不是 self 作为缓存键
+        def _method_with_id(self_id: int, self_obj, *args, **kwargs):
+            return method(self_obj, *args, **kwargs)
 
-        def make_key(instance_id, args, kwargs):
-            """生成缓存键"""
-            key_parts = [instance_id, args]
-            if kwargs:
-                key_parts.append(tuple(sorted(kwargs.items())))
-            return tuple(key_parts)
+        # 使用 cache_sync 装饰辅助函数
+        cached_func = cache_sync(ttl)(_method_with_id)
 
         @wraps(method)
         def wrapper(self, *args, **kwargs):
-            cache_key = make_key(id(self), args, kwargs)
-            now = time.time()
-
-            if cache_key not in cache_dict:
-                cache_dict[cache_key] = {'value': None, 'timestamp': 0, 'has_value': False}
-
-            cache = cache_dict[cache_key]
-            if not cache['has_value'] or now - cache['timestamp'] > ttl:
-                cache['value'] = method(self, *args, **kwargs)
-                cache['timestamp'] = now
-                cache['has_value'] = True
-
-            return cache['value']
+            # 调用时传入 id(self) 和 self
+            return cached_func(id(self), self, *args, **kwargs)
 
         return wrapper
 
