@@ -162,6 +162,4 @@ class StaticPositionsStrategy(BaseStrategy):
         Returns:
             True 如果策略应该退出（exit_on_target=True 且所有仓位达标）
         """
-        # layer = self.root.vm.execute(self.config.flow, self.root)
-        # print("StaticPositionsStrategy on_tick layers:", layer)
         return
