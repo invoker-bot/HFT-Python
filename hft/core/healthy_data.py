@@ -423,7 +423,7 @@ class HealthyDataArray(BaseHealthyData[T]):
             return False
         if time.time() - timestamp > self.max_age:
             return False
-        return self.is_range_healthy() and self.is_cv_healthy()
+        return self.is_range_healthy() # and self.is_cv_healthy()
 
     def __len__(self) -> int:
         return len(self._data_list)

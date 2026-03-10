@@ -92,9 +92,9 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         for trade in trades:
             while trade[0].timestamp - start_time > self._sub_range_seconds:
                 start_time += self._sub_range_seconds
-                a = abs(start_time - last_timestamp) # , 1e-6)
-                b = abs(trade[0].timestamp - last_timestamp) # , 1e-6)
-                start_price = (a * trade[0].price + b * last_price) / (a + b)
+                a = abs(start_time - last_timestamp)
+                b = abs(trade[0].timestamp - last_timestamp)
+                start_price = (last_price * (b - a) + trade[0].price * a) / b if b > 0 else last_price
             price_diff = trade[0].price - start_price
             mapped_x = round(self._precision * price_diff / (self._precision_std_range * average_std))
             if price_diff > 0:
@@ -125,7 +125,6 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         # print("result:", self.result)
         return x, log_y
 
-    # TODO: 注入 functions
     def get_buy_spread(self, gamma, q = 0):  # q是仓位，为正是多仓
         a, b = 0.5 * (1 - q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.buy_k) * self.result.average_std, 1e-6))
         # print("buy spread:", a, b, self.result.average_std, self.result.buy_k)
