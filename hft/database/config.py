@@ -18,8 +18,8 @@ class PersistConfig(BaseModel):
     ticker: bool = Field(True, description="Ticker数据")
     ticker_volume: bool = Field(True, description="Ticker 成交量数据")
     funding_rate: bool = Field(True, description="资费率")
-    trades: bool = Field(True, description="成交记录（数据量大，默认关闭）")
-    order_book: bool = Field(True, description="订单簿（数据量大，默认关闭）")
+    trades: bool = Field(False, description="成交记录（数据量大，默认关闭）")
+    order_book: bool = Field(False, description="订单簿（数据量大，默认关闭）")
 
 
 class DatabaseDsn(AnyUrl):
