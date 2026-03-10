@@ -95,11 +95,31 @@ class LocalTradingPairFundingRateIndicator(BaseTradingPairClassDataIndicator[T])
 
     从 GlobalFundingRateIndicator 获取本交易对的资金费率。
     通过事件订阅实现实时更新，避免每个交易对单独请求 API。
+
+    对于现货交易对，资金费率 API 不返回数据，
+    因此直接返回默认值（如 funding_rate=0）而不是保持 not ready 状态。
     """
     DEFAULT_IS_ARRAY = None
     disable_tick = True  # 不需要定时器
     __pickle_exclude__ = {*BaseTradingPairClassDataIndicator.__pickle_exclude__, "global_indicator"}
     supported_scope = TradingPairClassScope
+
+    @cached_property
+    def is_spot(self) -> bool:
+        """根据 markets 信息判断当前交易对是否为现货"""
+        markets = self.exchange.markets.get_data()
+        if markets is not None:
+            market = markets.get(self.symbol)
+            if market is not None:
+                return market.get("type") == "spot"
+        return ':' not in self.symbol  # fallback: 合约 symbol 包含 ':'
+
+    @property
+    def ready(self) -> bool:
+        """现货交易对直接就绪，合约交易对需要数据健康"""
+        if self.is_spot:
+            return True
+        return hasattr(self, 'get_data') and self.get_data.is_healthy
 
     @property
     def interval(self):
@@ -124,12 +144,8 @@ class FundingRateMetaIndicator(LocalTradingPairFundingRateIndicator[FundingRateM
     交易对级资金费率元数据指标
 
     从 GlobalFundingRateIndicator 获取本交易对的资金费率元数据。
+    现货交易对返回零值默认元数据。
     """
-    # TODO: 对现货交易对，ready应该返回默认值
-
-    @property
-    def ready(self) -> bool:
-        return self.get_data.is_healthy
 
     @property
     def get_data(self) -> HealthyData[FundingRateMeta]:
@@ -137,6 +153,15 @@ class FundingRateMetaIndicator(LocalTradingPairFundingRateIndicator[FundingRateM
 
     def get_vars(self) -> dict[str, Any]:
         """返回本交易对的资金费率元数据变量"""
+        if self.is_spot:
+            return {
+                "funding_rate_meta": None,
+                "funding_rate_base": 0.0,
+                "funding_rate_next_timestamp": 0.0,
+                "funding_rate_expiry": None,
+                "funding_rate_minimum": 0.0,
+                "funding_rate_maximum": 0.0,
+            }
         result = {}
         data = self.get_data.get_data()
         if data is not None:
@@ -161,6 +186,8 @@ class FundingRateIndicator(LocalTradingPairFundingRateIndicator):
 
     def get_vars(self) -> dict[str, Any]:
         """返回本交易对的资金费率变量"""
+        if self.is_spot:
+            return {"funding_rate": 0.0, "funding_rate_history": []}
         result = {"funding_rate_history": self.get_data.data_list}
         data = self.get_data.get_data()
         if data is not None:
@@ -180,6 +207,8 @@ class IndexPriceIndicator(LocalTradingPairFundingRateIndicator):
 
     def get_vars(self) -> dict[str, Any]:
         """返回本交易对的指数价格变量"""
+        if self.is_spot:
+            return {"index_price": 0.0, "index_price_history": []}
         result = {"index_price_history": self.get_data.data_list}
         data = self.get_data.get_data()
         if data is not None:
@@ -199,6 +228,8 @@ class MarkPriceIndicator(LocalTradingPairFundingRateIndicator):
 
     def get_vars(self) -> dict[str, Any]:
         """返回本交易对的标记价格变量"""
+        if self.is_spot:
+            return {"mark_price": 0.0, "mark_price_history": []}
         result = {"mark_price_history": self.get_data.data_list}
         data = self.get_data.get_data()
         if data is not None:
