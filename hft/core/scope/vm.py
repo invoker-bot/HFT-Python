@@ -227,6 +227,16 @@ class VirtualMachine:
                     if not self.eval_condition(layer_config.condition, node):  # 后验条件
                         continue
                     current_layer[instance_id] = node
+            if (sorted_var:=layer_config.sorted_var) is not None:
+                # 如果指定了 sorted_var，按照该变量的值排序实例
+                current_layer_list = list(current_layer.values())
+                def sorted_key(item, var_name=sorted_var):
+                    v = item.get_var(var_name)
+                    return v if v is not None else float('inf')
+                current_layer_list.sort(key=sorted_key)
+                for index, node in enumerate(current_layer_list):
+                    node.set_var("index", index)
+                    node.set_var("length", len(current_layer_list))
             includes[class_name] = set(current_layer.keys())
         #     print(" Layer:", class_name, "Instances:", len(current_layer))
             layers.append(current_layer)

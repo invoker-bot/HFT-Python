@@ -22,6 +22,10 @@ class ScopeConfig(BaseModel):
         default_factory=list,
         description="变量列表（支持三种格式：1. list[ScopeVarDefinition] 标准格式，2. dict[str, str] 简化格式（计算顺序不确定），3. list[str] 'name=value' 格式）"
     )  # scope的变量列表
+    sorted_var: Optional[str] = Field(
+        None,
+        description="按指定变量值对当前层所有实例升序排序，并注入 index（排名）和 length（总数）变量"
+    )
     @cached_property
     def standard_vars_definition(self) -> StandardVarsDefinition:
         """获取规范化后的变量定义列表"""
