@@ -44,7 +44,7 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
     __pickle_exclude__ = {*BaseTradingPairClassDataIndicator.__pickle_exclude__, "_calculator", "_cached_result", "_cache_ts", "_cache_ttl"}
     DEFAULT_IS_ARRAY = None
 
-    @cached_property
+    @property
     def trades_indicator(self) -> Optional["TradesDataSource"]:
         app_core = self.root
         return app_core.query_indicator(self.trade_indicator_id, self.scope)
@@ -76,13 +76,12 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
 
     @instance_cache_sync(ttl=30)
     def calculate(self):
-        # if self.result is not None:
-        #     print("using result:", self.result)
         if not self.trades_indicator.ready:
             return
         trades = self.trades_indicator.data.data_list
         if len(trades) < self._min_trades:
             return
+
         average_price = sum([abs(item[0].price * item[0].amount) for item in trades]) / self.total_amount(trades)
         average_std = sum([abs(item[0].price - average_price) * abs(item[0].amount) for item in trades]) / self.total_amount(trades)
         # 可近似使用当前标准差
@@ -123,7 +122,7 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             sell_b=sell_b,
             sell_correlation=sell_correlation,
         )
-        print("result:", self.result)
+        # print("result:", self.result)
         return x, log_y
 
     # TODO: 注入 functions
@@ -151,10 +150,6 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         plt.show()
 
     async def on_tick(self):
-        # print("calculating trade intensity...")
-        import time
-        dl = self.trades_indicator.data.data_list
-        print("len trades:", len(dl), "start time:", (time.time() - dl[0][0].timestamp) if len(dl) > 0 else None, "end time:", (time.time() - dl[-1][0].timestamp) if len(dl) > 0 else None)
         self.calculate()
 
     def get_vars(self) -> dict[str, Any]:

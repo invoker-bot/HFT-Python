@@ -199,6 +199,96 @@ class TestInstanceCacheSync:
         assert obj2.get_value() == 20
 
 
+class TestCacheSyncNone:
+    """测试 cache_none=False 的行为"""
+
+    def test_none_not_cached(self):
+        """测试 cache_none=False 时不缓存 None"""
+        call_count = 0
+        ready = False
+
+        @cache_sync(ttl=10.0, cache_none=False)
+        def func():
+            nonlocal call_count
+            call_count += 1
+            if not ready:
+                return None
+            return "result"
+
+        # 数据未就绪，返回 None，但不缓存
+        assert func() is None
+        assert call_count == 1
+
+        # 再次调用，仍然执行函数（因为 None 没有被缓存）
+        assert func() is None
+        assert call_count == 2
+
+        # 数据就绪
+        ready = True
+        result = func()
+        assert result == "result"
+        assert call_count == 3
+
+        # 有效结果已缓存，不再重新计算
+        assert func() == "result"
+        assert call_count == 3
+
+    def test_none_cached_by_default(self):
+        """测试默认行为：None 被缓存"""
+        call_count = 0
+
+        @cache_sync(ttl=10.0)
+        def func():
+            nonlocal call_count
+            call_count += 1
+            return None
+
+        assert func() is None
+        assert call_count == 1
+
+        # 默认缓存 None，不重新计算
+        assert func() is None
+        assert call_count == 1
+
+
+class TestInstanceCacheSyncNone:
+    """测试 instance_cache_sync 的 cache_none=False 行为"""
+
+    def test_none_not_cached(self):
+        """测试实例方法中 cache_none=False 不缓存 None"""
+
+        class MyClass:
+            def __init__(self):
+                self.call_count = 0
+                self.ready = False
+
+            @instance_cache_sync(ttl=10.0, cache_none=False)
+            def calculate(self):
+                self.call_count += 1
+                if not self.ready:
+                    return None
+                return "computed"
+
+        obj = MyClass()
+
+        # 数据未就绪
+        assert obj.calculate() is None
+        assert obj.call_count == 1
+
+        # 再次调用，不走缓存
+        assert obj.calculate() is None
+        assert obj.call_count == 2
+
+        # 数据就绪
+        obj.ready = True
+        assert obj.calculate() == "computed"
+        assert obj.call_count == 3
+
+        # 有效结果已缓存
+        assert obj.calculate() == "computed"
+        assert obj.call_count == 3
+
+
 class TestInstanceCacheAsync:
     """测试实例方法异步缓存装饰器"""
 

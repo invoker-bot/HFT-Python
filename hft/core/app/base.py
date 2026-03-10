@@ -181,26 +181,31 @@ class AppCore(Listener):
             loop.run_until_complete(main_task)
         except KeyboardInterrupt:
             self.logger.info("Received keyboard interrupt, stopping...")
-            # 取消主任务
+            # 取消主任务（run_ticks 的 finally 会执行 self.stop(True)）
             if main_task and not main_task.done():
                 main_task.cancel()
                 try:
-                    loop.run_until_complete(main_task)
+                    # 给 run_ticks 的 finally（含 stop）最多 15 秒完成
+                    loop.run_until_complete(asyncio.wait_for(main_task, timeout=15.0))
                 except asyncio.CancelledError:
+                    # main_task 正常取消完成
                     pass
+                except asyncio.TimeoutError:
+                    self.logger.warning("Shutdown timeout after 15s, forcing exit")
         finally:
-            # 确保正常关闭所有资源
-            try:
-                loop.run_until_complete(self.stop(True))
-            except Exception as e:
-                self.logger.error("Error during stop: %s", e, exc_info=True)
             # 取消所有待处理的任务
             pending = asyncio.all_tasks(loop)
             for task in pending:
                 task.cancel()
-            # 等待所有任务完成取消
+            # 等待所有任务完成取消（最多 5 秒）
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                try:
+                    loop.run_until_complete(asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=5.0
+                    ))
+                except asyncio.TimeoutError:
+                    self.logger.warning("Timeout waiting for tasks to cancel, forcing close")
             loop.close()
 
     @property
@@ -243,16 +248,20 @@ class AppCore(Listener):
             self.logger.info("StrategyGroup finished, AppCore exiting")
             self.finished = True
             return True
+        # 遍历直接子节点
         for child in list(self):
-            # if isinstance(child, MedalAmountDataSource):
             if id(child) == id(self):
                 continue
-            # print(child.__class__.__name__, child.name, "enabled:", child.enabled)
             try:
                 await asyncio.wait_for(child.update_background_task(), timeout=30)
             except asyncio.TimeoutError:
                 self.logger.exception("Timeout updating background task for %s", child.name)
-            # from ...indicator.datasource import MedalAmountDataSource
+        # 遍历 IndicatorGroup 的子节点（动态创建的 indicator）
+        for indicator in list(self.indicator_group):
+            try:
+                await asyncio.wait_for(indicator.update_background_task(), timeout=30)
+            except asyncio.TimeoutError:
+                self.logger.exception("Timeout updating background task for %s", indicator.name)
         return False
 
     # ============================================================
@@ -292,6 +301,9 @@ class AppCore(Listener):
                                                scope=scope,
                                                **params)
         indicator_instance.auto_disable_duration = seconds
+        # 确保 indicator 被启用（IndicatorGroup 是 lazy_start+disable_tick，
+        # 不会自动启动子节点，需要手动设置 enabled 触发启动）
+        indicator_instance.enabled = True
         # int("Queried indicator:", indicator_instance, "ready:", indicator_instance.ready,
         #     "parent:", indicator_instance.parent)
         return indicator_instance  # 然而之后还需要判断是否ready

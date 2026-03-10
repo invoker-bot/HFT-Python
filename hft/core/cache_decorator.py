@@ -11,7 +11,7 @@ from typing import Callable
 from cache import AsyncTTL
 
 
-def cache_sync(ttl: float = 60.0):
+def cache_sync(ttl: float = 60.0, cache_none: bool = True):
     """同步函数缓存装饰器（基于时间的强制刷新）
 
     与 TTLCache 不同，此装饰器会在每次调用时检查缓存是否过期，
@@ -19,11 +19,19 @@ def cache_sync(ttl: float = 60.0):
 
     Args:
         ttl: 缓存过期时间（秒）
+        cache_none: 是否缓存 None 值（默认 True）。设为 False 时，
+                   返回 None 的调用不会被缓存，下次调用会重新执行。
 
     Example:
         @cache_sync(ttl=60)
         def expensive_calculation(x, y):
             return x + y
+
+        @cache_sync(ttl=30, cache_none=False)
+        def may_return_none():
+            if not ready:
+                return None
+            return compute()
     """
     def decorator(func: Callable) -> Callable:
         cache_dict = {}  # {cache_key: {'value': ..., 'timestamp': ..., 'has_value': ...}}
@@ -46,7 +54,11 @@ def cache_sync(ttl: float = 60.0):
 
             cache_ = cache_dict[cache_key]
             if not cache_['has_value'] or now - cache_['timestamp'] > ttl:
-                cache_['value'] = func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                # 如果 cache_none=False 且结果为 None，不缓存
+                if not cache_none and result is None:
+                    return None
+                cache_['value'] = result
                 cache_['timestamp'] = now
                 cache_['has_value'] = True
 
@@ -103,19 +115,26 @@ def cache(ttl: float = 60.0):
     return decorator
 
 
-def instance_cache_sync(ttl: float = 60.0):
+def instance_cache_sync(ttl: float = 60.0, cache_none: bool = True):
     """实例方法同步缓存装饰器（复用 cache_sync）
 
     为类的实例方法提供缓存，使用 id(self) + 方法参数区分不同调用。
 
     Args:
         ttl: 缓存过期时间（秒）
+        cache_none: 是否缓存 None 值（默认 True）
 
     Example:
         class MyClass:
             @instance_cache_sync(ttl=60)
             def calculate(self, x):
                 return expensive_calculation(x)
+
+            @instance_cache_sync(ttl=30, cache_none=False)
+            def may_fail(self):
+                if not self.ready:
+                    return None
+                return self.compute()
     """
     def decorator(method: Callable) -> Callable:
         # 创建辅助函数，接收 self_id 而不是 self 作为缓存键
@@ -123,7 +142,7 @@ def instance_cache_sync(ttl: float = 60.0):
             return method(self_obj, *args, **kwargs)
 
         # 使用 cache_sync 装饰辅助函数
-        cached_func = cache_sync(ttl)(_method_with_id)
+        cached_func = cache_sync(ttl, cache_none=cache_none)(_method_with_id)
 
         @wraps(method)
         def wrapper(self, *args, **kwargs):
