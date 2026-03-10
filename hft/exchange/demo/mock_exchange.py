@@ -204,7 +204,7 @@ class MockExchange(BaseExchange):
 
     async def medal_fetch_ticker_volumes_internal(self):
         """模拟获取 ticker 交易量（内部实现）"""
-        return {}, time.time()
+        return {}
 
     def medal_fetch_funding_rates_history(self, symbol: str, since: Optional[int] = None, limit: Optional[int] = None) -> list:
         """模拟获取资金费率历史"""
