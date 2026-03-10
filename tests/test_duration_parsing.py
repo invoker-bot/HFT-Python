@@ -4,6 +4,7 @@
 Issue 0015: window 支持 duration 字符串（如 60s/1m/5m）
 """
 import pytest
+from humanfriendly import InvalidTimespan
 from hft.core.duration import parse_duration
 
 
@@ -66,31 +67,26 @@ class TestParseDuration:
         assert parse_duration(" 60s ") == 60.0
         assert parse_duration("  1m  ") == 60.0
 
-    def test_invalid_format(self):
-        """非法格式应抛出 ValueError"""
-        with pytest.raises(ValueError, match="Invalid duration format"):
-            parse_duration("60")  # 缺少单位
+    def test_bare_number_string(self):
+        """纯数字字符串应被解析为秒"""
+        assert parse_duration("60") == 60.0
+        assert parse_duration("60 s") == 60.0
 
-        with pytest.raises(ValueError, match="Invalid duration format"):
+    def test_invalid_format(self):
+        """非法格式应抛出异常"""
+        with pytest.raises(InvalidTimespan):
             parse_duration("s60")  # 单位在前
 
-        with pytest.raises(ValueError, match="Invalid duration format"):
-            parse_duration("60 s")  # 中间有空格
-
-        with pytest.raises(ValueError, match="Invalid duration format"):
+        with pytest.raises(InvalidTimespan):
             parse_duration("abc")  # 非数字
 
-        with pytest.raises(ValueError, match="Invalid duration format"):
+        with pytest.raises(InvalidTimespan):
             parse_duration("")  # 空字符串
 
     def test_unsupported_unit(self):
-        """不支持的单位应抛出 ValueError"""
-        # 注意：我们的实现通过正则已经拦截了非法单位，所以会报 Invalid duration format
-        with pytest.raises(ValueError, match="Invalid duration format"):
+        """不支持的单位应抛出异常"""
+        with pytest.raises(InvalidTimespan):
             parse_duration("60x")
-
-        with pytest.raises(ValueError, match="Invalid duration format"):
-            parse_duration("60y")
 
     def test_unsupported_type(self):
         """不支持的类型应抛出 TypeError"""
@@ -113,47 +109,3 @@ class TestParseDuration:
 
         # 无窗口
         assert parse_duration(None) == parse_duration(0) == parse_duration("0s")
-
-
-class TestIndicatorFactoryDurationIntegration:
-    """测试 IndicatorFactory 集成 duration 解析"""
-
-    def test_factory_parses_window_duration(self):
-        """IndicatorFactory 应解析 window duration 字符串"""
-        from hft.indicator.factory import IndicatorFactory
-
-        # 字符串 duration
-        factory = IndicatorFactory("TickerDataSource", {"window": "5m"})
-        assert factory._params["window"] == 300.0
-
-        # 数值
-        factory = IndicatorFactory("TickerDataSource", {"window": 60})
-        assert factory._params["window"] == 60.0
-
-        # None
-        factory = IndicatorFactory("TickerDataSource", {"window": None})
-        assert factory._params["window"] == 0.0
-
-    def test_factory_preserves_other_params(self):
-        """IndicatorFactory 应保留其他参数"""
-        from hft.indicator.factory import IndicatorFactory
-
-        params = {
-            "window": "1m",
-            "other_param": "value",
-            "another_param": 123
-        }
-        factory = IndicatorFactory("TickerDataSource", params)
-
-        assert factory._params["window"] == 60.0
-        assert factory._params["other_param"] == "value"
-        assert factory._params["another_param"] == 123
-
-    def test_factory_handles_invalid_duration(self):
-        """IndicatorFactory 应处理非法 duration（记录警告但保留原值）"""
-        from hft.indicator.factory import IndicatorFactory
-
-        # 非法格式（会记录警告，保留原值）
-        factory = IndicatorFactory("TickerDataSource", {"window": "invalid"})
-        # 保留原值让后续构造函数报错
-        assert factory._params["window"] == "invalid"

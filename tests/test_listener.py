@@ -406,10 +406,10 @@ class TestListenerSerialization:
 
         assert isinstance(state, dict)
         assert state['name'] == mock_listener.name
-        assert state['_interval'] == mock_listener.interval
-        assert state['_enabled'] == mock_listener.enabled
-        assert state['_state'] == mock_listener.state
-        assert state['_healthy'] == mock_listener.healthy
+        # _state, _enabled etc. are in __pickle_exclude__, not serialized
+        assert '_alock' not in state
+        assert '_background_task' not in state
+        assert '_parent' not in state
 
         await mock_listener.stop(recursive=False)
 
@@ -424,9 +424,6 @@ class TestListenerSerialization:
         new_listener.__setstate__(original_state)
 
         assert new_listener.name == original_state['name']
-        assert new_listener._interval == original_state['_interval']
-        assert new_listener._enabled == original_state['_enabled']
-        assert new_listener._state == original_state['_state']
 
     @pytest.mark.asyncio
     async def test_setstate_reinitializes_non_serializable_objects(self, mock_listener):

@@ -33,9 +33,9 @@ class MockExchange(BaseExchange):
     """
     class_name = "mock"
 
-    def __init__(self, config: MockExchangeConfig):
-        super().__init__(config)
-        self.num_markets = config.num_markets
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        self.num_markets = self.config.num_markets
         self.api_calls = []  # 记录所有 API 调用: [(method, args, kwargs, timestamp)]
         self.fake_time = time.time()  # 模拟时间
         self.time_multiplier = 1.0  # 时间加速倍数
@@ -197,6 +197,14 @@ class MockExchange(BaseExchange):
         """模拟获取资金费率"""
         self._record_api_call('medal_fetch_funding_rates', symbols)
         return []
+
+    async def medal_fetch_funding_rates_internal(self):
+        """模拟获取资金费率（内部实现）"""
+        return {}, time.time()
+
+    async def medal_fetch_ticker_volumes_internal(self):
+        """模拟获取 ticker 交易量（内部实现）"""
+        return {}, time.time()
 
     def medal_fetch_funding_rates_history(self, symbol: str, since: Optional[int] = None, limit: Optional[int] = None) -> list:
         """模拟获取资金费率历史"""
