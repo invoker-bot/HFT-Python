@@ -74,7 +74,7 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             k = 0
         return k, b, correlation
 
-    @instance_cache_sync(ttl=60)
+    @instance_cache_sync(ttl=30)
     def calculate(self):
         # if self.result is not None:
         #     print("using result:", self.result)
@@ -172,7 +172,6 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
             "trade_intensity_sell_b": result.sell_b,
             "trade_intensity_sell_correlation": result.sell_correlation,
         }
-    # TODO: ready机制、functions注入
 
     @property
     def ready(self) -> bool:
