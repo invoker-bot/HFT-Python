@@ -19,6 +19,7 @@ DataSource 是从 exchange 获取数据的特殊 Indicator。
 """
 from .equation_datasource import *
 from .funding_rate_datasource import *
+from .market_info_datasource import *
 from .medal_amount_datasource import *
 from .ohlcv_datasource import *
 from .orderbook_datasource import *
