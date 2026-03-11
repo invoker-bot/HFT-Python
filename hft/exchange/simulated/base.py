@@ -424,3 +424,12 @@ class SimulatedExchange(BaseExchange):
     def clear_price_override(self, symbol: str):
         """清除价格覆盖"""
         self.price_engine.clear_price_override(symbol)
+
+    def advance(self, n_steps: int = 1):
+        """快进模拟 n 步（用于测试，同步调用内部引擎，不涉及 asyncio）"""
+        for _ in range(n_steps):
+            self.price_engine.step_all()
+            price_states = {s: self.price_engine.get_state(s) for s in self.price_engine.symbols}
+            self.funding_engine.update_prices(price_states)
+            self.funding_engine.check_settlements(self.position_tracker, self.balance_tracker)
+            self.order_manager.try_fill_orders(price_states)

@@ -34,13 +34,13 @@ class PositionTracker:
         new_pos = old_pos + delta
         result = TradeResult()
 
-        if abs(new_pos) < 1e-12:
-            # 完全平仓
-            if abs(old_pos) > 1e-12 and fill_price > 0 and self._entry_prices[symbol] > 0:
+        if abs(new_pos) < 1e-9:
+            # 完全平仓（阈值与 OrderManager 一致）
+            if abs(old_pos) > 1e-9 and fill_price > 0 and self._entry_prices[symbol] > 0:
                 result.realized_pnl = (fill_price - self._entry_prices[symbol]) * old_pos
             new_pos = 0.0
             self._entry_prices[symbol] = 0.0
-        elif old_pos == 0.0 or abs(old_pos) < 1e-12:
+        elif old_pos == 0.0 or abs(old_pos) < 1e-9:
             # 新建仓位
             self._entry_prices[symbol] = fill_price
         elif (old_pos > 0 and delta > 0) or (old_pos < 0 and delta < 0):
@@ -60,7 +60,7 @@ class PositionTracker:
                 sign = 1.0 if old_pos > 0 else -1.0
                 result.realized_pnl = (fill_price - self._entry_prices[symbol]) * closed_amount * sign
 
-            if abs(new_pos) < 1e-12:
+            if abs(new_pos) < 1e-9:
                 # 完全平仓
                 new_pos = 0.0
                 self._entry_prices[symbol] = 0.0
@@ -88,7 +88,7 @@ class PositionTracker:
         """转换为 ccxt Position 格式"""
         result = []
         for symbol, amount in self._positions.items():
-            if abs(amount) < 1e-12:
+            if abs(amount) < 1e-9:
                 continue
             cs = 1.0
             if contract_sizes:

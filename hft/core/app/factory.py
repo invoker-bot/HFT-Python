@@ -332,6 +332,9 @@ class AppFactory:
             return cache_dict
         except FileNotFoundError:  # 文件不存在，返回空字典
             return {}
+        except Exception as e:
+            logger.warning("缓存文件加载失败（可能版本不兼容），将使用全新状态: %s", e)
+            return {}
 
     def load_cache(self) -> Dict[str, Dict[str, Any]]:
         """

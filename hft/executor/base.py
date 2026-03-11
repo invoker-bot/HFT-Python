@@ -4,6 +4,7 @@ Executor 执行器基类
 执行器负责将策略的目标仓位转化为实际交易。
 """
 # pylint: disable=import-outside-toplevel,protected-access
+import asyncio
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -57,6 +58,7 @@ class ActiveOrdersTracker:
     def __init__(self):
         # exchange_path -> symbol -> order_id -> ActiveOrder
         self.orders: dict[str, dict[str, dict[str, ActiveOrder]]] = defaultdict(self._default_dict_factory)
+        self._lock = asyncio.Lock()
 
     def _default_dict_factory(self):
         return defaultdict(dict)
@@ -130,6 +132,12 @@ class BaseExecutor(Listener):
         self.config: 'BaseExecutorConfig' = kwargs['config']
         self.exchange_group.event.on("order:canceled", self.on_order_canceled)
         self.exchange_group.event.on("order:updated", self.on_order_updated)
+
+    async def on_start(self):
+        """启动时重置 tracker 和刷新时间戳，确保首个 tick 执行完整同步"""
+        await super().on_start()
+        self.active_orders_tracker = ActiveOrdersTracker()
+        self._refresh_timestamps.clear()
 
     # async def update_order_status(self):
     #     for exchange_path, symbols in self.active_orders_tracker.orders.items():
@@ -237,7 +245,10 @@ class BaseExecutor(Listener):
             for symbol, orders_dict in symbols.items():
                 order_ids = list(orders_dict.keys())
                 if len(order_ids) > 0:
-                    await exchange.cancel_orders(order_ids, symbol)
+                    try:
+                        await exchange.cancel_orders(order_ids, symbol)
+                    except Exception:
+                        self.logger.error("退出清理订单失败 %s/%s, order_ids=%s", exchange_path, symbol, order_ids, exc_info=True)
 
     async def process_intents(self, exchange_path: str, symbol: str, intents: list[OrderIntent]):
         """

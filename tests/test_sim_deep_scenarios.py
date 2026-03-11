@@ -304,6 +304,7 @@ class TestSymbolDelisting:
         for state in fe._states.values():
             state.next_funding_timestamp = time.time() - 1
             state.mark_price = 100.0
+            state.index_price = 100.0
         fe.check_settlements(tracker, balance)
 
         # FLOKI 仓位不受影响（无结算）
@@ -390,6 +391,7 @@ class TestExtremePriceScenarios:
         state = fe._states[symbol]
         state.current_rate = -0.001  # 负费率
         state.mark_price = 80000.0
+        state.index_price = 80000.0
         state.next_funding_timestamp = time.time() - 1
 
         fe.check_settlements(tracker, balance)
@@ -412,6 +414,7 @@ class TestExtremePriceScenarios:
         state = fe._states[symbol]
         state.current_rate = 0.001  # 正费率
         state.mark_price = 3000.0
+        state.index_price = 3000.0
         state.next_funding_timestamp = time.time() - 1
 
         fe.check_settlements(tracker, balance)
@@ -646,6 +649,7 @@ class TestUnboundedGrowthFix:
             for state in fe._states.values():
                 state.next_funding_timestamp = time.time() - 1
                 state.mark_price = 80000.0
+                state.index_price = 80000.0
             fe.check_settlements(tracker, balance)
 
         assert len(fe._settlement_history) <= FundingEngine.MAX_SETTLEMENT_HISTORY, (
@@ -769,6 +773,7 @@ class TestFundingEdgeCases:
         for state in fe._states.values():
             state.next_funding_timestamp = time.time() - 1
             state.mark_price = 80000.0
+            state.index_price = 80000.0
         fe.check_settlements(tracker, balance)
 
         assert balance.get_usdt_balance() == balance_before
@@ -784,6 +789,7 @@ class TestFundingEdgeCases:
         state = fe._states["BTC/USDT:USDT"]
         state.next_funding_timestamp = time.time() - 1
         state.mark_price = 80000.0
+        state.index_price = 80000.0
         fe.check_settlements(tracker, balance)
 
         assert balance.get_usdt_balance() == balance_before
@@ -802,6 +808,7 @@ class TestFundingEdgeCases:
             state = fe._states[symbol]
             state.next_funding_timestamp = time.time() - 1
             state.mark_price = 80000.0
+            state.index_price = 80000.0
             rates.append(state.current_rate)
             fe.check_settlements(tracker, balance)
 
@@ -826,6 +833,7 @@ class TestFundingEdgeCases:
         # 触发一次结算（会导致均值回归）
         state.next_funding_timestamp = time.time() - 1
         state.mark_price = 80000.0
+        state.index_price = 80000.0
         tracker.update(symbol, 1.0)
         fe.check_settlements(tracker, balance)
 

@@ -280,6 +280,8 @@ class FairPriceIndicator(BaseIndicator):
 
         # 应用时间修正：expected_spread × time_to_next
         fair_price = 1.0 + (actual_spread - expected_spread * time_to_next)
+        # 限制在合理范围内，防止极端行情下传播异常值
+        fair_price = max(0.9, min(1.1, fair_price))
         return {"fair_price": fair_price}
 
     async def on_tick(self):

@@ -84,6 +84,8 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
 
         average_price = sum([abs(item[0].price * item[0].amount) for item in trades]) / self.total_amount(trades)
         average_std = sum([abs(item[0].price - average_price) * abs(item[0].amount) for item in trades]) / self.total_amount(trades)
+        if average_std < 1e-10:
+            return  # 价格无波动，无法计算强度
         # 可近似使用当前标准差
         x = np.linspace(-self._precision_std_range * average_std, self._precision_std_range * average_std, num=2 * self._precision + 1)
         y = np.zeros_like(x)
@@ -126,11 +128,15 @@ class TradeIntensityIndicator(BaseTradingPairClassDataIndicator):
         return x, log_y
 
     def get_buy_spread(self, gamma, q = 0):  # q是仓位，为正是多仓
+        if self.result.average_std < 1e-10:
+            return 0.0
         a, b = 0.5 * (1 - q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.buy_k) * self.result.average_std, 1e-6))
         # print("buy spread:", a, b, self.result.average_std, self.result.buy_k)
         return a + b
 
     def get_sell_spread(self, gamma, q = 0):  # q是仓位，为正是多仓
+        if self.result.average_std < 1e-10:
+            return 0.0
         a, b = 0.5 * (1 + q) * gamma * self.result.average_std, self.result.average_std * (1 / gamma) * math.log1p(gamma/max(abs(self.result.sell_k) * self.result.average_std, 1e-6))
         # print("sell spread:", a, b, self.result.average_std, self.result.sell_k)
         return a + b

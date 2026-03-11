@@ -125,7 +125,7 @@ class BaseExecutorConfig(BaseConfig["BaseExecutor"]):
 
     interval: float = Field(5.0, description="最小执行间隔（秒）")
     # always: bool = Field(False, description="是否总是执行（忽略 delta 阈值检查）")
-    clean: bool = Field(False, description="退出时是否清理所有活跃订单（取消）")
+    clean: bool = Field(True, description="退出时是否清理所有活跃订单（取消）")
     requires: list[str] = Field(default_factory=list, description="依赖的 indicator ID 列表")
     condition: Optional[Union[bool, str]] = Field(None, description="是否执行的条件表达式")
     default_timeout: float = Field(60.0, description="默认订单的超时时间（秒）")

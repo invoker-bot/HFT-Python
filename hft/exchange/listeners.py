@@ -50,7 +50,7 @@ class CCXTExchangeOrderBillWatchListener(Listener):
         except asyncio.TimeoutError:
             # 超时后检查是否需要停止
             if self._should_stop or self.state != ListenerState.RUNNING:
-                raise asyncio.CancelledError()  # 主动退出
+                return True  # 信号完成，让 loop_coro_in_background 正常退出
             return  # 继续下一轮
         except asyncio.CancelledError:
             self.logger.debug("watch_orders cancelled for: %s", self.name)

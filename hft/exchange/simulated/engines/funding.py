@@ -94,10 +94,10 @@ class FundingEngine:
                 continue
 
             position = position_tracker.get(symbol)
-            if abs(position) > 1e-12 and state.mark_price > 0:
-                # funding = -position * rate * mark_price
-                # 多头支付正费率，空头收取正费率
-                funding_amount = -position * state.current_rate * state.mark_price
+            if abs(position) > 1e-9 and state.index_price > 0:
+                # funding = -position * rate * index_price
+                # 多头支付正费率，空头收取正费率（使用 index_price 符合交易所惯例）
+                funding_amount = -position * state.current_rate * state.index_price
                 balance_tracker.apply_funding(funding_amount)
 
                 self._settlement_history.append({

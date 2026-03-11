@@ -19,7 +19,7 @@ from enum import StrEnum
 from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, Optional
 
-from ccxt.base.errors import InvalidOrder
+from ccxt.base.errors import InvalidOrder, NetworkError, RequestTimeout, RateLimitExceeded
 from ccxt.base.types import (Order, OrderBook, OrderRequest, Position, Ticker, Balance, Balances,
                              Trade, MarketInterface, CurrencyInterface)
 from ccxt.pro import Exchange as CCXTExchange
@@ -685,6 +685,9 @@ class BaseExchange(Listener, metaclass=ABCMeta):
                 # pm.hook.on_order_error(exchange=self, error=e, order_params=order_params)
                 self.logger.exception("Failed to create order: %s", e)
                 return None
+            except (NetworkError, RequestTimeout, RateLimitExceeded) as e:
+                self.logger.error("Network/rate-limit error creating order: %s", e)
+                return None
         else:
             self.logger.info("Debug: %s", place_str)
             return None
@@ -729,15 +732,20 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         except (InvalidOrder, KeyError) as e:
             self.logger.exception("Failed to create orders: %s", e)
             return []
+        except (NetworkError, RequestTimeout, RateLimitExceeded) as e:
+            self.logger.error("Network/rate-limit error creating orders: %s", e)
+            return []
 
     async def cancel_order(self, order_id: str, symbol: str) -> Order:
         """撤销订单"""
         exchange = self.get_exchange(symbol)
         self.event.emit("order:canceling", self.config.path, symbol, order_id)
-        order = await exchange.cancel_order(order_id, symbol)
+        try:
+            order = await exchange.cancel_order(order_id, symbol)
+        except (NetworkError, RequestTimeout, RateLimitExceeded) as e:
+            self.logger.error("Network/rate-limit error canceling order %s: %s", order_id, e)
+            raise
         self.event.emit("order:canceled", self.config.path, symbol, order_id, order)
-        # 插件钩子：订单取消
-        # pm.hook.on_order_cancelled(exchange=self, order=order)
         self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
         return order
 
@@ -746,7 +754,11 @@ class BaseExchange(Listener, metaclass=ABCMeta):
         exchange = self.get_exchange(symbol)
         for order_id in orders:
             self.event.emit("order:canceling", self.config.path, symbol, order_id)
-        results = await exchange.cancel_orders(orders, symbol)
+        try:
+            results = await exchange.cancel_orders(orders, symbol)
+        except (NetworkError, RequestTimeout, RateLimitExceeded) as e:
+            self.logger.error("Network/rate-limit error canceling orders for %s: %s", symbol, e)
+            raise
         for order_id, order in zip(orders, results):
             self.event.emit("order:canceled", self.config.path, symbol, order_id, order)
             self.logger.info("Successfully canceled order %s for symbol %s", order_id, symbol)
@@ -859,7 +871,7 @@ class BaseExchange(Listener, metaclass=ABCMeta):
     async def medal_watch_balance(self, ccxt_instance_key: str) -> dict[str, Balance]:
         """订阅余额更新"""
         exchange = self.exchanges[ccxt_instance_key]
-        balance = await exchange.watch_balance()
+        balance = self._transform_balance(await exchange.watch_balance())
         return await self.medal_cache_balance(ccxt_instance_key, balance)
 
     async def fetch_position(self, symbol: str) -> list[Position]:

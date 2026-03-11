@@ -26,7 +26,7 @@ from humanfriendly import format_timespan
 from rich.console import Console
 from tenacity import (AsyncRetrying, RetryCallState, retry,
                       retry_if_not_exception_type, stop_after_attempt,
-                      wait_fixed)
+                      wait_exponential, wait_fixed)
 
 from ..plugin import pm
 if TYPE_CHECKING:
@@ -248,7 +248,8 @@ class Listener(ABC):
                     should_finalize = True  # Exit if the coroutine signals completion: return True
                 self._healthy_since = time.time()  # Mark as healthy on successful execution
             except asyncio.CancelledError:
-                should_finalize = True  # Allow task to be cancelled gracefully
+                should_finalize = True
+                break  # Re-exit loop; let the task propagate cancellation naturally
             except Exception as e:
                 self.logger.exception("Exception in background task: %s", str(e))
             finally:
@@ -608,7 +609,7 @@ class Listener(ABC):
             # self.logger.info("Health check: running state is %s", self.state)
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(RETRY_ATTEMPTS),
-                wait=wait_fixed(RETRY_WAIT_SECONDS),
+                wait=wait_exponential(multiplier=1, min=2, max=60),
                 reraise=True,
                 retry_error_callback=self.on_health_check_error,
                 retry=retry_if_not_exception_type(
@@ -639,7 +640,7 @@ class Listener(ABC):
 
     @retry(
         stop=stop_after_attempt(RETRY_ATTEMPTS),
-        wait=wait_fixed(RETRY_WAIT_SECONDS),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
         reraise=True,
         retry=retry_if_not_exception_type((asyncio.CancelledError, KeyboardInterrupt)),
     )
@@ -755,7 +756,7 @@ class Listener(ABC):
                 stop_tasks.append(child.stop(True))
             if len(stop_tasks) > 0:
                 self.logger.info("Waiting for %d children to stop: %s", len(stop_tasks), self.name)
-                await asyncio.gather(*stop_tasks)
+                await asyncio.gather(*stop_tasks, return_exceptions=True)
                 self.logger.info("All children stopped: %s", self.name)
         self.enabled = False
         await self.__delete_background_task_internal()

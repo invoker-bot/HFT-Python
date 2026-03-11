@@ -3,6 +3,7 @@ VirtualMachine - 表达式求值引擎
 
 基于 simpleeval 实现安全的表达式求值。
 """
+import logging
 from typing import TYPE_CHECKING, Any, Optional
 from collections import defaultdict
 from simpleeval import (DEFAULT_FUNCTIONS, DEFAULT_NAMES, DEFAULT_OPERATORS,
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from ...config.scope import ScopeFlowConfig
     from ..app.base import AppCore
     from .manager import ScopeManager
+
+logger = logging.getLogger(__name__)
 
 ScopeFlowLayers = list[dict[ScopeInstanceId, 'FlowScopeNode']]
 
@@ -73,7 +76,11 @@ class VirtualMachine:
         else:
             self.evaler.functions = scope.functions
             self.evaler.names = scope.vars
-        return self.evaler.eval(expression)
+        try:
+            return self.evaler.eval(expression)
+        except (ZeroDivisionError, OverflowError, ValueError) as e:
+            logger.warning("表达式求值域错误: '%s' -> %s", expression, e)
+            raise
 
     def eval_condition(self, condition_expr: Optional[str], scope: 'VirtualScope') -> bool:
         """

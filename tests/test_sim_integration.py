@@ -232,6 +232,7 @@ class TestLongRunningStability:
                 for symbol, state in fe._states.items():
                     state.next_funding_timestamp = time.time() - 1
                     state.mark_price = exchange.price_engine.get_price(symbol)
+                    state.index_price = state.mark_price
                 fe.check_settlements(exchange.position_tracker, exchange.balance_tracker)
 
             history = fe.get_settlement_history()
@@ -646,6 +647,7 @@ class TestLongRunningStability:
             state = fe._states["BTC/USDT:USDT"]
             state.current_rate = 0.001  # 正费率
             state.mark_price = price
+            state.index_price = price
             state.next_funding_timestamp = time.time() - 1  # 触发结算
 
             fe.check_settlements(pt, bt)

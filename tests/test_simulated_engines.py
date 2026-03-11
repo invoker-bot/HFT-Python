@@ -271,6 +271,7 @@ class TestFundingEngine:
         # 设置 next_funding 为过去
         engine._states["BTC/USDT:USDT"].next_funding_timestamp = time.time() - 1
         engine._states["BTC/USDT:USDT"].mark_price = 80000.0
+        engine._states["BTC/USDT:USDT"].index_price = 80000.0
 
         pos = PositionTracker()
         bal = BalanceTracker(100_000.0)
