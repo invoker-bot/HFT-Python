@@ -71,7 +71,8 @@ class SimulatedCCXTExchange:
         return self._order_manager.get_open_orders(symbol)
 
     async def fetch_closed_orders(self, symbol=None, since=None, limit=None):
-        return []  # 简化
+        return [o.to_ccxt_order() for o in self._order_manager._closed_orders
+                if symbol is None or o.symbol == symbol]
 
     async def watch_orders(self):
         return await self._order_manager.wait_for_updates()
@@ -87,7 +88,7 @@ class SimulatedCCXTExchange:
         return self._balance_tracker.to_ccxt_format(self.type)
 
     async def watch_balance(self):
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.1)
         return await self.fetch_balance()
 
     # ===== 持仓 =====
@@ -98,7 +99,7 @@ class SimulatedCCXTExchange:
         return self._position_tracker.to_ccxt_positions(self._contract_sizes)
 
     async def watch_positions(self):
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.1)
         return await self.fetch_positions()
 
     async def fetch_position(self, symbol):
@@ -223,6 +224,8 @@ class SimulatedExchange(BaseExchange):
             balance_tracker=self.balance_tracker,
             fill_probability=self.config.order_fill_probability,
             contract_sizes=self._sim_contract_sizes,
+            rng=self.price_engine._rng,
+            price_engine=self.price_engine,
         )
 
         # 注入引擎到 ccxt 桩对象
@@ -285,8 +288,6 @@ class SimulatedExchange(BaseExchange):
         self.order_manager.try_fill_orders(
             {s: self.price_engine.get_state(s) for s in self.price_engine.symbols}
         )
-        # 更新市场数据缓存
-        await self._markets.update(self._sim_markets)
 
     # ===== 市场数据 =====
 
@@ -345,16 +346,16 @@ class SimulatedExchange(BaseExchange):
         state = self.price_engine.get_state(symbol)
         mid = state.mid_price
         now = time.time()
+        rng = self.price_engine._rng
         bars = []
         for i in range(limit or 10):
             ts = int((now - (limit or 10 - i) * 60) * 1000)
             noise = mid * 0.001
-            import random
-            o = mid + random.gauss(0, noise)
-            c = mid + random.gauss(0, noise)
-            h = max(o, c) + abs(random.gauss(0, noise))
-            l = min(o, c) - abs(random.gauss(0, noise))
-            v = 100 + random.random() * 200
+            o = mid + rng.gauss(0, noise)
+            c = mid + rng.gauss(0, noise)
+            h = max(o, c) + abs(rng.gauss(0, noise))
+            l = min(o, c) - abs(rng.gauss(0, noise))
+            v = 100 + rng.random() * 200
             bars.append([ts, o, h, l, c, v])
         return bars
 

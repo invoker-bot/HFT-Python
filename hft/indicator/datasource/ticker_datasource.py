@@ -38,7 +38,12 @@ class TickerData:
         """中间价"""
         if self.bid and self.ask:
             return (self.bid + self.ask) / 2
-        return self.last
+        if self.last:
+            return self.last
+        # bid=0 且 last=0，但 ask>0 时使用 ask 作为 fallback
+        if self.ask:
+            return self.ask
+        return 0
 
 
 class TickerDataSource(BaseTradingPairClassDataIndicator[TickerData]):

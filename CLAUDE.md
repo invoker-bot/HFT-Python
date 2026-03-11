@@ -75,7 +75,7 @@ Exchange → DataSource.on_tick() → HealthyDataArray
 
 Replaced the old "links" system. Configured via `flow:` in strategy/executor YAML configs.
 
-- **Scopes** (hft/core/scope/): GlobalScope → ExchangeClassScope → ExchangeScope → TradingPairClassScope → TradingPairScope
+- **Scopes** (hft/core/scope/): GlobalScope → ExchangeClassScope → ExchangeScope → TradingPairClassGroupScope → TradingPairClassScope → TradingPairScope
 - **FlowScopeNode** (hft/core/scope/vm.py): Temporary computation nodes with ChainMap variable inheritance
 - **VirtualMachine**: Evaluates expressions using `simpleeval`, with a safe function whitelist (`abs`, `min`, `max`, `clip`, `log`, etc.)
 
@@ -93,11 +93,18 @@ Only `DefaultExecutor` exists currently. `BaseExecutor` (hft/executor/base.py) u
 - `orders:` / `order:` + `order_levels:` for order definitions
 - Price calculation: buy → `bid_price - spread`, sell → `ask_price + spread`
 
+### Exchange Variants
+
+- **Real exchanges** (hft/exchange/okx/, hft/exchange/binance/): Production exchange implementations via ccxt
+- **SimulatedExchange** (hft/exchange/simulated/): Full exchange simulation without network, uses internal engines (PriceEngine, OrderManager, PositionTracker, BalanceTracker)
+- **MockExchange** (hft/exchange/demo/): Lightweight mock for performance testing, records API calls, supports fake time
+
 ### Configuration System
 
 - `BaseConfig` (Pydantic models) loaded from YAML files under `conf/`
 - `BaseConfigPath` provides lazy loading with caching
 - Config hierarchy: `conf/app/` → `conf/strategy/` → `conf/executor/` → `conf/exchange/`
+- Config modules: `base.py`, `crypto.py`, `indicator.py`, `scope.py`, `var.py`
 - Variable definitions support three formats: standard `{name, value}`, dict `{name: value}`, string `"name=value"`
 
 ### HealthyData (hft/core/healthy_data.py)
@@ -108,7 +115,7 @@ Two variants:
 
 ### Plugin System
 
-Uses `pluggy` (hft/plugin/base.py). Key hooks: `on_order_creating`, `on_order_error`, `on_balance_update(exchange, account, balance)`, `on_position_update(exchange, account, positions)`.
+Uses `pluggy` (hft/plugin/base.py). Active hooks: lifecycle (`on_app_start`, `on_app_stop`, `on_app_tick`, `on_listener_start`, `on_listener_stop`, `on_listener_tick`) and notification (`on_notify`, `on_health_check_failed`). Trading/strategy/data hooks are defined but currently commented out.
 
 ## Key Patterns
 

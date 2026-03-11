@@ -191,3 +191,4 @@ class FundingEngine:
     def reset(self):
         """重置"""
         self._settlement_history.clear()
+        self._states.clear()

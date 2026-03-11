@@ -19,26 +19,23 @@ class BalanceTracker:
         """获取 USDT 余额"""
         return self._balances.get('USDT', 0.0)
 
-    def apply_trade(self, side: str, cost_usdt: float, symbol: str):
+    def apply_trade(self, side: str, cost_usdt: float, symbol: str, realized_pnl: float = 0.0):
         """交易成交后更新余额
 
-        对于 swap（USDT 结算）：买入扣减 USDT，卖出增加 USDT
-        对于 spot：买入扣减 USDT 增加 base，卖出增加 USDT 扣减 base
+        对于 spot：买入扣减 USDT，卖出增加 USDT
+        对于 swap：开仓不动余额，减仓/平仓时按已实现 PnL 调整余额
         """
         is_spot = ':' not in symbol
-        base = symbol.split('/')[0]
 
         if is_spot:
             if side == 'buy':
                 self._balances['USDT'] = self._balances.get('USDT', 0.0) - cost_usdt
-                # base 数量在 PositionTracker 追踪，但现货也在 balance 中反映
-                # amount 由调用者通过 PositionTracker 追踪
             else:
                 self._balances['USDT'] = self._balances.get('USDT', 0.0) + cost_usdt
         else:
-            # swap：USDT 保证金变化（简化模型：全仓不实际冻结）
-            # 实际 PnL 在平仓时结算，这里只记录手续费
-            pass
+            # swap：按已实现 PnL 调整余额
+            if realized_pnl != 0.0:
+                self._balances['USDT'] = self._balances.get('USDT', 0.0) + realized_pnl
 
     def apply_funding(self, amount: float):
         """资金费率结算

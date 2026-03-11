@@ -177,7 +177,7 @@ class PriceEngine:
             'low': mid * 0.99,
             'bid': bid,
             'ask': ask,
-            'last': mid + self._rng.gauss(0, half_spread * 0.3),
+            'last': max(mid + self._rng.gauss(0, half_spread * 0.3), mid * 0.001),
             'close': mid,
             'baseVolume': 1000.0 + self._rng.random() * 500,
             'quoteVolume': mid * (1000.0 + self._rng.random() * 500),

@@ -68,6 +68,25 @@ flow:
 
 每个 flow 配置独立执行，最终返回最后一层的 `{instance_id: FlowScopeNode}` 字典。
 
+### 2.1.1 sorted_var（排序变量）
+
+flow 层级支持 `sorted_var` 字段，用于按指定变量的值对该层实例排序，并注入排名变量 `index`：
+
+```yaml
+flow:
+  - class_name: TradingPairClassScope
+    vars:
+      - score=fair_price * volume
+    sorted_var: score  # 按 score 排序
+```
+
+执行逻辑：
+1. 在 vars 计算和 condition 过滤完成后，读取每个节点的 `sorted_var` 变量值
+2. 按升序排序（`None` 值排到最后）
+3. 为每个节点注入 `index` 变量（从 0 开始）
+
+后续层级可引用 `index` 变量进行进一步计算或过滤。
+
 ### 2.2 目标匹配与输出
 
 Strategy 输出阶段：

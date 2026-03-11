@@ -564,13 +564,7 @@ class Listener(ABC):
     @enabled.setter
     def enabled(self, value: bool):
         """设置监听器启用状态"""
-        # import traceback
-        # old_value = self._enabled
         self._enabled = value
-        # self.logger.info("set enabled = %s", value)
-        # if old_value != value:
-        #     self.logger.warning("enabled status changed: %s -> %s, stack:\n%s",
-        #                       old_value, value, ''.join(traceback.format_stack()))
 
     @property
     def healthy(self) -> bool:
@@ -847,7 +841,12 @@ class Listener(ABC):
         return f"{self.__class__.__name__}-{id(self)}"
 
     def __iter__(self) -> Iterator['Listener']:
-        """迭代器：深度优先遍历所有子监听器和自身"""
+        """
+        后序遍历（post-order）迭代器。
+
+        先递归遍历所有子监听器，最后 yield 自身。
+        这保证了在停止等场景中，子节点总是在父节点之前被处理。
+        """
         for child in self.children.values():
             yield from child
         yield self

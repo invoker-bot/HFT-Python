@@ -162,4 +162,4 @@ class StaticPositionsStrategy(BaseStrategy):
         Returns:
             True 如果策略应该退出（exit_on_target=True 且所有仓位达标）
         """
-        return
+        return False

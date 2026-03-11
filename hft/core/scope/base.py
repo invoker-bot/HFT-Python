@@ -176,7 +176,6 @@ class BaseScope(VirtualScope):
                 current_level[ns] = {}
             current_level = current_level[ns]
         current_level[actual_name] = value
-        self._vars[name] = value
         if conditional:
             self._conditional_vars_update_times[name] = time.time()
 
@@ -372,6 +371,9 @@ class FlowScopeNode(VirtualScope):
     def vars_list(self) -> list[dict]:
         """
         获取当前节点及其所有祖先节点的变量列表（从根到当前节点）
+
+        多对一场景（多个 prev）时，只继承第一个 prev 的变量链；
+        其他 prev 节点通过 injected_vars["prev"] 列表访问。
 
         Returns:
             变量字典列表

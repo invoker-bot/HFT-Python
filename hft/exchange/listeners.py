@@ -65,16 +65,6 @@ class CCXTExchangeOrderBillWatchListener(Listener):
         self._should_stop = True
         await super().on_stop()
 
-    # async def on_stop(self):
-    #     # 停止时取消所有挂单监听for
-    #     # try:
-    #     #     await self.exchange.un_watch_orders(self.name)
-    #     #     NotSupportedError
-    #     #     # current not supported in ccxt
-    #     # except UnsubscribeError:  # 可能已经取消订阅
-    #     #     pass
-    #     await super().on_stop()
-
 
 class CCXTExchangeOrderBillListener(Listener):
     __pickle_exclude__ = {*Listener.__pickle_exclude__, "auto_tracking_orders_after",
@@ -179,15 +169,6 @@ class ExchangePositionWatchListener(Listener):
         if not self.exchange.ready:
             return
         await self.exchange.medal_watch_positions()
-
-    # async def on_stop(self):
-    #     """停止时取消持仓订阅"""
-    #     # try:
-    #     #     # await self.exchange.un_watch_positions()
-    #     #     # current not supported in ccxt
-    #     # except UnsubscribeError:
-    #     #     pass
-    #     await super().on_stop()
 
 
 class ExchangePositionListener(Listener):

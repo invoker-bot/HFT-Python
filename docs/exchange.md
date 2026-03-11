@@ -9,7 +9,11 @@
 ```
 BaseExchange (抽象基类)
 ├── OKXExchange         # OKX 交易所
-└── BinanceExchange     # Binance 交易所
+├── BinanceExchange     # Binance 交易所
+├── SimulatedExchange   # 模拟交易所（不依赖网络）
+│   ├── SimulatedOKXExchange
+│   └── SimulatedBinanceExchange
+└── MockExchange        # 性能测试用 Mock 交易所
 
 ExchangeGroup           # 多账户分组管理
 ```
@@ -154,3 +158,46 @@ except ccxt.InvalidOrder:
 except Exception as e:
     logger.exception("Order failed: %s", e)
 ```
+
+## SimulatedExchange
+
+模拟交易所实现（`hft/exchange/simulated/`），完整模拟交易所行为，不依赖 ccxt 和网络。
+
+### 特点
+
+- 通过 `SimulatedCCXTExchange` 桩对象拦截所有 ccxt 调用
+- 内置引擎：`PriceEngine`（价格模拟）、`FundingEngine`（资金费率）、`OrderManager`（订单管理）、`PositionTracker`（持仓跟踪）、`BalanceTracker`（余额跟踪）
+- 提供 OKX 和 Binance 两个子类：`SimulatedOKXExchange`、`SimulatedBinanceExchange`
+
+### 适用场景
+
+- 策略回测
+- 集成测试（无需网络）
+- 模拟交易环境
+
+### 目录结构
+
+```
+hft/exchange/simulated/
+├── base.py          # SimulatedExchange 基类
+├── markets.py       # 模拟市场数据生成
+├── okx.py           # SimulatedOKXExchange
+└── binance.py       # SimulatedBinanceExchange
+```
+
+## MockExchange
+
+性能测试用 Mock 交易所（`hft/exchange/demo/mock_exchange.py`），用于验证系统在大规模交易对下的性能表现。
+
+### 特点
+
+- 生成任意数量的模拟交易对（`num_markets` 可配置）
+- 记录所有 API 调用次数和参数
+- 支持 fake time 时间加速
+- 模拟 ticker/orderbook/trades 数据
+
+### 适用场景
+
+- 性能回归测试
+- 复杂度验证（Strategy O(n)、Executor O(1)）
+- 资源释放测试

@@ -119,6 +119,7 @@ class BaseExecutor(Listener):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.active_orders_tracker = ActiveOrdersTracker()  # 这里管理所有类型的订单
+        self._refresh_timestamps: dict[str, float] = {}  # ident -> last_refresh_time
 
     @property
     def interval(self) -> float:
@@ -187,7 +188,6 @@ class BaseExecutor(Listener):
                 params = {"postOnly": True}
             else:
                 params = {}
-            # print("Creating order intent:", side, symbol, "price:", intent.price, "amount:", intent.amount, "post_only:", intent.post_only)
             order_requests.append({
                 "symbol": symbol,
                 "type": "limit" if intent.price is not None else "market",
@@ -221,7 +221,7 @@ class BaseExecutor(Listener):
         order_ids = {o.order_id for o in orders}
         not_found_order_ids = set()
         for order_id in order_ids:
-            print("fetching order to cancel:", order_id)
+            self.logger.debug("fetching order to cancel: %s", order_id)
             order = await exchange.fetch_order(order_id, symbol)  # 先确认订单状态
             if order['status'] in ["closed", "canceled", "expired", "rejected"]:
                 not_found_order_ids.add(order_id)
@@ -251,14 +251,14 @@ class BaseExecutor(Listener):
         orders_to_place, orders_to_remove = self.active_orders_tracker.calculate_changed_orders(
             exchange_path, symbol, intents
         )
-        # 1. 创建新订单
+        # 1. 先撤销过期/不匹配的订单
+        if len(orders_to_remove) > 0:
+            await self.cancel_active_orders(exchange_path, symbol, orders_to_remove)
+
+        # 2. 再创建新订单
         if len(orders_to_place) > 0:
             created_orders = await self.create_orders_by_intents(exchange_path, symbol, orders_to_place)
             self.active_orders_tracker.add_active_orders(exchange_path, symbol, created_orders)
-
-        # 2. 取消过期订单
-        if len(orders_to_remove) > 0:
-            await self.cancel_active_orders(exchange_path, symbol, orders_to_remove)
         # event其实会自动触发移除订单的动作
         # self.active_orders_tracker.remove_active_orders(
         #     exchange_path, symbol,
@@ -289,14 +289,17 @@ class BaseExecutor(Listener):
         nodes = self.strategy.calculate_flow_nodes()
         vm = self.virtual_machine
         app_core = self.root
+        flow_symbols: set[tuple[str, str]] = set()  # (exchange_path, symbol)
         for node in nodes.values():
             if not isinstance(node.scope, TradingPairScope):
                 self.logger.warning("Skipping non-trading pair scope: %s", node.scope.path)
+                continue  # M12: warning 后 continue
             exchange_path = node.get_var("exchange_path")
             exchange = self.exchange_group.exchange_instances[exchange_path]
             symbol = node.get_var("symbol")
             ident = f"{exchange_path}-{symbol}"
-            last_refresh_orders = node.get_var("__last_refresh_orders", 0)
+            flow_symbols.add((exchange_path, symbol))
+            last_refresh_orders = self._refresh_timestamps.get(ident, 0)  # M11: 使用实例字典
             if time.time() - last_refresh_orders > self.config.default_timeout:  # 每timeout秒刷新一次订单状态
                 order_ids = set()
                 for order in await exchange.fetch_open_orders(symbol):
@@ -307,82 +310,129 @@ class BaseExecutor(Listener):
                 for order_id in list(orders_dict.keys()):
                     if order_id not in order_ids:
                         del orders_dict[order_id]  # 这里直接删除
-                node.set_var("__last_refresh_orders", time.time())
+                self._refresh_timestamps[ident] = time.time()  # M11: 写入实例字典
             # process
             # inject indicators data into vm context
             if not vm.inject_indicators(self.config.requires, node, app_core):
                 self.logger.debug("Not all required indicators are available for node: %s, required: %s", ident, self.config.requires)
-                # print("not inject indicators for node:", node.scope.class_name)
                 continue
-            vm.execute_vars(self.config.standard_vars_definition, node)  # 执行变量
-            if not vm.eval_condition(self.config.condition, node):
-                # print("Condition not met, skipping node:", node.scope.class_name)
-                self.logger.debug("Condition not met, skipping scope: %s", ident)
-                continue
-            # collect intents
-            intents: list[OrderIntent] = []
-            for order_def in self.config.total_order_definitions:
-                node.set_var("level", order_def.level)  # 设置当前订单层级变量
-                vm.execute_vars(order_def.standard_vars_definition, node)  # 计算订单级变量
-                if not vm.eval_condition(order_def.condition, node):
-                    self.logger.debug("Order condition not met, skipping scope: %s, order level: %s", ident, order_def.level)
+            try:  # M4: 表达式求值异常捕获
+                vm.execute_vars(self.config.standard_vars_definition, node)  # 执行变量
+                if not vm.eval_condition(self.config.condition, node):
+                    self.logger.debug("Condition not met, skipping scope: %s", ident)
                     continue
-                amount = 0.0
-                if order_def.order_amount is not None:
-                    amount = vm.eval(order_def.order_amount, node)
-                elif order_def.order_usd is not None:
-                    usd = vm.eval(order_def.order_usd, node)
-                    current_price = node.get_var("last_price")  # 使用最新价
-                    amount = usd / current_price  # 简化处理
-                else:
-                    raise ValueError("Either order_amount or order_usd must be specified, scope: %s, order level: %s" % (ident, order_def.level))
-                price = None
-                spread = None
-                if order_def.price is not None:
-                    price = vm.eval(order_def.price, node)
-                elif order_def.spread is not None:
-                    mid = node.get_var("mid_price")
-                    ask = node.get_var("ask_price", mid)
-                    bid = node.get_var("bid_price", mid)
-                    spread = vm.eval(order_def.spread, node)
-                    if amount > 0:  # buy
-                        price = bid - spread
+                # collect intents
+                intents: list[OrderIntent] = []
+                for order_def in self.config.total_order_definitions:
+                    node.set_var("level", order_def.level)  # 设置当前订单层级变量
+                    vm.execute_vars(order_def.standard_vars_definition, node)  # 计算订单级变量
+                    if not vm.eval_condition(order_def.condition, node):
+                        self.logger.debug("Order condition not met, skipping scope: %s, order level: %s", ident, order_def.level)
+                        continue
+                    amount = 0.0
+                    if order_def.order_amount is not None:
+                        amount = vm.eval(order_def.order_amount, node)
+                    elif order_def.order_usd is not None:
+                        usd = vm.eval(order_def.order_usd, node)
+                        # C2: max_order_usd 裁剪
+                        if hasattr(self.config, 'max_order_usd') and self.config.max_order_usd is not None:
+                            if abs(usd) > self.config.max_order_usd:
+                                self.logger.warning("order_usd %.2f 超过 max_order_usd %.2f，裁剪到上限, scope: %s", abs(usd), self.config.max_order_usd, ident)
+                                usd = self.config.max_order_usd if usd > 0 else -self.config.max_order_usd
+                        current_price = node.get_var("last_price")  # 使用最新价
+                        # C6: 除零保护
+                        if not current_price or current_price <= 0:
+                            self.logger.warning("current_price 无效（%s），跳过订单, scope: %s", current_price, ident)
+                            continue
+                        amount = usd / current_price  # 简化处理
                     else:
-                        price = ask + spread
-                # else:  is market order
-                if price is None:
-                    post_only = False
-                else:
-                    post_only = vm.eval(order_def.post_only, node)
+                        raise ValueError("Either order_amount or order_usd must be specified, scope: %s, order level: %s" % (ident, order_def.level))
 
-                timeout = vm.eval(order_def.timeout, node)
-                refresh_tolerance = 0.0
-                if order_def.refresh_tolerance_usd is not None:
-                    refresh_tolerance = vm.eval(order_def.refresh_tolerance_usd, node)
-                elif order_def.refresh_tolerance is not None:
-                    refresh_tolerance_pct = vm.eval(order_def.refresh_tolerance, node)
-                    if spread is None:
-                        if price is not None:
-                            last_price = node.get_var("last_price")
-                            # if last_price is not None:
-                            spread = abs(price - last_price)
+                    # C2: max_position_usd 检查
+                    if hasattr(self.config, 'max_position_usd') and self.config.max_position_usd is not None:
+                        current_position_usd = node.get_var("current_position_usd", 0)
+                        current_price_check = node.get_var("last_price", 0)
+                        if current_price_check > 0:
+                            projected_position_usd = abs(current_position_usd + amount * current_price_check)
+                            if projected_position_usd > self.config.max_position_usd:
+                                self.logger.warning("projected position_usd %.2f 超过 max_position_usd %.2f，跳过订单, scope: %s", projected_position_usd, self.config.max_position_usd, ident)
+                                continue
+
+                    price = None
+                    spread = None
+                    if order_def.price is not None:
+                        price = vm.eval(order_def.price, node)
+                    elif order_def.spread is not None:
+                        mid = node.get_var("mid_price")
+                        ask = node.get_var("ask_price", mid)
+                        bid = node.get_var("bid_price", mid)
+                        spread = vm.eval(order_def.spread, node)
+                        if amount > 0:  # buy
+                            price = bid - spread
                         else:
-                            ask_price = node.get_var("ask_price")
-                            bid_price = node.get_var("bid_price")
-                            if ask_price is not None and bid_price is not None:
-                                spread = abs(ask_price - bid_price)
+                            price = ask + spread
+                    # else:  is market order
+                    if price is None:
+                        post_only = False
+                    else:
+                        post_only = vm.eval(order_def.post_only, node)
+
+                    timeout = vm.eval(order_def.timeout, node)
+                    refresh_tolerance = 0.0
+                    if order_def.refresh_tolerance_usd is not None:
+                        refresh_tolerance = vm.eval(order_def.refresh_tolerance_usd, node)
+                    elif order_def.refresh_tolerance is not None:
+                        refresh_tolerance_pct = vm.eval(order_def.refresh_tolerance, node)
+                        if spread is None:
+                            if price is not None:
+                                last_price = node.get_var("last_price")
+                                spread = abs(price - last_price)
                             else:
-                                self.logger.warning("Cannot calculate spread for refresh tolerance, missing price ticker data, scope: %s, order level: %s", ident, order_def.level)
-                        if spread is not None:
-                            refresh_tolerance = spread * refresh_tolerance_pct
-                intents.append(OrderIntent(
-                    price=price,
-                    amount=amount,
-                    timeout_refresh_tolerance=timeout,
-                    price_refresh_tolerance=refresh_tolerance,
-                    post_only=post_only
-                ))
-            await self.process_intents(exchange_path, symbol, intents)
+                                ask_price = node.get_var("ask_price")
+                                bid_price = node.get_var("bid_price")
+                                if ask_price is not None and bid_price is not None:
+                                    spread = abs(ask_price - bid_price)
+                                else:
+                                    self.logger.warning("Cannot calculate spread for refresh tolerance, missing price ticker data, scope: %s, order level: %s", ident, order_def.level)
+                            if spread is not None:
+                                refresh_tolerance = spread * refresh_tolerance_pct
+                    intents.append(OrderIntent(
+                        price=price,
+                        amount=amount,
+                        timeout_refresh_tolerance=timeout,
+                        price_refresh_tolerance=refresh_tolerance,
+                        post_only=post_only
+                    ))
+                await self.process_intents(exchange_path, symbol, intents)
+            except Exception:
+                self.logger.error("处理交易对 %s 时发生异常", ident, exc_info=True)
+                continue
+
+        # M1: 币种下架清仓 - 对有持仓但不在 flow 输出中的 symbol 生成平仓 intent
+        for exchange_path, exchange in self.exchange_group.exchange_instances.items():
+            if not exchange.ready:
+                continue
+            if not hasattr(exchange, 'position_tracker'):
+                continue
+            positions = exchange.position_tracker.get_all()
+            for symbol, pos_amount in positions.items():
+                if abs(pos_amount) < 1e-8:
+                    continue
+                if (exchange_path, symbol) not in flow_symbols:
+                    self.logger.warning("持仓 %s/%s (amount=%.6f) 不在 flow 输出中，生成平仓意图", exchange_path, symbol, pos_amount)
+                    try:
+                        ticker = await exchange.fetch_ticker(symbol)
+                        if ticker and ticker.get('last', 0) > 0:
+                            close_intent = OrderIntent(
+                                price=None,  # 市价平仓
+                                amount=-pos_amount,
+                                timeout_refresh_tolerance=self.config.default_timeout,
+                                price_refresh_tolerance=0.0,
+                                post_only=False
+                            )
+                            await self.process_intents(exchange_path, symbol, [close_intent])
+                    except Exception:
+                        self.logger.error("清仓 %s/%s 失败", exchange_path, symbol, exc_info=True)
 
     async def on_stop(self):
         await super().on_stop()

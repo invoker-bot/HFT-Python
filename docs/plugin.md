@@ -13,19 +13,20 @@
 | `on_app_tick` | ✅ | `AppCore.on_tick()` |
 | `on_listener_start` | ✅ | `Listener.on_start()` |
 | `on_listener_stop` | ✅ | `Listener.on_stop()` |
-| `on_order_creating` | ✅ | `BaseExchange.create_order()` 前 |
-| `on_order_created` | ✅ | `BaseExchange.create_order()` 成功后 |
-| `on_order_cancelled` | ✅ | `BaseExchange.cancel_order()` 后 |
-| `on_order_error` | ✅ | `BaseExchange.create_order()` 失败时 |
-| `on_order_filled` | ✅ | `ExchangeOrderBillListener._emit_order_filled_hook()` |
-| `on_strategy_targets_calculated` | ✅ | `StrategyGroup.get_aggregated_targets()`（当前仅管理单条 Strategy） |
-| `on_targets_aggregated` | ✅ | `StrategyGroup.get_aggregated_targets()`（当前仅管理单条 Strategy） |
-| `on_execution_start` | ✅ | `BaseExecutor.on_tick()` 执行前 |
-| `on_execution_complete` | ✅ | `BaseExecutor.on_tick()` 执行后 |
-| `on_balance_update` | ✅ | `BaseExchange.medal_cache_balance()` |
-| `on_position_update` | ✅ | `BaseExchange.medal_cache_positions()` |
-| `on_ticker_update` | ✅ | `TickerDataSource._emit_plugin_hook()` |
-| `on_funding_rate_update` | ✅ | `GlobalFundingRateFetcher._fetch_and_distribute()` |
+| `on_listener_tick` | ✅ | `Listener.on_tick()` |
+| `on_order_creating` | ❌ 已注释 | — |
+| `on_order_created` | ❌ 已注释 | — |
+| `on_order_cancelled` | ❌ 已注释 | — |
+| `on_order_error` | ❌ 已注释 | — |
+| `on_order_filled` | ❌ 已注释 | — |
+| `on_strategy_targets_calculated` | ❌ 已注释 | — |
+| `on_targets_aggregated` | ❌ 已注释 | — |
+| `on_execution_start` | ❌ 已注释 | — |
+| `on_execution_complete` | ❌ 已注释 | — |
+| `on_balance_update` | ❌ 已注释 | — |
+| `on_position_update` | ❌ 已注释 | — |
+| `on_ticker_update` | ❌ 已注释 | — |
+| `on_funding_rate_update` | ❌ 已注释 | — |
 | `on_notify` | ✅ | `NotifyService.send()` |
 | `on_health_check_failed` | ✅ | `Listener.health_check()` 失败时 |
 
@@ -87,82 +88,39 @@ def on_listener_start(listener: "Listener"):
 @hookspec
 def on_listener_stop(listener: "Listener"):
     """任何 Listener 停止时调用"""
+
+@hookspec
+def on_listener_tick(listener: "Listener"):
+    """任何 Listener 每个 tick 循环调用"""
 ```
 
-### 2. 交易 Hooks
+### 2. 交易 Hooks（已注释，未实现）
 
-交易相关事件的钩子：
+以下 hook 已在 `hft/plugin/base.py` 中注释，暂未激活：
 
-```python
-@hookspec
-def on_order_creating(exchange: "BaseExchange", symbol: str, side: str, amount: float, price: float) -> bool:
-    """
-    订单创建前调用
+- `on_order_creating` - 订单创建前调用（`firstresult=True`，任何插件返回 False 将阻止订单创建）
+- `on_order_created` - 订单创建成功后调用
+- `on_order_filled` - 订单成交后调用
+- `on_order_cancelled` - 订单取消后调用
+- `on_order_error` - 订单创建失败时调用
 
-    Returns:
-        True 允许创建，False 阻止创建
-    """
+### 3. 策略 Hooks（已注释，未实现）
 
-@hookspec
-def on_order_created(exchange: "BaseExchange", order: dict):
-    """订单创建成功后调用"""
+以下 hook 已在 `hft/plugin/base.py` 中注释，暂未激活：
 
-@hookspec
-def on_order_filled(exchange: "BaseExchange", order: dict):
-    """订单成交后调用"""
+- `on_strategy_targets_calculated` - 策略计算出目标仓位后调用
+- `on_targets_aggregated` - 策略输出聚合后调用
+- `on_execution_start` - 执行器开始执行前调用
+- `on_execution_complete` - 执行器执行完成后调用
 
-@hookspec
-def on_order_cancelled(exchange: "BaseExchange", order: dict):
-    """订单取消后调用"""
+### 4. 数据 Hooks（已注释，未实现）
 
-@hookspec
-def on_order_error(exchange: "BaseExchange", error: Exception, order_params: dict):
-    """订单创建失败时调用"""
-```
+以下 hook 已在 `hft/plugin/base.py` 中注释，暂未激活：
 
-### 3. 策略 Hooks
-
-策略执行相关的钩子：
-
-```python
-@hookspec
-def on_strategy_targets_calculated(strategy: "BaseStrategy", targets: "TargetPositions"):
-    """策略计算出目标仓位后调用"""
-
-@hookspec
-def on_targets_aggregated(strategy_group: "StrategyGroup", targets: "AggregatedTargets"):
-    """策略输出聚合（当前单策略；仍统一为 AggregatedTargets）后调用"""
-
-@hookspec
-def on_execution_start(executor: "BaseExecutor", targets: "AggregatedTargets"):
-    """执行器开始执行前调用"""
-
-@hookspec
-def on_execution_complete(executor: "BaseExecutor", results: list):
-    """执行器执行完成后调用"""
-```
-
-### 4. 数据 Hooks
-
-市场数据相关的钩子：
-
-```python
-@hookspec
-def on_ticker_update(exchange: "BaseExchange", symbol: str, ticker: dict):
-    """Ticker 更新时调用"""
-
-@hookspec
-def on_balance_update(exchange: "BaseExchange", account: str, balance: dict):
-    """余额更新时调用"""
-
-@hookspec
-def on_position_update(exchange: "BaseExchange", account: str, positions: dict):
-    """持仓更新时调用"""
-
-@hookspec
-def on_funding_rate_update(exchange: "BaseExchange", symbol: str, funding_rate: dict):
-    """资金费率更新时调用"""
-```
+- `on_ticker_update` - Ticker 更新时调用
+- `on_balance_update` - 余额更新时调用
+- `on_position_update` - 持仓更新时调用
+- `on_funding_rate_update` - 资金费率更新时调用
 
 ### 5. 通知 Hooks
 
@@ -390,27 +348,6 @@ plugins:
 ### 核心代码集成点
 
 ```python
-# hft/exchange/base.py
-class BaseExchange(Listener):
-    async def create_order(self, symbol, side, amount, price=None):
-        # 调用 hook: 允许插件阻止订单
-        results = pm.hook.on_order_creating(
-            exchange=self, symbol=symbol, side=side, amount=amount, price=price
-        )
-        if False in results:
-            raise OrderRejectedException("Order rejected by plugin")
-
-        try:
-            order = await self._create_order_impl(symbol, side, amount, price)
-            # 调用 hook: 通知订单创建成功
-            pm.hook.on_order_created(exchange=self, order=order)
-            return order
-        except Exception as e:
-            pm.hook.on_order_error(exchange=self, error=e, order_params={...})
-            raise
-```
-
-```python
 # hft/core/app/base.py
 class AppCore(Listener):
     async def on_start(self):
@@ -421,6 +358,8 @@ class AppCore(Listener):
         pm.hook.on_app_stop(app=self)
         await super().on_stop()
 ```
+
+> **注意**：交易/策略/数据相关的 hook（如 `on_order_creating`、`on_balance_update` 等）当前已在 `hft/plugin/base.py` 中注释，尚未集成到核心代码中。
 
 ## Hook 执行顺序
 

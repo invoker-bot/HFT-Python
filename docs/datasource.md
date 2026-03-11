@@ -21,11 +21,17 @@
 │          │   ├── TickerDataSource                          │
 │          │   ├── OrderBookDataSource                       │
 │          │   ├── TradesDataSource                          │
-│          │   └── OHLCVDataSource                           │
+│          │   ├── OHLCVDataSource                           │
+│          │   ├── MedalEquationDataSource                   │
+│          │   ├── MedalAmountDataSource                     │
+│          │   ├── MarketInfoDataSource                      │
+│          │   └── TickerVolumeDataSource                    │
 │          │                                                  │
 │          └── Computed Indicator (计算类 Indicator)          │
-│              ├── MidPriceIndicator                         │
 │              ├── MedalEdgeIndicator                        │
+│              ├── TradeIntensityIndicator                   │
+│              ├── FairPriceIndicator                        │
+│              ├── FairFundingRateIndicator                  │
 │              ├── VolumeIndicator                           │
 │              └── RSIIndicator                              │
 └─────────────────────────────────────────────────────────────┘
@@ -73,11 +79,17 @@ hft/indicator/
 │   ├── orderbook_datasource.py
 │   ├── trades_datasource.py
 │   ├── ohlcv_datasource.py
-│   └── funding_rate_datasource.py
+│   ├── funding_rate_datasource.py
+│   ├── equation_datasource.py
+│   ├── medal_amount_datasource.py
+│   ├── market_info_datasource.py
+│   └── ticker_volume_datasource.py
 │
 └── computed/            # 计算类 Indicator
-    ├── mid_price_indicator.py
     ├── medal_edge_indicator.py
+    ├── trade_intensity_indicator.py
+    ├── fair_price_indicator.py
+    ├── fair_funding_rate_indicator.py
     ├── volume_indicator.py
     └── rsi_indicator.py
 ```
@@ -91,6 +103,10 @@ hft/indicator/
 | `TradesDataSource` | Trade | 成交记录 |
 | `OHLCVDataSource` | Candle | K线数据 |
 | `FundingRateDataSource` | FundingRate | 资金费率 |
+| `MedalEquationDataSource` | Equation | 账户权益（ExchangePath 级别） |
+| `MedalAmountDataSource` | Amount | 账户余额（ExchangePath 级别） |
+| `MarketInfoDataSource` | MarketInfo | 合约规格信息 |
+| `TickerVolumeDataSource` | Volume | 交易量数据（Global/Local 模式） |
 
 ## 使用示例
 

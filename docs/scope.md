@@ -31,6 +31,7 @@ ScopeClass 是 Python 中的 Scope 实现类：
 | `GlobalScope` | 全局作用域（根节点） |
 | `ExchangeClassScope` | 交易所类型 |
 | `ExchangeScope` | 交易所实例 |
+| `TradingPairClassGroupScope` | 交易对分组（跨平台，按 base currency 聚合，如 "ETH"） |
 | `TradingPairClassScope` | 交易对类型（跨 exchange） |
 | `TradingPairScope` | 交易对实例（最细粒度） |
 
@@ -76,6 +77,7 @@ ChainMap(injected_vars, trading_pair_vars, exchange_vars, global_vars)
 | `GlobalScope` | `app_core` | AppCore 实例引用（所有 Scope 都会注入 `app_core`） |
 | `ExchangeClassScope` | `exchange_class` | 交易所类名（如 `"okx"`, `"binance"`） |
 | `ExchangeScope` | `exchange_path` | exchange path（如 `"okx/a"`）；exchange 实例需按需从 `app_core.exchange_group` 查找 |
+| `TradingPairClassGroupScope` | `group_id` | 交易对分组 ID（base currency，如 `"ETH"`） |
 | `TradingPairClassScope` | `symbol`, `exchange_class` | 交易对符号与 exchange_class（由 `instance_id` 解析） |
 | `TradingPairScope` | `exchange_path`, `symbol` | exchange path 及交易对符号 |
 
@@ -120,22 +122,24 @@ scopes:
 
 | ScopeClass | 返回示例 | 由什么决定 |
 |------------|----------|-----------|
-| `GlobalScope` | `["global"]` | 固定返回 1 个 |
-| `ExchangeClassScope` | `["okx", "binance"]` | `app_core.exchange_group` 中实例的 `class_name` |
-| `ExchangeScope` | `["okx/a", "okx/b"]` | `app_core.exchange_group` 中实例的 `config.path` |
-| `TradingPairClassScope` | `["ETH/USDT"]` | `include_symbols/exclude_symbols` 过滤后的 symbol 集合 |
-| `TradingPairScope` | `["okx/a:ETH/USDT"]` | 由父节点与 `include_symbols/exclude_symbols` 展开得到（当前 Strategy 使用 `exchange_path:symbol`） |
+| `GlobalScope` | `{("global",)}` | 固定返回 1 个 |
+| `ExchangeClassScope` | `{("okx",), ("binance",)}` | `app_core.exchange_group` 中实例的 `class_name` |
+| `ExchangeScope` | `{("okx", "okx/a"), ("okx", "okx/b")}` | `app_core.exchange_group` 中实例的 `(class_name, path)` |
+| `TradingPairClassGroupScope` | `{("ETH",), ("BTC",)}` | 交易对的 base currency |
+| `TradingPairClassScope` | `{("okx", "ETH/USDT")}` | `(exchange_class, symbol)` |
+| `TradingPairScope` | `{("okx", "okx/a", "ETH/USDT")}` | `(exchange_class, exchange_path, symbol)` |
 
 **说明**：
 - `TradingPairClassScope` 当前 Scope 类解析使用 `exchange_class-symbol`，而 Strategy 默认只生成 `symbol`，需要对齐（否则会触发解析错误）。
 - `TradingPairScope` 当前 Scope 类解析使用 `exchange_path-symbol`，而 Strategy 默认生成 `exchange_path:symbol`，需要对齐（否则会触发解析错误）。
 - 实例发现目前不校验 exchange 是否支持某个 symbol（由上层调用方决定是否需要额外过滤）。
 
-**两条路径**：
+**三条路径**：
 
 ```
 路径1: GlobalScope → ExchangeClassScope → ExchangeScope → TradingPairScope
 路径2: GlobalScope → ExchangeClassScope → TradingPairClassScope → TradingPairScope
+路径3: GlobalScope → TradingPairClassGroupScope → TradingPairClassScope → TradingPairScope
 ```
 
 ## 4. StrategyConfig: `flow` 与 FlowScopeNode

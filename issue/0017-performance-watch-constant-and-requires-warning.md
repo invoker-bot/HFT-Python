@@ -1,5 +1,7 @@
 # Issue 0017: 性能回归 - per-symbol requires 警告与 watch 常数复杂度
 
+**状态**: 待实现（Open）
+
 ## 背景
 
 性能回归测试要求：

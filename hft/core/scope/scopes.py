@@ -60,6 +60,7 @@ class GlobalScope(BaseScope):
         self.set_function('round', round)
         self.set_function('clip', lambda x, min_val, max_val: max(min_val, min(x, max_val)))
         self.set_function('avg', lambda lst: sum(lst) / len(lst) if lst else 0)
+        self.set_function('sign', lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
         self.set_function('matcher', get_matcher_quick)
 
     @property

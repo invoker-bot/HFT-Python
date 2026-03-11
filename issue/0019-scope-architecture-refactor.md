@@ -1,5 +1,7 @@
 # Issue 0019: Scope 架构重构 - 分离 Scope 和 Tree 概念
 
+**状态**: 待实现（Open）
+
 ## 背景
 
 当前 `BaseScope` 的实现存在架构问题：`BaseScope` 直接存储了 `parent` 和 `children`，混淆了 Scope 本身和树形结构的概念。

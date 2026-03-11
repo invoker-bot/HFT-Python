@@ -73,12 +73,22 @@ hft/
 │
 ├── config/         # 配置系统
 │   ├── base.py         # BaseConfig 基类
-│   └── crypto.py       # 加密工具
+│   ├── crypto.py       # 加密工具
+│   ├── indicator.py    # Indicator 配置
+│   ├── scope.py        # Scope 配置
+│   └── var.py          # 变量定义配置
 │
 ├── exchange/       # 交易所模块
 │   ├── base.py         # BaseExchange 基类
 │   ├── group.py        # ExchangeGroup 多账户管理
-│   └── listeners.py    # 余额/持仓/订单监听器
+│   ├── listeners.py    # 余额/持仓/订单监听器
+│   ├── simulated/      # 模拟交易所（不依赖网络）
+│   │   ├── base.py         # SimulatedExchange
+│   │   ├── markets.py      # 模拟市场数据
+│   │   ├── okx.py          # OKX 模拟
+│   │   └── binance.py      # Binance 模拟
+│   └── demo/           # 测试用交易所
+│       └── mock_exchange.py  # MockExchange（性能测试）
 │
 ├── strategy/       # 策略模块
 │   ├── base.py         # BaseStrategy 基类
@@ -101,18 +111,23 @@ hft/
 │   │   ├── ohlcv_datasource.py
 │   │   ├── funding_rate_datasource.py
 │   │   ├── equation_datasource.py
-│   │   └── medal_amount_datasource.py
+│   │   ├── medal_amount_datasource.py
+│   │   ├── market_info_datasource.py
+│   │   └── ticker_volume_datasource.py
 │   └── computed/       # 计算类 Indicator
-│       ├── mid_price_indicator.py
 │       ├── medal_edge_indicator.py
-│       ├── volume_indicator.py
-│       ├── fair_price_indicator.py
 │       ├── trade_intensity_indicator.py
+│       ├── fair_price_indicator.py
+│       ├── fair_funding_rate_indicator.py
+│       ├── volume_indicator.py
 │       └── rsi_indicator.py
 │
 └── database/       # 数据库模块
     ├── client.py       # ClickHouse 客户端
-    └── listeners.py    # DataListener 基类
+    ├── config.py       # 数据库配置
+    └── controllers/    # 数据库控制器
+        ├── base.py         # 控制器基类
+        └── clickhouse.py   # ClickHouse 控制器
 ```
 
 ## 类图

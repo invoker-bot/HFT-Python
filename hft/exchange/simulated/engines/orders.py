@@ -5,6 +5,7 @@ OrderManager - 订单管理器
 """
 import asyncio
 import math
+import random
 import time
 import logging
 from dataclasses import dataclass, field
@@ -84,6 +85,8 @@ class OrderManager:
         balance_tracker: BalanceTracker,
         fill_probability: float = 0.5,
         contract_sizes: Optional[dict[str, float]] = None,
+        rng: Optional[random.Random] = None,
+        price_engine=None,
     ):
         self._orders: dict[str, SimulatedOrder] = {}
         self._closed_orders: list[SimulatedOrder] = []
@@ -92,6 +95,8 @@ class OrderManager:
         self._balance_tracker = balance_tracker
         self._fill_probability = fill_probability
         self._contract_sizes: dict[str, float] = contract_sizes or {}
+        self._rng = rng or random.Random()
+        self._price_engine = price_engine
         self._update_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE)
 
     @property
@@ -130,8 +135,16 @@ class OrderManager:
         )
 
         if type == 'market':
-            # 市价单立即全额成交
-            fill_price = price if price else 0.0
+            # 市价单立即全额成交，使用 PriceEngine 的 ask/bid 价格
+            if price:
+                fill_price = price
+            elif self._price_engine is not None:
+                state = self._price_engine.get_state(symbol)
+                mid = state.mid_price
+                half_spread = mid * state.spread_bps / 10000
+                fill_price = (mid + half_spread) if side == 'buy' else (mid - half_spread)
+            else:
+                fill_price = 0.0
             self._execute_fill(order, amount, fill_price)
         else:
             # 限价单挂起
@@ -147,10 +160,13 @@ class OrderManager:
         if fill_amount <= 0:
             return
 
+        contract_size = self._get_contract_size(order.symbol)
+
         order.filled += fill_amount
         order.remaining = order.amount - order.filled
-        order.cost += fill_amount * fill_price
-        order.average = order.cost / order.filled if order.filled > 0 else None
+        # M3: cost 应乘以 contract_size
+        order.cost += fill_amount * fill_price * contract_size
+        order.average = order.cost / (order.filled * contract_size) if order.filled > 0 else None
 
         if order.remaining < 1e-9 or order.remaining / order.amount < 0.001:
             order.status = 'closed'
@@ -162,14 +178,18 @@ class OrderManager:
             order.status = 'open'  # 部分成交仍然 open
 
         # 更新仓位（amount 是合约张数，需乘以 contract_size）
-        contract_size = self._get_contract_size(order.symbol)
         position_delta = fill_amount * contract_size
         direction = 1 if order.side == 'buy' else -1
-        self._position_tracker.update(order.symbol, direction * position_delta)
+        trade_result = self._position_tracker.update(
+            order.symbol, direction * position_delta, fill_price
+        )
 
         # 更新余额
         cost_usdt = fill_amount * fill_price * contract_size
-        self._balance_tracker.apply_trade(order.side, cost_usdt, order.symbol)
+        self._balance_tracker.apply_trade(
+            order.side, cost_usdt, order.symbol,
+            realized_pnl=trade_result.realized_pnl,
+        )
 
         # 手续费（简化：maker 0.02%, taker 0.05%）
         fee_rate = 0.0002 if 'limit' in order.type else 0.0005
@@ -231,10 +251,9 @@ class OrderManager:
             else:
                 p = self._fill_probability
 
-            import random
-            if random.random() < p:
+            if self._rng.random() < p:
                 # 部分或全额成交
-                fill_ratio = 0.3 + random.random() * 0.7  # 30%-100%
+                fill_ratio = 0.3 + self._rng.random() * 0.7  # 30%-100%
                 fill_amount = order.remaining * fill_ratio
                 self._execute_fill(order, fill_amount, order.price or mid)
 

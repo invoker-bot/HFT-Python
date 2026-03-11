@@ -24,11 +24,17 @@
 │          │   ├── TickerDataSource                          │
 │          │   ├── OrderBookDataSource                       │
 │          │   ├── TradesDataSource                          │
-│          │   └── OHLCVDataSource                           │
+│          │   ├── OHLCVDataSource                           │
+│          │   ├── MedalEquationDataSource                   │
+│          │   ├── MedalAmountDataSource                     │
+│          │   ├── MarketInfoDataSource                      │
+│          │   └── TickerVolumeDataSource                    │
 │          │                                                  │
 │          └── Computed (计算类)                              │
-│              ├── MidPriceIndicator                         │
 │              ├── MedalEdgeIndicator                        │
+│              ├── TradeIntensityIndicator                   │
+│              ├── FairPriceIndicator                        │
+│              ├── FairFundingRateIndicator                  │
 │              ├── VolumeIndicator                           │
 │              └── RSIIndicator                              │
 └─────────────────────────────────────────────────────────────┘
@@ -47,15 +53,19 @@ hft/indicator/
 │   ├── orderbook_datasource.py
 │   ├── trades_datasource.py
 │   ├── ohlcv_datasource.py
-│   └── funding_rate_datasource.py
+│   ├── funding_rate_datasource.py
+│   ├── equation_datasource.py
+│   ├── medal_amount_datasource.py
+│   ├── market_info_datasource.py
+│   └── ticker_volume_datasource.py
 │
-├── computed/            # 计算类 Indicator
-│   ├── mid_price_indicator.py
-│   ├── medal_edge_indicator.py
-│   ├── volume_indicator.py
-│   └── rsi_indicator.py
-│
-└── lazy_indicator.py    # LazyIndicator (legacy)
+└── computed/            # 计算类 Indicator
+    ├── medal_edge_indicator.py
+    ├── trade_intensity_indicator.py
+    ├── fair_price_indicator.py
+    ├── fair_funding_rate_indicator.py
+    ├── volume_indicator.py
+    └── rsi_indicator.py
 ```
 
 ## get_vars 接口
@@ -98,17 +108,6 @@ class RSIIndicator(BaseIndicator[float]):
         return {"rsi": self._calculate_rsi()}
 ```
 
-## LazyIndicator（Legacy）
-
-> **注意**: 此类为兼容层，新代码推荐使用 `hft/indicator/computed/` 下的 Indicator。
-
-轮询驱动的派生指标，通过 IndicatorGroup 获取依赖的数据源。
-
-### 特性
-
-- **lazy_start**: 初始为 STOPPED，首次 `query_indicator()` 时启动
-- **auto-stop**: 5分钟无访问自动 stop()（保留计算结果）
-
 ## 内置 Indicator
 
 ### 数据源类
@@ -119,13 +118,19 @@ class RSIIndicator(BaseIndicator[float]):
 | `OrderBookDataSource` | order_book | best_bid_price, best_ask_price, mid_price, bid_depth, ask_depth |
 | `TradesDataSource` | trades | last_trade_price, last_trade_time, last_trade_direction, last_trade_amount |
 | `OHLCVDataSource` | ohlcv | last_close_price, last_open_price, last_high_price, last_low_price, last_volume |
+| `MedalEquationDataSource` | equation | equation_usd 等 |
+| `MedalAmountDataSource` | medal_amount | 账户余额相关变量 |
+| `MarketInfoDataSource` | market_info | 合约规格相关变量 |
+| `TickerVolumeDataSource` | ticker_volume | 交易量相关变量 |
 
 ### 计算类
 
 | 类 | ID | 依赖 | 提供的变量 |
 |----|-----|------|-----------|
-| `MidPriceIndicator` | mid_price | order_book | orderbook_mid_price, orderbook_best_bid, orderbook_best_ask, orderbook_spread |
 | `MedalEdgeIndicator` | medal_edge | trades | medal_edge, medal_buy_edge, medal_sell_edge |
+| `TradeIntensityIndicator` | trade_intensity | trades | trade_intensity 等 |
+| `FairPriceIndicator` | fair_price | order_book, trades | fair_price 等 |
+| `FairFundingRateIndicator` | fair_funding_rate | funding_rate | fair_funding_rate 等 |
 | `VolumeIndicator` | volume | trades | volume, buy_volume, sell_volume, volume_notional, buy_volume_notional, sell_volume_notional |
 | `RSIIndicator` | rsi | ohlcv | rsi |
 

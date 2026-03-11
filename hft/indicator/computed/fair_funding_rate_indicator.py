@@ -108,15 +108,15 @@ class FairFundingRateIndicator(BaseExchangeClassDataIndicator[dict]):
 
         ip_map = {}
         for tp, ts, price in ip_result.result_rows:
-            ip_map[tp] = price
+            ip_map[(tp, ts)] = price
         mp_map = {}
         for tp, ts, price in mp_result.result_rows:
-            mp_map[tp] = price
+            mp_map[(tp, ts)] = price
 
         merged = []
         for tp, ts, efr in fr_result.result_rows:
-            ip = ip_map.get(tp)
-            mp = mp_map.get(tp)
+            ip = ip_map.get((tp, ts))
+            mp = mp_map.get((tp, ts))
             if ip is not None and mp is not None and mp != 0:
                 merged.append((efr, ip, mp))
         return merged
