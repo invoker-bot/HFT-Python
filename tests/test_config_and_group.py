@@ -299,44 +299,48 @@ class TestGroup:
         assert g.to_group("BTC-USDT") == "BTC"
         assert g.to_group("ETH-USDC") == "ETH"
 
-    def test_apply_group_filters_raw_unhashable(self):
-        """apply_group_filters_raw 使用 lru_cache，但 Group 不可哈希
-        （Group 继承 defaultdict，默认不可哈希）"""
+    def test_apply_group_filters_raw(self):
+        """apply_group_filters_raw 按 group key 过滤"""
         g = Group(_base_currency, ["BTC-USDT", "ETH-USDT", "SOL-USDT"])
-        with pytest.raises(TypeError, match="unhashable"):
-            g.apply_group_filters_raw("BTC,ETH")
+        result = g.apply_group_filters_raw("BTC,ETH")
+        assert set(result.keys()) == {"BTC", "ETH"}
+        assert "SOL" not in result
 
-    def test_apply_item_filters_raw_unhashable(self):
-        """apply_item_filters_raw 同样因 lru_cache 不可哈希"""
+    def test_apply_item_filters_raw(self):
+        """apply_item_filters_raw 按 item 值过滤"""
         g = Group(_base_currency, ["BTC-USDT", "BTC-USDC", "ETH-USDT"])
-        with pytest.raises(TypeError, match="unhashable"):
-            g.apply_item_filters_raw("*-USDT")
+        result = g.apply_item_filters_raw("*-USDT")
+        assert result["BTC"] == {"BTC-USDT"}
+        assert result["ETH"] == {"ETH-USDT"}
 
-    def test_group_filtering_logic_via_apply_filters_raw(self):
-        """验证 Group 的过滤逻辑可通过 apply_filters_raw 实现"""
+    def test_apply_group_filters_raw_caching(self):
+        """相同 filter 返回缓存结果"""
         g = Group(_base_currency, ["BTC-USDT", "ETH-USDT", "SOL-USDT"])
-        # 对 keys 进行过滤
-        filtered_keys = apply_filters_raw(g.keys(), "BTC,ETH")
-        assert set(filtered_keys) == {"BTC", "ETH"}
+        result1 = g.apply_group_filters_raw("BTC")
+        result2 = g.apply_group_filters_raw("BTC")
+        assert result1 is result2
 
-    def test_item_filtering_logic_via_apply_filters_raw(self):
-        """验证 item 过滤逻辑"""
+    def test_apply_item_filters_raw_caching(self):
+        """相同 filter 返回缓存结果"""
         g = Group(_base_currency, ["BTC-USDT", "BTC-USDC", "ETH-USDT"])
-        for key, item_set in g.items():
-            filtered = apply_filters_raw(item_set, "*-USDT")
-            if key == "BTC":
-                assert set(filtered) == {"BTC-USDT"}
-            elif key == "ETH":
-                assert set(filtered) == {"ETH-USDT"}
+        result1 = g.apply_item_filters_raw("*-USDT")
+        result2 = g.apply_item_filters_raw("*-USDT")
+        assert result1 is result2
+
+    def test_group_filters_none_returns_self(self):
+        """None filter 返回自身"""
+        g = Group(_base_currency, ["BTC-USDT", "ETH-USDT"])
+        assert g.apply_group_filters_raw(None) is g
+
+    def test_item_filters_none_returns_self(self):
+        """None filter 返回自身"""
+        g = Group(_base_currency, ["BTC-USDT", "ETH-USDT"])
+        assert g.apply_item_filters_raw(None) is g
 
     def test_item_filtering_removes_empty_groups(self):
-        """item 过滤后空组应被移除（验证逻辑）"""
+        """item 过滤后空组应被移除"""
         g = Group(_base_currency, ["BTC-USDC", "ETH-USDT"])
-        result = {}
-        for key, item_set in g.items():
-            filtered = apply_filters_raw(item_set, "*-USDT")
-            if filtered:
-                result[key] = set(filtered)
+        result = g.apply_item_filters_raw("*-USDT")
         assert "BTC" not in result
         assert "ETH" in result
 
