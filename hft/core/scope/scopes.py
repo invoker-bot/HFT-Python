@@ -22,6 +22,7 @@ __all__ = [
     "GlobalScope",
     "ExchangeClassScope",
     "ExchangeScope",
+    "TradingPairClassGroupScope",
     "TradingPairClassScope",
     "TradingPairScope",
 ]
@@ -189,6 +190,51 @@ def trading_pair_class_to_exchange_class_scope(current_instance_id: ScopeInstanc
     return (exchange_class, )
 
 
+def trading_pair_class_to_group_scope(current_instance_id: ScopeInstanceId) -> ScopeInstanceId:
+    """TradingPairClassScope -> TradingPairClassGroupScope（跨平台）"""
+    _exchange_class, symbol = current_instance_id
+    group_id = symbol.split('/')[0] if '/' in symbol else symbol
+    return (group_id,)
+
+
+class TradingPairClassGroupScope(BaseScope):
+    """
+    交易对分组 Scope（跨平台）
+
+    将不同平台的交易对按 base currency 聚合成一个组。
+    例如 okx ETH/USDT、binance ETH/USDT:USDT、WBETH/USDT 都归入 "ETH" 组。
+
+    instance_id: (group_id,)，如 ("ETH",)
+    """
+    flow_mapper = {
+        GlobalScope: [to_global_scope],
+    }
+
+    def initialize(self, **kwargs):
+        super().initialize(**kwargs)
+        group_id, = self.instance_id
+        self.set_var("group_id", group_id)
+
+    @property
+    def group_id(self) -> str:
+        return self.instance_id[0]
+
+    @classmethod
+    def get_all_instance_ids(cls, app_core: 'AppCore') -> set[ScopeInstanceId]:
+        """遍历所有交易对，提取 base currency 作为 group_id"""
+        exchange_group = app_core.exchange_group
+        results = set()
+        for exchange_class, exchange_paths in exchange_group.exchange_group.items():
+            for exchange_path in exchange_paths:
+                instance = exchange_group.exchange_instances[exchange_path]
+                if instance.ready:
+                    markets = instance.markets.get_data()
+                    for symbol in markets.keys():
+                        group_id = symbol.split('/')[0] if '/' in symbol else symbol
+                        results.add((group_id,))
+        return results
+
+
 class TradingPairClassScope(BaseScope):
     """
     交易对类 Scope
@@ -207,6 +253,7 @@ class TradingPairClassScope(BaseScope):
     """
     flow_mapper = {
         ExchangeClassScope: [trading_pair_class_to_exchange_class_scope],
+        TradingPairClassGroupScope: [trading_pair_class_to_group_scope],
     }
 
     def initialize(self, **kwargs) -> None:

@@ -10,6 +10,7 @@ from .medal_edge_indicator import MedalEdgeIndicator
 from .rsi_indicator import RSIIndicator
 from .trade_intensity_indicator import TradeIntensityIndicator
 from .fair_funding_rate_indicator import FairFundingRateIndicator
+from .fair_price_indicator import FairPriceIndicator
 from .volume_indicator import VolumeIndicator
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "VolumeIndicator",
     "RSIIndicator",
     "FairFundingRateIndicator",
+    "FairPriceIndicator",
 ]
