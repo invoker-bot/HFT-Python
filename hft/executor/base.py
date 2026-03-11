@@ -149,35 +149,37 @@ class BaseExecutor(Listener):
 
 
     async def on_order_updated(self, exchange_path: str, symbol: str, order: Order):
-        if order['status'] in ["closed", "canceled", "expired", "rejected"]:
-            self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
-                order['id']
-            ])
-        elif order['status'] == "open":
-            direction = 1 if order['side'] == "buy" else -1
-            if order['id'] in self.active_orders_tracker.orders[exchange_path][symbol]:
-                return  # 已经在跟踪列表中
-            lastTradeTimestamp = order.get('lastTradeTimestamp', time.time() * 1000)
-            if lastTradeTimestamp is None:
-                lastTradeTimestamp = time.time()
-            else:
-                lastTradeTimestamp = float(lastTradeTimestamp) / 1000.0
-            self.active_orders_tracker.add_active_orders(exchange_path, symbol, [
-                ActiveOrder(
-                    order_id=order['id'],
-                    exchange_path=exchange_path,
-                    symbol=symbol,
-                    price=order.get('price', 0.0),
-                    amount=order.get('amount', 0.0) * direction,
-                    created_at=lastTradeTimestamp,
-                    timeout_refresh_tolerance=self.config.default_timeout
-                )
-            ])
+        async with self.active_orders_tracker._lock:
+            if order['status'] in ["closed", "canceled", "expired", "rejected"]:
+                self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
+                    order['id']
+                ])
+            elif order['status'] == "open":
+                direction = 1 if order['side'] == "buy" else -1
+                if order['id'] in self.active_orders_tracker.orders[exchange_path][symbol]:
+                    return  # 已经在跟踪列表中
+                lastTradeTimestamp = order.get('lastTradeTimestamp', time.time() * 1000)
+                if lastTradeTimestamp is None:
+                    lastTradeTimestamp = time.time()
+                else:
+                    lastTradeTimestamp = float(lastTradeTimestamp) / 1000.0
+                self.active_orders_tracker.add_active_orders(exchange_path, symbol, [
+                    ActiveOrder(
+                        order_id=order['id'],
+                        exchange_path=exchange_path,
+                        symbol=symbol,
+                        price=order.get('price', 0.0),
+                        amount=order.get('amount', 0.0) * direction,
+                        created_at=lastTradeTimestamp,
+                        timeout_refresh_tolerance=self.config.default_timeout
+                    )
+                ])
 
     async def on_order_canceled(self, exchange_path: str, symbol: str, order_id: str, order: Order):
-        self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
-                order_id
-            ])
+        async with self.active_orders_tracker._lock:
+            self.active_orders_tracker.remove_active_orders(exchange_path, symbol, [
+                    order_id
+                ])
 
     async def create_orders_by_intents(
         self,
@@ -240,10 +242,14 @@ class BaseExecutor(Listener):
 
     async def cancel_all_active_orders(self):
         """退出时取消所有交易所上的活跃订单（由 config.clean 控制）"""
-        for exchange_path, symbols in self.active_orders_tracker.orders.items():
+        async with self.active_orders_tracker._lock:
+            snapshot = {
+                ep: {sym: list(od.keys()) for sym, od in symbols.items()}
+                for ep, symbols in self.active_orders_tracker.orders.items()
+            }
+        for exchange_path, symbols in snapshot.items():
             exchange = self.exchange_group.exchange_instances[exchange_path]
-            for symbol, orders_dict in symbols.items():
-                order_ids = list(orders_dict.keys())
+            for symbol, order_ids in symbols.items():
                 if len(order_ids) > 0:
                     try:
                         await exchange.cancel_orders(order_ids, symbol)
@@ -259,9 +265,10 @@ class BaseExecutor(Listener):
         """
         if len(intents) == 0:
             return
-        orders_to_place, orders_to_remove = self.active_orders_tracker.calculate_changed_orders(
-            exchange_path, symbol, intents
-        )
+        async with self.active_orders_tracker._lock:
+            orders_to_place, orders_to_remove = self.active_orders_tracker.calculate_changed_orders(
+                exchange_path, symbol, intents
+            )
         # 1. 先撤销过期/不匹配的订单
         if len(orders_to_remove) > 0:
             await self.cancel_active_orders(exchange_path, symbol, orders_to_remove)
@@ -269,7 +276,8 @@ class BaseExecutor(Listener):
         # 2. 再创建新订单
         if len(orders_to_place) > 0:
             created_orders = await self.create_orders_by_intents(exchange_path, symbol, orders_to_place)
-            self.active_orders_tracker.add_active_orders(exchange_path, symbol, created_orders)
+            async with self.active_orders_tracker._lock:
+                self.active_orders_tracker.add_active_orders(exchange_path, symbol, created_orders)
         # event其实会自动触发移除订单的动作
         # self.active_orders_tracker.remove_active_orders(
         #     exchange_path, symbol,
@@ -317,10 +325,11 @@ class BaseExecutor(Listener):
                     await self.on_order_updated(exchange_path, symbol, order)
                     order_ids.add(order['id'])
                 # 移除不在交易所状态中的订单
-                orders_dict = self.active_orders_tracker.orders[exchange_path][symbol]
-                for order_id in list(orders_dict.keys()):
-                    if order_id not in order_ids:
-                        del orders_dict[order_id]  # 这里直接删除
+                async with self.active_orders_tracker._lock:
+                    orders_dict = self.active_orders_tracker.orders[exchange_path][symbol]
+                    for order_id in list(orders_dict.keys()):
+                        if order_id not in order_ids:
+                            del orders_dict[order_id]  # 这里直接删除
                 self._refresh_timestamps[ident] = time.time()  # M11: 写入实例字典
             # process
             # inject indicators data into vm context

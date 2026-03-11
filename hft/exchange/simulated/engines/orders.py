@@ -97,6 +97,7 @@ class OrderManager:
         self._contract_sizes: dict[str, float] = contract_sizes or {}
         self._rng = rng or random.Random()
         self._price_engine = price_engine
+        self._lock = asyncio.Lock()
         self._update_queue: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE)
 
     @property

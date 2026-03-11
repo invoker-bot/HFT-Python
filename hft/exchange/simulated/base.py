@@ -46,23 +46,27 @@ class SimulatedCCXTExchange:
     # ===== 订单 =====
 
     async def create_order(self, symbol, type, side, amount, price=None, params=None):
-        return self._order_manager.place_order(symbol, type, side, amount, price, params)
+        async with self._order_manager._lock:
+            return self._order_manager.place_order(symbol, type, side, amount, price, params)
 
     async def create_orders(self, order_params_list):
         results = []
-        for p in order_params_list:
-            r = self._order_manager.place_order(
-                p['symbol'], p['type'], p['side'], p['amount'],
-                p.get('price'), p.get('params'),
-            )
-            results.append(r)
+        async with self._order_manager._lock:
+            for p in order_params_list:
+                r = self._order_manager.place_order(
+                    p['symbol'], p['type'], p['side'], p['amount'],
+                    p.get('price'), p.get('params'),
+                )
+                results.append(r)
         return results
 
     async def cancel_order(self, order_id, symbol=None):
-        return self._order_manager.cancel_order(order_id)
+        async with self._order_manager._lock:
+            return self._order_manager.cancel_order(order_id)
 
     async def cancel_orders(self, order_ids, symbol=None):
-        return self._order_manager.cancel_orders(order_ids, symbol)
+        async with self._order_manager._lock:
+            return self._order_manager.cancel_orders(order_ids, symbol)
 
     async def fetch_order(self, order_id, symbol=None):
         return self._order_manager.get_order(order_id)
@@ -285,9 +289,10 @@ class SimulatedExchange(BaseExchange):
         # 检查 funding 结算
         self.funding_engine.check_settlements(self.position_tracker, self.balance_tracker)
         # 尝试成交挂单
-        self.order_manager.try_fill_orders(
-            {s: self.price_engine.get_state(s) for s in self.price_engine.symbols}
-        )
+        async with self.order_manager._lock:
+            self.order_manager.try_fill_orders(
+                {s: self.price_engine.get_state(s) for s in self.price_engine.symbols}
+            )
 
     # ===== 市场数据 =====
 

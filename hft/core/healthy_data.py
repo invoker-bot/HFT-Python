@@ -131,6 +131,8 @@ class BaseHealthyData(ABC, Generic[T]):
         """
         获取数据，不健康时自动更新
 
+        锁顺序：总是先 _update_data_lock 再 _data_lock，且 _data_lock 内不嵌套其他锁。
+
         Args:
             update_func: 异步数据获取函数，返回 (data, timestamp)
 
@@ -140,19 +142,27 @@ class BaseHealthyData(ABC, Generic[T]):
         Raises:
             UnhealthyDataError: 更新后仍然不健康
         """
-        try:
-            return await self.get_or_raise()  # 快速路径：数据健康时直接返回
-        except UnhealthyDataError:
-            async with self._update_data_lock:
-                try:
-                    return await self.get_or_raise()  # 双重检查：锁内再次检查，可能其他协程已经更新完成
-                except UnhealthyDataError:
-                    try:
-                        data, timestamp = await asyncio.wait_for(update_func(), timeout=self.max_age)
-                        await self.update(data, timestamp)
-                    except Exception as e:
-                        raise UnhealthyDataError(f"Update failed: {e}") from e
-                    return await self.get_or_raise()  # 更新后再次看是否健康
+        # 快速路径：数据健康时直接返回
+        async with self._data_lock:
+            if self.is_healthy:
+                return self.get()
+        # 慢路径：需要更新
+        async with self._update_data_lock:
+            # 双重检查：锁内再看，可能其他协程已经更新完成
+            async with self._data_lock:
+                if self.is_healthy:
+                    return self.get()
+            # 执行更新
+            try:
+                data, timestamp = await asyncio.wait_for(update_func(), timeout=self.max_age)
+                await self.update(data, timestamp)
+            except Exception as e:
+                raise UnhealthyDataError(f"Update failed: {e}") from e
+            # 验证更新结果
+            async with self._data_lock:
+                if not self.is_healthy:
+                    raise UnhealthyDataError("Data still unhealthy after update")
+                return self.get()
 
     async def get_data_or_update_by_func(self, update_func: DataFunc) -> T:
         return (await self.get_or_update_by_func(update_func))[0]
